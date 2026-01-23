@@ -1,0 +1,75 @@
+================================================================================
+ANALYSIS IMPROVEMENT: FOCUS ON REPORTING CORRECTNESS
+================================================================================
+
+ISSUE:
+  The playbook output analysis was incorrectly failing when the target 
+  system was NON-COMPLIANT, even when the playbook correctly identified 
+  and reported the non-compliance.
+
+KEY INSIGHT:
+  A compliance verification playbook's job is to REPORT compliance status,
+  not to ENSURE compliance.
+
+OLD BEHAVIOR (Wrong):
+  ❌ Analysis Question: "Is the system compliant?"
+  ❌ Result: Fails if system is NON-COMPLIANT
+  ❌ Problem: Blocks valid playbooks that correctly detect non-compliance
+
+NEW BEHAVIOR (Correct):
+  ✅ Analysis Question: "Does the playbook correctly report compliance?"
+  ✅ Result: Passes if playbook logic is correct
+  ✅ Benefit: Validates playbook logic, not system state
+
+EXAMPLES:
+
+  1. System Without Docker (System is NON-COMPLIANT)
+     - Playbook reports: "Docker: ❌ NON-COMPLIANT (not installed)"
+     - Old Analysis: ❌ FAIL (system is non-compliant)
+     - New Analysis: ✅ PASS (playbook correctly reported non-compliance)
+
+  2. Logic Error in Playbook (Playbook has a bug)
+     - Found: 0 OCP packages
+     - Playbook reports: "OCP: ✅ COMPLIANT (0 packages)"
+     - Old Analysis: ✅ PASS (missed the bug)
+     - New Analysis: ❌ FAIL (logic error: reports COMPLIANT with 0 packages)
+
+PROMPT CHANGES:
+  Added explicit guidance to focus on reporting correctness:
+  
+  "**FOCUS ON REPORTING CORRECTNESS, NOT SYSTEM COMPLIANCE:**
+   - The playbook may find the system is NON-COMPLIANT - THIS IS OK!
+   - What matters is: Does the playbook CORRECTLY IDENTIFY and REPORT?
+   - If system lacks packages, playbook SHOULD report NON-COMPLIANT"
+
+VERIFICATION CHECKLIST (Updated):
+  1. ✅ Does report address EVERY requirement?
+  2. ✅ Do determinations match evidence found?
+  3. ✅ Is logic correct? (0 packages → NON-COMPLIANT)
+  4. ✅ Are there logic inversions?
+  5. ✅ Does overall status correctly summarize checks?
+
+WHAT ANALYSIS SHOULD CATCH:
+  ✅ Logic inversions (says COMPLIANT when evidence shows otherwise)
+  ✅ Missing requirement checks
+  ✅ Incorrect aggregation
+  ✅ Evidence not supporting determination
+
+WHAT ANALYSIS SHOULD NOT BLOCK:
+  ❌ System being non-compliant (that's expected!)
+  ❌ Environmental differences (if reported correctly)
+  ❌ Version mismatches (if detected and reported)
+
+IMPACT:
+  - Fewer false negative analysis failures
+  - Can test on non-compliant systems (better testing!)
+  - Correct focus: playbook logic, not system state
+  - Two-stage execution works as intended
+
+FILES CHANGED:
+  - deepseek_generate_playbook.py (analyze_playbook_output function)
+  - langgraph_deepseek_generate_playbook.py (imports updated function)
+
+STATUS: ✅ IMPROVED
+DATE: January 11, 2026
+================================================================================

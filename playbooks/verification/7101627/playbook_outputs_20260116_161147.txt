@@ -1,0 +1,572 @@
+============================================================
+Playbook: kcs_verification_7101627_part01.yml
+============================================================
+[KeyJ1dWlkIjogIjA5MzZjN2YzLTI4ODQtNDJhZS1hZGE4LWI2MDgwNDI2NTVlMyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjU2NmExZWU3LWMzYTQtODU0Yi04YTJlLTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU2NmExZWU3LWMzYTQtODU0Yi04YTJlLTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImFjMzUxODdhLThhYmUtNDQzNi04OWIzLTEzNTBkMThiNjgwYSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjczNTIzMzM2LTAyMjAtNDAyZi1hNTg0LTBjZjRiMDVhN2U2OSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU2NmExZWU3LWMzYTQtODU0Yi04YTJlLTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 01: Collect OS info] ***********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjNkZWU2NjI5LTdmOGItNDMyYS1hNzM5LTViNzI2NTU5Y2EzNyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjdkNDA5NWI4LWUwYTItNDFjOS05NWYwLWJlZmYxNWE1YWYwZSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU2NmExZWU3LWMzYTQtODU0Yi04YTJlLTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 01 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImIzMDNjYjUxLTg1N2ItNDA2My05ZTMwLTFjNDY2OWVjNzhmYiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjE1OTExMzc1LTc4OTctNGNjZC1iOTQ4LWJhYjY2OTRhYzA5MiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU2NmExZWU3LWMzYTQtODU0Yi04YTJlLTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 01/11 - Requirement 01)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVjMjI3OTgyLTk5ZTYtNGM4NC1iYzFiLWIyOTZhNTBhYjBiZSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImRlOTc2NTljLWFhMDUtNDY3Ni1iZDliLTQ4ODczZGNkZjkxYyJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 01/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error 'Cannot find libsystemd or libsystemd-journal:' when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 01 - Collect OS distribution, version, and architecture information:",[0m
+[0;32m        "  Task: Collect OS info",[0m
+[0;32m        "  Command: cat /etc/os-release 2>/dev/null || uname -a\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: NAME=\"Red Hat Enterprise Linux\"\nVERSION=\"9.7 (Plow)\"\nID=\"rhel\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"9.7\"\nPLATFORM_ID=\"platform:el9\"\nPRETTY_NAME=\"Red Hat Enterprise Linux 9.7 (Plow)\"\nANSI_COLOR=\"0;31\"\nLOGO=\"fedora-logo-icon\"\nCPE_NAME=\"cpe:/o:redhat:enterprise_linux:9::baseos\"\nHOME_URL=\"https://www.redhat.com/\"\nDOCUMENTATION_URL=\"https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9\"\nBUG_REPORT_URL=\"https://issues.redhat.com/\"\n\nREDHAT_BUGZILLA_PRODUCT=\"Red Hat Enterprise Linux 9\"\nREDHAT_BUGZILLA_PRODUCT_VERSION=9.7\nREDHAT_SUPPORT_PRODUCT=\"Red Hat Enterprise Linux\"\nREDHAT_SUPPORT_PRODUCT_VERSION=\"9.7\"",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 01/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImU4YjgyMDM4LWY5OGItNDI2OS04ZTMyLTlmZjMyYWQ2OGE5MCJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=4   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part02.yml
+============================================================
+[KeyJ1dWlkIjogImZlYTY1NTZjLWVkZmQtNDhlMi05YzQzLTBhNWI5NDBkODBkMiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjVlNDViZDZlLTQwYzYtNGI3Yy1jMjc1LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVlNDViZDZlLTQwYzYtNGI3Yy1jMjc1LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjBhMTY1OGUyLTc2MjItNGVjNC1hYTUyLWViYTJhNGNhMDE0MiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjFkMDE5NTgzLTNhMGUtNGY5My1iMDcwLTI4ZmNkZGQ1M2FiOSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVlNDViZDZlLTQwYzYtNGI3Yy1jMjc1LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjYyMTQ2YWE5LTQwMzgtNDBiMC05MTY2LTA3NGI1N2ZhZmJiOSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImE2MWYwNTRjLTg2ZDQtNGI2YS1iYjAwLTc3Mzk5ODQ5N2I2MiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVlNDViZDZlLTQwYzYtNGI3Yy1jMjc1LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 02: Check AAP component versions] **********************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjE4NzUwZjY1LTY3NjItNDlmMC05YTI3LTliODhkZDM1ZDM3YSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImU3OWQ3YjA2LTZmMmMtNDMwYy05YjdlLTdkMDMyNGVmYzUxYiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVlNDViZDZlLTQwYzYtNGI3Yy1jMjc1LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 02 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImZmMzdlYzY0LWUwNjEtNDk4OC05MjBiLWZmZjUzMzc0NzAwZCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjkyYzI5NmJmLWRjYzktNDUwMi05NWIyLTExMTNiYzU2MzI5YSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVlNDViZDZlLTQwYzYtNGI3Yy1jMjc1LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 02/11 - Requirement 02)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2MmM3N2EyLWIyYWYtNDc5Yy05N2MwLTE5NGYxZWM0OTUzMCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjk1YmNkNThmLWYzNzgtNGRhOC04ZTE4LTIxNjAyOTJiYTUzOCJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 02/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error 'Cannot find libsystemd or libsystemd-journal:' when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 02 - Collect the installed version of Ansible Automation Platform and its components:",[0m
+[0;32m        "  Task: Check AAP component versions",[0m
+[0;32m        "  Command: rpm -qa | grep -E 'ansible-automation-platform|ansible-builder|ansible-navigator|ansible-runner|ansible-lint|execution-environment' | sort\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 02/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjljMzgzMmEyLTIwYmUtNGUwMi04MjMzLTUzZmRmZmFiYTNkMCJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part03.yml
+============================================================
+[KeyJ1dWlkIjogIjRhOWQ2ZTc5LTZhOTctNDZlZC1iY2M3LTJiMzI1ZjFlMjM3OCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImY2NzI4M2YwLTM5M2ItZTMyYS1mZGU4LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImY2NzI4M2YwLTM5M2ItZTMyYS1mZGU4LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImMxMDI5OTQ5LTZjZjUtNDA2MC1hNmNiLWY3MGU5OTZjOTkzOCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjI2NmViYjgxLWVkNWQtNDU2MS1hMDAyLTJjZGVmYmZiMjcwMyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY2NzI4M2YwLTM5M2ItZTMyYS1mZGU4LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjllYjE4MTEyLTdhZTUtNDUxNy05OTZiLWM2ZWI3MmNhZDliZSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjk5ODJkMmVjLTZmMDktNDNiOC05NmVmLTU1NmEyZWZjMjExYyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY2NzI4M2YwLTM5M2ItZTMyYS1mZGU4LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 03: Get ansible-builder version and location] **********************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjgxNzVlZGJhLTYwZjQtNDNkZC05OWNkLWVkOWQ0MGQ0MWMyNSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImExZjkwMWRjLTU3ZjAtNGM4ZS04ODc4LTBlNzIzOGMxOWIzNSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY2NzI4M2YwLTM5M2ItZTMyYS1mZGU4LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 03 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjcwNTBlMGQ3LTcwYjAtNDBjMC05NjVkLWRhZjJiZjEyNjgzNiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImU0NGE0YWQ5LTFjMTEtNDExZS05NTI4LTM1NjlkNjQ1Mjg5MiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY2NzI4M2YwLTM5M2ItZTMyYS1mZGU4LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 03/11 - Requirement 03)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImYxYjU2MTgzLTc2NTUtNDcwNS04YzlmLTcxM2Q3MTExZjdhOCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjdjMThhYjU1LWI2N2EtNDg3Yy04YjI1LTgyNmM5MjBkNzYwNyJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 03/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error 'Cannot find libsystemd or libsystemd-journal:' when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 03 - Collect the installed version and location of the ansible-builder tool:",[0m
+[0;32m        "  Task: Get ansible-builder version and location",[0m
+[0;32m        "  Command: which ansible-builder && ansible-builder --version 2>&1 || echo \"ansible-builder not found\"\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ansible-builder not found",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 03/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImI5ZDUwMjNiLWJjNjktNDRkYi1hOWM5LTAwYzA1OGMyMTRjYSJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part04.yml
+============================================================
+[KeyJ1dWlkIjogIjM4YTFmY2E5LTUyMjAtNGQ2ZC1hYmI1LTdlYzk5YWUxYjIwYSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjk2OTJhYzliLWE2M2YtMDllOS1mNTFlLTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2OTJhYzliLWE2M2YtMDllOS1mNTFlLTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU1MDhmMDUwLWQ4YTItNDY5Mi05MjE3LTFhODAxODI5YzRmMiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjc0N2Y5YzI0LTkxNTktNDFiZi05ZmUzLWMxZTI3ZTM2OThlNSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2OTJhYzliLWE2M2YtMDllOS1mNTFlLTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjdlN2I5OGM5LWM2NDMtNGFmMC04ZTg1LTI4MjE4Y2Y5OGI0NCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjBjMTk1ZTI3LTc0M2UtNGU4OS05Nzc3LWVmMWExMjc1ZDMwZCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2OTJhYzliLWE2M2YtMDllOS1mNTFlLTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 04: Check recent ansible-builder commands in shell history] ********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjhhNTc2MmMyLWMzMTUtNGQ4OS1iYjkyLTdlMTllZjk2YTQwYyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjZlNjk0MmQyLTYwYWItNDZlZC05NTU1LWIwNjI3Mzg2MmIzZSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2OTJhYzliLWE2M2YtMDllOS1mNTFlLTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 04 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImIzMzkxZjU5LThjNjEtNDkwZS1hZDU4LTQ4MDA1MDgyNjhkMiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjZkMTFhNTZmLWI2NmUtNDRhOC05MjNkLTBiNWEyMmI4YWY0NyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2OTJhYzliLWE2M2YtMDllOS1mNTFlLTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 04/11 - Requirement 04)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjgwNzRiZjZmLWVjOGMtNDkzZi04MWMzLWMzNDUzNzdjZmIyNSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjFkZTk1Mjc5LTY2MDYtNDMyZS04MjljLTdlNDQzMWU0Nzc5YiJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 04/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error 'Cannot find libsystemd or libsystemd-journal:' when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 04 - Gather information about any recent ansible-builder execution attempts, including command history or logs:",[0m
+[0;32m        "  Task: Check recent ansible-builder commands in shell history",[0m
+[0;32m        "  Command: for user_home in /home/* /root; do\n  [ -f \"$user_home/.bash_history\" ] && echo \"=== History from $user_home/.bash_history ===\" && grep -i \"ansible-builder\" \"$user_home/.bash_history\" | tail -20;\ndone 2>/dev/null || true\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 04/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRkMmZlZDVkLTNiMDEtNGUyYi04MDJhLWQ0NjU4MjIzODkxNyJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part05.yml
+============================================================
+[KeyJ1dWlkIjogImVjYTZkODBmLTcxYzUtNDYwMC05ZTUyLTI1MjE5YzM0NTU2ZiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjJlZThlOTQ3LWRhZDctMGVhYy0xNDM3LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjJlZThlOTQ3LWRhZDctMGVhYy0xNDM3LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjc2Nzc4OTQxLTY1ODctNGNkMy04YWQzLTA0Y2M5ODAyMWQ0ZSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImFjNGE3MzE5LTc4ZTgtNDM1ZS1iN2ZmLTFlMmMxYmE1Y2Q4ZiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjJlZThlOTQ3LWRhZDctMGVhYy0xNDM3LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY4ZGM1YjM1LTlhZDYtNDFiNS1iMzEzLTUwNjdkMDE2NmVhYyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjViZTU5ZjIyLWE3MzctNGMyMi05ZGE0LWMzNjFjNWFmNGQ2OSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjJlZThlOTQ3LWRhZDctMGVhYy0xNDM3LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 05: Find and read ansible-builder definition files] ****************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjIwNzE4NjM1LTc5OGEtNDRmMC04MDAxLWFhZjBlODZjMzJiZCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImE3NGI5OGU2LWRlMzUtNDQyZS05NDI2LWVhMGY4MWI4MzAzOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjJlZThlOTQ3LWRhZDctMGVhYy0xNDM3LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 05 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjNlMzNiZGFiLWU3YzItNGY5YS1iMDYxLTFhODc1YTEwN2UwZSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImM2YzVkNWMxLTQzYjctNDU0Ni04Y2NlLWM5MmVkMWE4MzA3NyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjJlZThlOTQ3LWRhZDctMGVhYy0xNDM3LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 05/11 - Requirement 05)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImIwYWFkM2ZkLTQwMDQtNDcxMi1hMzdmLWE1NmVjNTQ3MjA3MCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjM0ZTVmNGM0LWFmNDEtNDk3MC1iZWQ1LTg4YjExMTg1MTIxOCJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 05/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 05 - Retrieve the content of any ansible-builder definition files (e.g., execution-environment.yml) present on the system:",[0m
+[0;32m        "  Task: Find and read ansible-builder definition files",[0m
+[0;32m        "  Command: find / -type f \\( -name 'execution-environment.yml' -o -name 'execution-environment.yaml' \\) 2>/dev/null | head -20 | while read file; do echo '=== File: $file ==='; cat '$file'; echo ''; done\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: === File: /usr/share/ansible/collections/ansible_collections/ansible/hub/meta/execution-environment.yml ===\n---\n# Copyright (c) Ansible Project\n# GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)\n# SPDX-License-Identifier: GPL-3.0-or-later\n\n# List your controller-side system package and/or Python package requirements\n# if exist in the files specified below to support easy execution environments building for your collection users\n# https://ansible.readthedocs.io/en/latest/getting_started_ee/index.html\n# See https://ansible.readthedocs.io/projects/builder/en/latest/collection_metadata/#how-to-verify-collection-level-metadata\n# to learn how to test your configuration.\n\n# Do not delete these files even if the collection has no dependencies!\n# If you delete them, ansible-builder will use bindep.txt and requirements.txt\n# from the collection root by default. Especially requirements.txt in the root is often\n# used for test/build/development requirements for the collection, that are\n# not needed for end-users to use the collection. Ansible-builder installing these\n# would increase the EE size and increase the chance of dependency collisions.\n\ndependencies:\n  python: meta/ee-requirements.txt\n  system: meta/ee-bindep.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/cisco/intersight/meta/execution-environment.yml ===\n---\nversion: 1\n\ndependencies:\n  python: requirements.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/amq_broker/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/data_grid/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/eap/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/jws/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/rhbk/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/rhel_system_roles/execution-environment.yml ===\n---\nversion: 1\n\nbuild_arg_defaults:\n  EE_BASE_IMAGE: quay.io/ansible/ansible-runner:latest\n\nansible_config: 'ansible.cfg'\n\ndependencies:\n  system: bindep.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/rhv/meta/execution-environment.yml ===\n---\nversion: 1\ndependencies:\n  system: bindep.txt\n  galaxy: requirements.yml\n  python: requirements.txt\n\nadditional_build_steps:\n  prepend:\n    - RUN pip3 install --upgrade pip setuptools\n    # Workaround for https://bugzilla.redhat.com/2024629\n    # - RUN dnf copr enable -y ovirt/ovirt-master-snapshot\n    - RUN rpm --import https://download.copr.fedorainfracloud.org/results/ovirt/ovirt-master-snapshot/pubkey.gpg\n    - RUN dnf --repofrompath=ovirt-master-snapshot,https://download.copr.fedorainfracloud.org/results/ovirt/ovirt-master-snapshot/centos-stream-8-x86_64/ install -y ovirt-release-master\n    - RUN yum install ovirt-ansible-collection -y\n  append:\n    - RUN ls -la /usr/share/ansible/collections/ansible_collections/\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/runtimes_common/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/satellite/meta/execution-environment.yml ===\n---\nversion: 3\n\nimages:\n  base_image:\n    name: quay.io/centos/centos:stream9\n\ndependencies:\n  # File paths are relative to collection root folder when collection is\n  # installed but relative to meta/ when it is built, so we need symlink magic\n  # See https://github.com/ansible/ansible-builder/issues/406#issuecomment-1195584188\n  python: requirements.txt\n  system: bindep.txt\n  ansible_core:\n    package_pip: ansible-core\n  ansible_runner:\n    package_pip: ansible-runner\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/satellite_operations/meta/execution-environment.yml ===\n---\nversion: 1\n\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:latest'\n\ndependencies:\n  python: requirements.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/sso/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/automation-controller/collections/ansible_collections/azure/azcollection/meta/execution-environment.yml ===\ndependencies:\n  python: requirements.txt\nversion: 1",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 05/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI5NTRiODUyLWE1MGYtNDkwMi1iMmRiLWQwZGVhODVjZWYyZCJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part06.yml
+============================================================
+[KeyJ1dWlkIjogIjFiMDBmOTdiLWQ2OTMtNGQ2OC1hMWNiLTc1NDc1MmFkNGUzZiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjlhOWY5YjZkLTBjZjYtMTAyYi0zZTE2LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjlhOWY5YjZkLTBjZjYtMTAyYi0zZTE2LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQxMmVkMGIyLTNhOTUtNGRhMS1hY2I1LTRiNzc1ZGU4M2JkMiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjQyYTM3NTEzLTkzZTAtNGE5Yy1hYmU4LWRhODg2ZTM0NTAxOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjlhOWY5YjZkLTBjZjYtMTAyYi0zZTE2LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjM5MTNjNzE5LTliNzEtNGY3Yi1iODI0LTc5NWQxZTMzNmE1NyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjJhZThjOGYzLWM5OTgtNDkyNy1iOTkxLTI4MTgwN2NiN2MxMyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjlhOWY5YjZkLTBjZjYtMTAyYi0zZTE2LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 06: Search for ansible-builder definition files and extract base image] ********************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQ1YWYxNTFiLTEzNzYtNDJhNC1hMmY3LTc1MzM2ODE5N2VlZCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjI1ODAwN2FjLWY1YmQtNDI1NS05MmFhLTI0MDViMThhMGNjYSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjlhOWY5YjZkLTBjZjYtMTAyYi0zZTE2LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 06 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjg3ZjVjNzVlLTE5NmQtNGNlNi04ZjIxLWRmMjVmMzY3ZWZkMyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjViYWJiMzEzLTcwYWYtNDZjOS1iYTM3LWZjYTA2MWUzNTZmYiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjlhOWY5YjZkLTBjZjYtMTAyYi0zZTE2LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 06/11 - Requirement 06)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjg5ODUxMGNiLWE4NGMtNDVjOS1hNWM4LTYyY2I0NDE3ODE3NyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImFlZjM1YjUzLWNiMGEtNGRlYS1iNjU5LTFhOTliODJiOGNhZSJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 06/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error 'Cannot find libsystemd or libsystemd-journal:' when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 06 - Collect the base image specified in any found ansible-builder definition files:",[0m
+[0;32m        "  Task: Search for ansible-builder definition files and extract base image",[0m
+[0;32m        "  Command: find /etc /opt /home /root -type f -name '*.yml' -o -name '*.yaml' | xargs grep -l 'ansible-builder\\\\|execution-environment' | head -5 | while read file; do echo '=== File: $file ==='; grep -E '^\\\\s*(base_image|from):' \\\"$file\\\" || echo 'No base_image/from found'; echo ''; done\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: === File: /home/jin/ai/generate-palybook/.venv/lib/python3.13/site-packages/ansible_navigator/data/settings-sample.template.yml ===\nNo base_image/from found\n\n=== File: /home/jin/ai/generate-palybook/ansible-navigator.yml ===\nNo base_image/from found\n\n=== File: /home/jin/ai/generate-palybook/playbooks/verification/7101627/kcs_verification_7101627_part02.yml ===\nNo base_image/from found\n\n=== File: /home/jin/ai/generate-palybook/playbooks/verification/7101627/kcs_verification_7101627_part03.yml ===\nNo base_image/from found\n\n=== File: /home/jin/ai/generate-palybook/playbooks/verification/7101627/kcs_verification_7101627_part04.yml ===\nNo base_image/from found",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 06/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjNiNzlhOTgzLTk2OGQtNDc1MC1iNDUyLTU4OWRlNTVhOGQwNSJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part07.yml
+============================================================
+[KeyJ1dWlkIjogIjkwMmRkMTgyLThiMWQtNDg4OC04MmExLTk1Y2I1ZjcxNjBmMSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjA2OGNiOWM5LWFmMmQtZGU4NS1jNGU4LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2OGNiOWM5LWFmMmQtZGU4NS1jNGU4LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjRhODdjODljLTVjNjUtNDk4YS1iYzgwLTU1MmM4NWJhNDcyNiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImIyNzc2MGMxLTlhNWYtNDE4OC05YTU0LWQ3ZjlkNGZlOTE0NyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2OGNiOWM5LWFmMmQtZGU4NS1jNGU4LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImUwMTg4ZGIwLTY5YWMtNGZmNS1hNTEyLWUxMGE4MGE1ZTJiZCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImRjZWZhNWEwLTgyM2YtNDVmNy05NmQ1LTNiOTlhMjRiOWY2YiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2OGNiOWM5LWFmMmQtZGU4NS1jNGU4LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 07: Check recent ansible-builder logs for errors] ******************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImQ2ZDE5NzlhLTQyNDQtNGRhOS1hMDg4LThiYjY3MmM3OGEwZiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImQ2ZmQ0ZmUzLTJlZGEtNGU3Yi05M2E0LWViNTc4MTY4ZDAwYyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2OGNiOWM5LWFmMmQtZGU4NS1jNGU4LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 07 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjJiZGMzZTBhLTliNWQtNGJmOS05ZjJhLWU5ZWIxNDRhNTczMCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImE3NzAyMDRhLTA0ZjMtNDhiYi05Yzk2LTdkNWEzZjM3YjJiYSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2OGNiOWM5LWFmMmQtZGU4NS1jNGU4LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 07/11 - Requirement 07)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImZjYzI3MmFhLTlhZDctNDBjNy05MmNlLThjODQzZTA3MzZjNCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImYxNGM2ZTNiLWQ5ZDItNDUwZC1iY2E2LWZmZGIzZGVmZThjMSJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 07/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 07 - Gather logs from recent ansible-builder build processes, specifically looking for error output:",[0m
+[0;32m        "  Task: Check recent ansible-builder logs for errors",[0m
+[0;32m        "  Command: journalctl -u ansible-builder --since \"1 day ago\" 2>/dev/null ||\nfind /var/log -type f -name \"*ansible-builder*\" -o -name \"*builder*\" 2>/dev/null |\nhead -5 | xargs tail -n 50 2>/dev/null ||\necho \"No ansible-builder logs found\"\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: -- No entries --",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 07/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImE4MDk1M2JhLWUwZjYtNGRiZi1iMDBkLWQxNGI4OWI2ZTVkYiJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part08.yml
+============================================================
+[KeyJ1dWlkIjogIjIwYTgzMmU5LTk0ZmEtNDcyNi04Y2ZiLTQ3ZGRhYThlYjViMSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjY2NTliYjc1LThkZjAtYWJlNC00MDYxLTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY2NTliYjc1LThkZjAtYWJlNC00MDYxLTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhNzMzYjZiLTJhZjMtNDczMS1iYmJmLWIzNWJlNjVkNWNiNCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjliZTJmYTZjLThiYWMtNGIwZi1iZjliLWI5MWY0ZDM1NDMwNSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY2NTliYjc1LThkZjAtYWJlNC00MDYxLTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQ1YTM5NDFjLWE3NzEtNDVmZi1hZmQzLTE1YmZlY2ZiMjQwYyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImM5MjgyMzhiLWNkNTMtNDVhNS1hNDFkLTAwODg1NzJkNDk0MSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY2NTliYjc1LThkZjAtYWJlNC00MDYxLTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 08: Check libsystemd and pkg-config packages] **********************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjc1ZTEwZGQ5LWEyNGQtNGQyMS04ZGU4LTRmZmI0MWU3MjRiNiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImU5YWE5OWE3LWEyOWMtNGI2YS04Mzg4LTEwZmY4MjY3NjVkMCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY2NTliYjc1LThkZjAtYWJlNC00MDYxLTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 08 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImYzMzA3N2IwLTRlZTQtNDYwNC04MjRlLTJhYTg1MmQ1Y2Q2YyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjNiMTJjYTFmLWZlNzAtNDQ1NS1hNGIyLWJkNDk2YmRjY2JhZCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY2NTliYjc1LThkZjAtYWJlNC00MDYxLTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Generate data collection report (Part 08/11 - Requirement 08)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjFiMmU0MGYxLTcxYWUtNGJkOC1iNmMwLWNhZTQzMTk5OTY1OCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImM2MDhmYWExLWRiNjctNDk4Ny1hODBkLTdmNTYxNDVhZGE5ZSJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 08/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 08 - Collect the output of any system package manager (yum/dnf) commands related to libsystemd or pkg-config packages:",[0m
+[0;32m        "  Task: Check libsystemd and pkg-config packages",[0m
+[0;32m        "  Command: dnf list installed | grep -E 'libsystemd|pkg-config' || yum list installed | grep -E 'libsystemd|pkg-config' || true",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 08/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImQ0Njk3ZDY5LTA2N2UtNGFiYy05MmFhLTFhZDlhZjE1OWEzNiJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=5   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part09.yml
+============================================================
+[KeyJ1dWlkIjogIjI5NGE4ZGNhLWJkMTMtNDBjYi04YWU4LWUxOThlOTNkMDkzZCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwZiJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQ4NWFhMDcwLWRkZDEtNDE0NS05NGI1LTMxZDM1ZDk3NzZiMSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImVlZGVkYzZlLWVmNDUtNGUyMi1iZTVhLTUyMWYzODQ3YjYwOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI4ZDhiMTg4LTllMDItNDYwOC05ZmFjLTg0M2Q3OTU4ZjFhZCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjAwNTUzMWUwLTg2NTUtNDc4Yi04YmQyLTgyMjU0ZmRlY2Q2MCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 03: Get ansible-builder version] ***********************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU0ZDM1M2NjLTkxODctNDlkYi1iZjBmLTNkZDExYzNjZTM4YyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjUxMzE4YmJmLTg3MjgtNDc2Yy1hZTRkLTY5ODVmODZmNGIwYSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Req 03: Get ansible-builder location] **********************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImMxNmRlMjgxLWQ1ZGMtNDA0YS1iZDE4LTcyNjI0N2Y5YmU5MyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImY4Njg3MTZhLWU2YzktNGE0Yi04MWExLTU4NzhlOTBmMzhkNCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Store requirement 03 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY1MWM2NTQxLTFmZWQtNDI3Mi1iMDA4LWM5YWIyNmYxZjZmNCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImE3ZTQ3ZmYwLTIyOWUtNGRiMi04OGQwLTdmZmFlNmE5NTEwNyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwOCJ9[64D[K
+TASK [Req 09: Get PKG_CONFIG_PATH environment variable] **********************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjE1Njk2NmQwLTMyNzEtNGZmNy05YWY4LWY4OTg3NTlhOWM1YSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjlkNzM3NjJjLWJkMGYtNGYzZC05MGE1LTA4YjcyZjVkY2M3NSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwOSJ9[64D[K
+TASK [Store requirement 09 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImIwOTgzMjI1LWQ3MTAtNDMwYS04ODM1LWI4ZmIwZDFmY2M0YiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjZkZjEyZmI0LTVmZDctNDQxMy05ZWY4LWNjOTY5NzgyOTBiZiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwYSJ9[64D[K
+TASK [Generate data collection report (Part 03/11 - Requirement 03)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU4ZTVlZjhhLTM5MTUtNDI4Yy05ZGU0LWVlYTZhOWYxYWVkNyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImViYjBhNGE4LWM1MjQtNGUwMy05NTQ4LTQwNGQyZjc4ZmU2YSJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 03/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 03 - Collect the installed version and location of the ansible-builder tool:",[0m
+[0;32m        "  Task: Get ansible-builder version and location",[0m
+[0;32m        "  Command: ansible-builder --version 2>/dev/null || echo \"ansible-builder not found\"\nwhich ansible-builder 2>/dev/null || command -v ansible-builder 2>/dev/null || echo \"Not found\"\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: Version: ansible-builder not found\nLocation: Not found\n",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 03/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlNzU1MzAxLTIxZWItNWFlOC05N2JiLTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Generate data collection report (Part 09/11 - Requirement 09)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjE4NDNmMGRlLTE0MTMtNGY1OC05ZTA5LTBkNzA1YzY0OTQwYSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImY0M2I5MzQzLWMzNjYtNGJlZC04NzAyLTJiZTY4NjU0Y2VhNiJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 09/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 09 - Retrieve the current PKG_CONFIG_PATH environment variable value:",[0m
+[0;32m        "  Task: Get PKG_CONFIG_PATH environment variable",[0m
+[0;32m        "  Command: echo \\\"$PKG_CONFIG_PATH\\\"\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 09/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRjOTI3YzRhLTliN2YtNDkyMy1iZjYyLWY5YWRhNjJlMTk0MyJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=9   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part10.yml
+============================================================
+[KeyJ1dWlkIjogIjRkMDdlZTBhLTZjMTMtNDg1YS04NTc0LTc1ODU3MzVkYjg2ZSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAxMCJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2Y2VjOGQyLTU1OGEtNGYxMC1hM2IzLWI5ZmNkM2ViYjUyYyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjgxMDk2ZDNiLWI5YjctNDc0Mi05YWYwLWIwOWQwYjc0MjYyMiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImYxZjcwYTZkLTg3MTgtNGIxNC1hZDVjLWEzMGQ5YTQ3YmQ3YSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjIxNWQ1OTYyLTY4YzMtNGYwNi1hNTQyLTAzMzM4N2MwYzcxOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 4: Search for ansible-builder commands in shell history] ***********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImZjMzBjY2MzLTBlNzQtNGI0YS1hY2IwLTVlMzAwZTkzZmRjMSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjhhMGVkMzFmLWE0NjgtNDQyOC1iZTQ5LTM0MjYwNmVkZTRhOSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Req 4: Search for ansible-builder in journal logs] *********************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImEyMDMzMGVmLTcyZDEtNGY0NC05NDY1LTc5NjA4ZDFhZDZhOSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImEzYjliMTNiLTE4NWItNDE4NS04MGNhLWFkMTAyN2I2ZmJlNCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Req 4: Check for ansible-builder log files] ****************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjczNWQ3M2Q5LTljZjYtNDAxZC04OGQ5LThkMzhmNThmMTUyMSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjA2MTAzNjMyLTYzNTUtNDVhZC1hYjM5LWU2NzY0M2VhY2IzOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwOCJ9[64D[K
+TASK [Store requirement 4 details] *******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA2MTlmYzQ0LTk2OTEtNDAwOC1iMmNjLWQwNzBhYmQzMmNjYyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImNlZThmYWY2LWQxOTQtNGE0Mi1hMzJjLTEyZDZkMmY1NDk1NiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwOSJ9[64D[K
+TASK [Req 10: Check podman and docker service status and version] ************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjIzNmFjYjkyLWIzYTItNGY4Yi04ODYyLWI3NzFkMDc1ZDkzMyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjNiNGNiNDk1LWU3M2YtNGE2ZC1iNWRhLWYyNWU0ZjU1MmFhZSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwYSJ9[64D[K
+TASK [Store requirement 10 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImY4NjI2NDZlLTQ0YzEtNDk0MS1hMDZkLTFjOWQwMzBmNjlmNSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjk4YjU1ZTZkLTA4NGMtNDMxNy04OGNlLThiNTIxZGViNWRlZCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Generate data collection report (Part 4/11 - Requirement 4)] ***********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImZiYzgyNTUxLTY4YjctNDk1MC1iYjEyLTAxZjVkNzBkMTQwMiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImMyZTY4N2I0LTY4MjQtNGUxMi05MmVlLWE3MDdhMTU1MTc0NCJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 4/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 4 - Gather information about any recent ansible-builder execution attempts, including command history or logs:",[0m
+[0;32m        "  Task: Search for ansible-builder in history, logs, and files",[0m
+[0;32m        "  Command: # History check\nfor hist_file in ~/.bash_history ~/.zsh_history; do\n  if [ -f \"$hist_file\" ]; then\n    echo \"=== History file: $hist_file ===\"\n    grep -i \"ansible-builder\" \"$hist_file\" | tail -20\n    echo \"\"\n  fi\ndone\n# Journal check\njournalctl --since=\"1 week ago\" --no-pager | grep -i \"ansible-builder\" | tail -50\n# Log files check\nfind /var/log /tmp /home -type f \\( -name \"*ansible-builder*\" -o -name \"*ansible_builder*\" \\) 2>/dev/null | head -20\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: === Shell History ===\n\n\n=== Journal Logs ===\n\n\n=== Log Files Found ===\n/home/jin/ai/generate-palybook/.venv/bin/ansible-builder\n",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 4/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI2OWIxYjlmLTJmYWItMDRmOC00ZTA0LTAwMDAwMDAwMDAwYyJ9[64D[K
+TASK [Generate data collection report (Part 10/11 - Requirement 10)] *********************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjEyOTRmZmZkLTc2MjQtNDE1Ni05YjZiLWIxM2M2YjQ4MTgzOCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImEwMjIwMTFjLTlkYmQtNDk4MC04NWZhLWRkMzI0NjhmYWJiMSJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT (Part 10/11)",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 10 - Collect the version and status of the podman or docker service, if applicable:",[0m
+[0;32m        "  Task: Check podman and docker service status and version",[0m
+[0;32m        "  Command: for service in podman docker; do\n  if systemctl list-unit-files | grep -q \"^${service}\\.service\"; then\n    echo \"=== ${service} ===\"\n    systemctl status ${service} --no-pager\n    ${service} --version 2>/dev/null || echo \"Version command failed\"\n    echo \"\"\n  fi\ndone\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT (Part 10/11)",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVkNjUyOTA3LTBlNTUtNGI4OS04YWMzLTkwZTZmZGVmNGQ2MSJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=10  [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+
+============================================================
+Playbook: kcs_verification_7101627_part11.yml
+============================================================
+[KeyJ1dWlkIjogIjFlNzIyNzg4LTg5YzctNGIyNi1hN2JiLTBkNmMwYWNkNGM4NCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for KCS 7101627] ***************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwZSJ9[64D[K
+TASK [Gathering Facts] *******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImIwMjVlYWJhLTYxM2EtNGU3Yy1iNzA0LTk4N2M0YjI5MzI0YyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjkyMDgyYWIyLWY4ZjQtNGRiMS05M2I0LWY5MmVlOWEzZWNlNiJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] *********************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjczMTE3ZGI4LTQxYTEtNDdlYy04ZTBmLTcxZWNhNmM3YTRjYiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImVhMzc1ZmM5LTQ4MjEtNGUxNS05Y2RkLWQ3N2I3YTBkMGMxZSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 5: Find ansible-builder definition files] **************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImNiYWZhNDNiLWY0ZTgtNGUzMi04MzllLWNjZjY5NWUyYjZmYiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjU0YmZmZTg0LTkyNGQtNGRlMi05YTk5LWEyNzhlNTZmYjFiOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Req 5: Read found definition files] ************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjFjZWI3ODA0LTdjZjEtNDdlZi1iNzY5LWNjN2I3MTA2MTM2MyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImY1ZDdmNTEwLTlmMGUtNDU1Yi05MjQ3LTJhZGI3MDg1MjFjOCJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Store requirement 5 details] *******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjRjMjE5NzMwLTljOTAtNDU0Zi1hMjNlLTUzNjZhZDA5YjllYiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjRmMTliMzJlLWZhMmQtNDA4NS05ZWJjLTQ0ZjU3ZDc1OWU1YyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwOCJ9[64D[K
+TASK [Req 11: List local container images] ***********************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImQzZDdhZGFmLTBjMmEtNGFjZS1hNzA3LTRhZDRjMDVjZjU1OCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjlhYzRmMjQyLTVmMDEtNGQzYS1iY2ZhLWZhNDFjNzUxNzE3MyJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwOSJ9[64D[K
+TASK [Store requirement 11 details] ******************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjAwN2UyZWZmLTUwMzctNGRhZS05ZWYzLWNlMDBmY2Q3NzRmOSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImYyZDg1OWUyLTEwZWQtNGFkZi1iYjRmLWVhYTM1ZGQ3NzlkMSJ9[64D[K[0;32mok: [192.168.122.16][0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhZjBhYzE2LTJmYmItMTgxYi1hNzU0LTAwMDAwMDAwMDAwYSJ9[64D[K
+TASK [Generate data collection report (Part 5 and 11)] ***********************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjFlMGZlYWYyLThjOTMtNGRlZi04YTM4LTY4ZDBhZmE5Y2Y1MCJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjQzNmFjYjMyLTdiMDQtNGQwOS05N2U1LWEzOTliNzM2ZWUwOSJ9[64D[K[0;32mok: [192.168.122.16] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        DATA COLLECTION REPORT",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference KCS Article: https://access.redhat.com/solutions/7101627",[0m
+[0;32m        "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 5 - Retrieve the content of any ansible-builder definition files (e.g., execution-environment.yml) present on the system:",[0m
+[0;32m        "  Task: Find and read ansible-builder definition files",[0m
+[0;32m        "  Command: find / -type f \\( -name \"execution-environment.yml\" -o -name \"*ansible*builder*.yml\" \\) 2>/dev/null | head -20\nif files found, cat each file\n",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: === File: /usr/share/ansible/collections/ansible_collections/ansible/hub/meta/execution-environment.yml ===\n---\n# Copyright (c) Ansible Project\n# GNU General Public License v3.0+ (see LICENSES/GPL-3.0-or-later.txt or https://www.gnu.org/licenses/gpl-3.0.txt)\n# SPDX-License-Identifier: GPL-3.0-or-later\n\n# List your controller-side system package and/or Python package requirements\n# if exist in the files specified below to support easy execution environments building for your collection users\n# https://ansible.readthedocs.io/en/latest/getting_started_ee/index.html\n# See https://ansible.readthedocs.io/projects/builder/en/latest/collection_metadata/#how-to-verify-collection-level-metadata\n# to learn how to test your configuration.\n\n# Do not delete these files even if the collection has no dependencies!\n# If you delete them, ansible-builder will use bindep.txt and requirements.txt\n# from the collection root by default. Especially requirements.txt in the root is often\n# used for test/build/development requirements for the collection, that are\n# not needed for end-users to use the collection. Ansible-builder installing these\n# would increase the EE size and increase the chance of dependency collisions.\n\ndependencies:\n  python: meta/ee-requirements.txt\n  system: meta/ee-bindep.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/cisco/intersight/meta/execution-environment.yml ===\n---\nversion: 1\n\ndependencies:\n  python: requirements.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/amq_broker/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/data_grid/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/eap/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/jws/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/rhbk/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/rhel_system_roles/execution-environment.yml ===\n---\nversion: 1\n\nbuild_arg_defaults:\n  EE_BASE_IMAGE: quay.io/ansible/ansible-runner:latest\n\nansible_config: 'ansible.cfg'\n\ndependencies:\n  system: bindep.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/rhv/meta/execution-environment.yml ===\n---\nversion: 1\ndependencies:\n  system: bindep.txt\n  galaxy: requirements.yml\n  python: requirements.txt\n\nadditional_build_steps:\n  prepend:\n    - RUN pip3 install --upgrade pip setuptools\n    # Workaround for https://bugzilla.redhat.com/2024629\n    # - RUN dnf copr enable -y ovirt/ovirt-master-snapshot\n    - RUN rpm --import https://download.copr.fedorainfracloud.org/results/ovirt/ovirt-master-snapshot/pubkey.gpg\n    - RUN dnf --repofrompath=ovirt-master-snapshot,https://download.copr.fedorainfracloud.org/results/ovirt/ovirt-master-snapshot/centos-stream-8-x86_64/ install -y ovirt-release-master\n    - RUN yum install ovirt-ansible-collection -y\n  append:\n    - RUN ls -la /usr/share/ansible/collections/ansible_collections/\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/runtimes_common/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/satellite/meta/execution-environment.yml ===\n---\nversion: 3\n\nimages:\n  base_image:\n    name: quay.io/centos/centos:stream9\n\ndependencies:\n  # File paths are relative to collection root folder when collection is\n  # installed but relative to meta/ when it is built, so we need symlink magic\n  # See https://github.com/ansible/ansible-builder/issues/406#issuecomment-1195584188\n  python: requirements.txt\n  system: bindep.txt\n  ansible_core:\n    package_pip: ansible-core\n  ansible_runner:\n    package_pip: ansible-runner\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/satellite_operations/meta/execution-environment.yml ===\n---\nversion: 1\n\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:latest'\n\ndependencies:\n  python: requirements.txt\n\n=== File: /usr/share/ansible/collections/ansible_collections/redhat/sso/meta/execution-environment.yml ===\n---\nversion: 1\nbuild_arg_defaults:\n  EE_BASE_IMAGE: 'quay.io/ansible/ansible-runner:stable-2.12-devel'\ndependencies:\n  galaxy: requirements.yml\n  python: requirements.txt\n  system: bindep.txt\nadditional_build_steps:\n  append:\n    - RUN alternatives --set python /usr/bin/python3\n\n=== File: /usr/share/automation-controller/collections/ansible_collections/azure/azcollection/meta/execution-environment.yml ===\ndependencies:\n  python: requirements.txt\nversion: 1",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 11 - Retrieve the list of locally available container images, particularly those from registry.redhat.io:",[0m
+[0;32m        "  Task: List local container images",[0m
+[0;32m        "  Command: podman images --all 2>/dev/null || docker images --all 2>/dev/null || echo 'No container runtime found'",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: No container runtime found",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        END OF DATA COLLECTION REPORT",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI5YzQ3ZjRmLTM2YTUtNGVjOS1iM2VjLTI3YzE5NDE4MDY2NSJ9[64D[K
+PLAY RECAP *******************************************************************************************************************************************************************************
+[0;32m192.168.122.16[0m             : [0;32mok=8   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K
+

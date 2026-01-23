@@ -1,0 +1,71 @@
+---
+- name: Data Collection for KCS 7090789
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/7090789"
+    req_06: "Collect the user's command history or recent processes to identify if ansible-builder build commands were executed"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_06: "Not collected yet"
+        task_06_name: "Not executed"
+        task_06_cmd: "N/A"
+        task_06_rc: -1
+
+    # Requirement 6: Collect the user's command history or recent processes to identify if ansible-builder build commands were executed
+    - name: "Req 06: Check for ansible-builder commands in history and processes"
+      shell: |
+        {
+          echo "=== Command History (last 100) ==="
+          history 100 2>/dev/null | grep -i ansible-builder || echo "No ansible-builder commands found in history"
+          echo ""
+          echo "=== Recent Processes (ps aux) ==="
+          ps aux 2>/dev/null | grep -i ansible-builder || echo "No ansible-builder processes found"
+          echo ""
+          echo "=== Current User's .bash_history ==="
+          tail -100 ~/.bash_history 2>/dev/null | grep -i ansible-builder || echo "No ansible-builder commands in .bash_history"
+        }
+      register: result_06
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 06 details
+      set_fact:
+        task_06_name: "Check for ansible-builder commands in history and processes"
+        task_06_cmd: |
+          {
+            echo "=== Command History (last 100) ==="
+            history 100 2>/dev/null | grep -i ansible-builder || echo "No ansible-builder commands found in history"
+            echo ""
+            echo "=== Recent Processes (ps aux) ==="
+            ps aux 2>/dev/null | grep -i ansible-builder || echo "No ansible-builder processes found"
+            echo ""
+            echo "=== Current User's .bash_history ==="
+            tail -100 ~/.bash_history 2>/dev/null | grep -i ansible-builder || echo "No ansible-builder commands in .bash_history"
+          }
+        task_06_rc: "{{ result_06.rc | default(-1) }}"
+        data_06: "{{ result_06.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 06/09 - Requirement 06)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 06/09)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "Building custom execution image using ansible-builder fails due to conflict for  package  python39-jmespath on Ansible Automation Platform."
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 06 - {{ req_06 }}:"
+          - "  Task: {{ task_06_name | default('Task not recorded') }}"
+          - "  Command: {{ task_06_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_06_rc | default(-1) }}"
+          - "  Data: {{ data_06 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 06/09)"
+          - "========================================================"

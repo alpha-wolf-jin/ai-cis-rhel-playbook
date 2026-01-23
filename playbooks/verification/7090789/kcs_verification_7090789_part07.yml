@@ -1,0 +1,56 @@
+---
+- name: Data Collection for KCS 7090789
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/7090789"
+    req_07: "Collect any recent logs or error messages from ansible-builder execution (e.g., from standard error output, log files, or shell history)"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_07: "Not collected yet"
+        task_07_name: "Not executed"
+        task_07_cmd: "N/A"
+        task_07_rc: -1
+
+    # Requirement 7: Collect any recent logs or error messages from ansible-builder execution
+    - name: "Req 07: Search for ansible-builder logs and errors"
+      shell: >
+        find /var/log -type f -name '*.log' 2>/dev/null | 
+        xargs grep -l -i 'ansible-builder\|python39-jmespath' 2>/dev/null |
+        head -5 |
+        xargs tail -n 50 2>/dev/null || echo "No relevant log files found"
+      register: result_07
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 07 details
+      set_fact:
+        task_07_name: "Search for ansible-builder logs and errors"
+        task_07_cmd: |
+          find /var/log -type f -name '*.log' | xargs grep -l -i 'ansible-builder\|python39-jmespath' | head -5 | xargs tail -n 50
+        task_07_rc: "{{ result_07.rc | default(-1) }}"
+        data_07: "{{ result_07.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 07/09 - Requirement 07)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 07/09)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "Building custom execution image using ansible-builder fails due to conflict for  package  python39-jmespath on Ansible Automation Platform."
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 07 - {{ req_07 }}:"
+          - "  Task: {{ task_07_name | default('Task not recorded') }}"
+          - "  Command: {{ task_07_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_07_rc | default(-1) }}"
+          - "  Data: {{ data_07 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 07/09)"
+          - "========================================================"

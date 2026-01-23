@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""
+Generic Ansible Playbook Generator (LangGraph Version)
+
+This script wraps the existing playbook generator with LangGraph for better
+state management, retry logic, and workflow visualization.
+
+The interface (inputs, outputs, and main functions) remains exactly the same
+as deepseek_generate_playbook.py for compatibility.
+"""
+
+import os
+import sys
+from typing import TypedDict, Literal
+from dotenv import load_dotenv
+from langchain_deepseek import ChatDeepSeek
+from langgraph.graph import StateGraph, END
+
+# Import all functions from the original module
+from deepseek_generate_playbook import (
+    generate_playbook as _original_generate_playbook,
+    save_playbook,
+    check_playbook_syntax,
+    test_playbook_on_server,
+    analyze_playbook_output,  # New analysis function
+    # Keep argparse and main separate for now
+)
+
+# Load environment variables
+load_dotenv()
+
+## Initialize LLM model
+#model = ChatDeepSeek(
+#    model="deepseek-chat",
+#    temperature=0,
+#    max_tokens=None,
+#    timeout=None,
+#    max_retries=3
+#)
+
+# Define State for LangGraph workflow
+class PlaybookGenerationState(TypedDict):
+    """State for the playbook generation workflow."""
+    # Input parameters
+    playbook_objective: str
+    target_host: str
+    test_host: str
+    become_user: str
+    requirements: list[str]
+    example_output: str
+    filename: str
+    max_retries: int
+    
+    # Workflow state
+    attempt: int
+    playbook_content: str
+    syntax_valid: bool
+    test_success: bool
+    analysis_passed: bool  # New field for analysis result
+    analysis_message: str  # New field for analysis message
+    final_success: bool
+    error_message: str
+    test_output: str
+    final_output: str
+    
+    # Control flow
+    should_retry: bool
+    workflow_complete: bool
+
+
+def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Generate playbook using LLM."""
+    print(f"\n{'='*80}")
+    print(f"Attempt {state['attempt']}/{state['max_retries']}: Generating Ansible playbook...")
+    print("=" * 80)
+    print(f"Objective: {state['playbook_objective']}")
+    print(f"Test Host: {state['test_host']}")
+    if state['test_host'] != state['target_host']:
+        print(f"Target Host: {state['target_host']}")
+    print(f"Become User: {state['become_user']}")
+    print(f"Requirements: {len(state['requirements'])} items")
+    print("=" * 80)
+    
+    try:
+        # Use the original generate_playbook function
+        playbook = _original_generate_playbook(
+            playbook_objective=state['playbook_objective'],
+            target_host=state['test_host'],
+            become_user=state['become_user'],
+            requirements=state['requirements'],
+            example_output=state['example_output']
+        )
+        
+        # Display the generated playbook
+        print("\n📋 Generated Ansible Playbook:")
+        print("=" * 80)
+        print(playbook)
+        print("=" * 80)
+        
+        state['playbook_content'] = playbook
+        state['error_message'] = ""
+        
+    except Exception as e:
+        state['error_message'] = str(e)
+        state['playbook_content'] = ""
+        print(f"❌ Error generating playbook: {e}")
+    
+    return state
+
+
+def increment_attempt_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Increment attempt counter for retry."""
+    state['attempt'] += 1
+    print(f"\n🔄 Incrementing attempt counter: {state['attempt']}/{state['max_retries']}")
+    return state
+
+
+def save_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Save playbook to file."""
+    if state['playbook_content']:
+        save_playbook(state['playbook_content'], state['filename'])
+    return state
+
+
+def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Check playbook syntax."""
+    is_valid, error_msg = check_playbook_syntax(state['filename'], state['test_host'])
+    
+    state['syntax_valid'] = is_valid
+    if not is_valid:
+        state['error_message'] = error_msg
+        # Don't set should_retry here - let conditional edge decide
+        
+        if state['attempt'] < state['max_retries']:
+            print(f"\n⚠️  Syntax check failed on attempt {state['attempt']}/{state['max_retries']}")
+            print("🔄 Retrying with additional instructions to LLM...")
+            print("\n📋 Error Summary:")
+            error_lines = error_msg.split('\n')
+            for line in error_lines[:10]:
+                if line.strip():
+                    print(f"   {line}")
+            if len(error_lines) > 10:
+                print(f"   ... ({len(error_lines) - 10} more lines)")
+            
+            # Add error context to requirements for next attempt
+            error_msg_escaped = error_msg[:200].replace('{', '{{').replace('}', '}}')
+            state['requirements'].append(f"IMPORTANT: Previous attempt had syntax error: {error_msg_escaped}")
+    
+    return state
+
+
+def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Test playbook on test host."""
+    print("\n" + "=" * 80)
+    print(f"✅ Syntax Valid! Now testing on test host: {state['test_host']}...")
+    print("=" * 80)
+    
+    # Execute on test host with debug tasks skipped for cleaner analysis
+    test_success, test_output = test_playbook_on_server(
+        state['filename'],
+        state['test_host'],
+        check_mode=False,
+        verbose=True,
+        skip_debug=True  # Skip debug tasks for cleaner output to analyze
+    )
+    
+    state['test_success'] = test_success
+    state['test_output'] = test_output
+    
+    if test_success:
+        print("\n" + "=" * 80)
+        print(f"🎉 SUCCESS! Playbook validated on test host: {state['test_host']}!")
+        print("=" * 80)
+        print("\n✅ Test Execution Summary:")
+        print("   1. ✅ Syntax check passed")
+        print(f"   2. ✅ Test execution passed on {state['test_host']}")
+        print("   3. ✅ All requirements verified")
+        
+        # Show test output
+        print(f"\n📋 Full Test Execution Output from {state['test_host']}:")
+        print("=" * 80)
+        print(test_output)
+        print("=" * 80)
+    else:
+        state['error_message'] = test_output
+        # Don't set should_retry here - let conditional edge decide
+        
+        if state['attempt'] < state['max_retries']:
+            print(f"\n⚠️  Server test failed on attempt {state['attempt']}/{state['max_retries']}")
+            print("🔄 Retrying with test failure feedback to LLM...")
+            
+            # Add error feedback for retry
+            test_output_escaped = test_output[:300].replace('{', '{{').replace('}', '}}')
+            state['requirements'].append(f"IMPORTANT: Previous playbook failed testing: {test_output_escaped}")
+    
+    return state
+
+
+def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Analyze playbook output against requirements."""
+    test_success, test_output = test_playbook_on_server(
+        state['filename'],
+        state['test_host'],
+        check_mode=False,
+        verbose=False,
+        skip_debug=True  # Skip debug tasks for cleaner output to analyze
+    )
+    
+    state['test_success'] = test_success
+    state['test_output'] = test_output
+    
+    if test_success:
+        analysis_passed, analysis_message = analyze_playbook_output(
+            requirements=state['requirements'],
+            playbook_objective=state['playbook_objective'],
+            test_output=state['test_output']
+        )
+        
+        state['analysis_passed'] = analysis_passed
+        state['analysis_message'] = analysis_message
+        
+        if not analysis_passed:
+            state['error_message'] = analysis_message
+            # Don't set should_retry here - let conditional edge decide
+            
+            if state['attempt'] < state['max_retries']:
+                print(f"\n⚠️  Analysis failed on attempt {state['attempt']}/{state['max_retries']}")
+                print("🔄 Regenerating playbook with analysis feedback...")
+                
+                # Add analysis feedback to requirements
+                analysis_escaped = analysis_message[:500].replace('{', '{{').replace('}', '}}')
+                state['requirements'].append(f"""CRITICAL FIX REQUIRED: Output analysis shows the playbook does not correctly fulfill requirements.
+    
+Analysis Result:
+{analysis_escaped}
+
+INSTRUCTIONS TO FIX:
+1. Review the analysis feedback carefully
+2. Fix the logic errors in compliance checking
+3. Ensure ALL requirements are properly verified
+4. Make sure compliance determinations match actual task results""")
+        else:
+            print("\n✅ Playbook output verified! Requirements correctly fulfilled.")
+    
+    return state
+
+
+def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Execute playbook on target host."""
+    if state['test_host'] == state['target_host']:
+        # Same host, already executed
+        state['final_success'] = True
+        state['final_output'] = state['test_output']
+        state['workflow_complete'] = True
+        return state
+    
+    print("\n" + "=" * 80)
+    print(f"🚀 FINAL EXECUTION: Running playbook on target host: {state['target_host']}")
+    print("=" * 80)
+    print(f"\n📍 Executing on: {state['target_host']}")
+    print()
+    
+    final_success, final_output = test_playbook_on_server(
+        state['filename'],
+        state['target_host'],
+        check_mode=False,
+        verbose=False,
+        skip_debug=True  # Skip debug tasks on target host
+    )
+    
+    state['final_success'] = final_success
+    state['final_output'] = final_output
+    state['workflow_complete'] = True
+    
+    if final_success:
+        print("\n" + "=" * 80)
+        print(f"🎊 COMPLETE SUCCESS! Playbook executed on target: {state['target_host']}!")
+        print("=" * 80)
+        print("\n✅ Final Execution Summary:")
+        print("   1. ✅ Syntax check passed")
+        print(f"   2. ✅ Test execution passed on {state['test_host']}")
+        print(f"   3. ✅ Final execution passed on {state['target_host']}")
+        print("   4. ✅ All requirements verified")
+        
+        print(f"\n📋 Full Final Execution Output from {state['target_host']}:")
+        print("=" * 80)
+        print(final_output)
+        print("=" * 80)
+    else:
+        print("\n" + "=" * 80)
+        print(f"⚠️  Execution on target host {state['target_host']} had issues")
+        print("=" * 80)
+        print(f"\n📋 Full Execution Output from {state['target_host']}:")
+        print("=" * 80)
+        print(final_output)
+        print("=" * 80)
+    
+    return state
+
+
+def should_continue_after_syntax(state: PlaybookGenerationState) -> Literal["test_on_test_host", "retry", "end"]:
+    """Conditional edge: Decide what to do after syntax check."""
+    if not state['syntax_valid']:
+        if state['attempt'] < state['max_retries']:
+            return "retry"
+        else:
+            return "end"
+    return "test_on_test_host"
+
+
+def should_continue_after_test(state: PlaybookGenerationState) -> Literal["analyze_output", "retry", "end"]:
+    """Conditional edge: Decide what to do after test execution."""
+    if not state['test_success']:
+        if state['attempt'] < state['max_retries']:
+            return "retry"
+        else:
+            return "end"
+    return "analyze_output"  # Test passed, now analyze output
+
+
+def should_continue_after_analysis(state: PlaybookGenerationState) -> Literal["execute_on_target", "retry", "end"]:
+    """Conditional edge: Decide what to do after output analysis."""
+    if not state['analysis_passed']:
+        if state['attempt'] < state['max_retries']:
+            return "retry"
+        else:
+            return "end"
+    return "execute_on_target"  # Analysis passed, proceed to target
+
+
+def should_continue_after_final(state: PlaybookGenerationState) -> Literal["end"]:
+    """Conditional edge: After final execution, always end."""
+    return "end"
+
+
+def create_playbook_workflow() -> StateGraph:
+    """Create the LangGraph workflow for playbook generation."""
+    
+    # Create workflow graph
+    workflow = StateGraph(PlaybookGenerationState)
+    
+    # Add nodes
+    workflow.add_node("generate", generate_playbook_node)
+    workflow.add_node("save", save_playbook_node)
+    workflow.add_node("check_syntax", check_syntax_node)
+    workflow.add_node("test_on_test_host", test_on_test_host_node)
+    workflow.add_node("analyze_output", analyze_output_node)  # New analysis node
+    workflow.add_node("execute_on_target", execute_on_target_host_node)
+    workflow.add_node("increment_attempt", increment_attempt_node)  # Increment counter before retry
+    
+    # Define edges
+    workflow.set_entry_point("generate")
+    workflow.add_edge("generate", "save")
+    workflow.add_edge("save", "check_syntax")
+    workflow.add_edge("increment_attempt", "generate")  # After incrementing, regenerate
+    
+    # Conditional edges
+    workflow.add_conditional_edges(
+        "check_syntax",
+        should_continue_after_syntax,
+        {
+            "test_on_test_host": "test_on_test_host",
+            "retry": "increment_attempt",  # Go to increment node first
+            "end": END
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "test_on_test_host",
+        should_continue_after_test,
+        {
+            "analyze_output": "analyze_output",  # Test passed -> Analyze
+            "retry": "increment_attempt",  # Go to increment node first
+            "end": END
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "analyze_output",
+        should_continue_after_analysis,
+        {
+            "execute_on_target": "execute_on_target",  # Analysis passed -> Execute
+            "retry": "increment_attempt",  # Go to increment node first
+            "end": END
+        }
+    )
+    
+    workflow.add_conditional_edges(
+        "execute_on_target",
+        should_continue_after_final,
+        {
+            "end": END
+        }
+    )
+    
+    return workflow.compile()
+
+
+# Keep the same interface as the original script
+def generate_playbook(
+    playbook_objective: str,
+    target_host: str = "master-1",
+    become_user: str = "root",
+    requirements: list = None,
+    example_output: str = ""
+):
+    """
+    Generate Ansible playbook based on custom requirements.
+    This function maintains the same interface as the original.
+    
+    Args:
+        playbook_objective: Description of what the playbook should achieve
+        target_host: Default target host for the playbook
+        become_user: User to become (usually root)
+        requirements: List of requirement strings describing what the playbook should do
+        example_output: Example command output to provide context
+    
+    Returns:
+        str: Generated playbook content
+    """
+    # Use the original function for simple generation
+    return _original_generate_playbook(
+        playbook_objective=playbook_objective,
+        target_host=target_host,
+        become_user=become_user,
+        requirements=requirements,
+        example_output=example_output
+    )
+
+
+def main():
+    """Main execution function using LangGraph workflow."""
+    
+    # Import argparse logic from original (keep it the same)
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='Generate and execute Ansible playbooks using AI with LangGraph',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use all defaults
+  python3 langgraph_deepseek_generate_playbook.py
+  
+  # Specify custom target host
+  python3 langgraph_deepseek_generate_playbook.py --target-host worker-1
+  
+  # Two-stage execution
+  python3 langgraph_deepseek_generate_playbook.py \\
+    --test-host 192.168.122.16 \\
+    --target-host 192.168.122.17
+"""
+    )
+    
+    parser.add_argument('--target-host', '-t', type=str, default='master-1',
+                        help='Target host to execute the playbook on')
+    parser.add_argument('--test-host', type=str, default=None,
+                        help='Test host for validation before target execution')
+    parser.add_argument('--become-user', '-u', type=str, default='root',
+                        help='User to become when executing tasks')
+    parser.add_argument('--max-retries', '-r', type=int, default=None,
+                        help='Maximum number of retry attempts')
+    parser.add_argument('--objective', '-o', type=str,
+                        default="Create an Ansible playbook that finds and kills processes that have 'packet_recvmsg' in their stack trace.",
+                        help='Playbook objective')
+    parser.add_argument('--requirement', action='append', dest='requirements',
+                        help='Add a requirement (can be used multiple times)')
+    parser.add_argument('--example-output', '-e', type=str,
+                        default="""[root@master-1 ~]# egrep packet_recvmsg /proc/*/stack
+/proc/2290657/stack:[<0>] packet_recvmsg+0x6e/0x4f0
+grep: /proc/2290657/stack: No such file or directory
+
+[root@master-1 ~]# ps -ef | grep -i 2290657
+root     2290657 2526847  0 12:13 ?        00:00:00 ./bpfdoor
+root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
+
+[root@master-1 ~]# kill -9 2290657""",
+                        help='Example command output')
+    parser.add_argument('--filename', '-f', type=str,
+                        default='kill_packet_recvmsg_process.yml',
+                        help='Output filename for the generated playbook')
+    
+    args = parser.parse_args()
+    
+    # Prepare parameters
+    target_host = args.target_host
+    test_host = args.test_host if args.test_host else target_host
+    become_user = args.become_user
+    playbook_objective = args.objective
+    example_output = args.example_output
+    filename = args.filename
+    
+    if args.requirements:
+        requirements = args.requirements
+    else:
+        requirements = [
+            "Search for 'packet_recvmsg' keyword in /proc/*/stack",
+            "Extract the process ID from the path",
+            "Kill the identified process(es) using 'kill -9'",
+            "Handle cases where: No matching processes found, Multiple processes found, Process disappears",
+            "Display useful information: Show processes found, Show process details, Confirm termination"
+        ]
+    
+    if args.max_retries is None:
+        max_retries = max(len(requirements), 3)
+        print(f"\n💡 Auto-calculated max retries: {max_retries} (based on {len(requirements)} requirements)")
+    else:
+        max_retries = args.max_retries
+    
+    # Display configuration
+    print("\n" + "=" * 80)
+    print("🎯 CONFIGURATION (LangGraph Workflow)")
+    print("=" * 80)
+    print(f"Test Host:      {test_host}")
+    if test_host != target_host:
+        print(f"Target Host:    {target_host}")
+    print(f"Become User:    {become_user}")
+    print(f"Max Retries:    {max_retries}")
+    print(f"Objective:      {playbook_objective[:60]}{'...' if len(playbook_objective) > 60 else ''}")
+    print(f"Requirements:   {len(requirements)} items")
+    print(f"Filename:       {filename}")
+    if test_host != target_host:
+        print("\n📋 Execution Strategy:")
+        print(f"   1. Test on: {test_host} (validation)")
+        print(f"   2. Execute on: {target_host} (if test succeeds)")
+    print("=" * 80)
+    
+    # Initialize state
+    initial_state: PlaybookGenerationState = {
+        "playbook_objective": playbook_objective,
+        "target_host": target_host,
+        "test_host": test_host,
+        "become_user": become_user,
+        "requirements": requirements.copy(),
+        "example_output": example_output,
+        "filename": filename,
+        "max_retries": max_retries,
+        "attempt": 1,
+        "playbook_content": "",
+        "syntax_valid": False,
+        "test_success": False,
+        "analysis_passed": False,  # New field
+        "analysis_message": "",     # New field
+        "final_success": False,
+        "error_message": "",
+        "test_output": "",
+        "final_output": "",
+        "should_retry": False,
+        "workflow_complete": False,
+    }
+    
+    # Create and run workflow
+    try:
+        print("\n🔄 Starting LangGraph workflow...")
+        workflow = create_playbook_workflow()
+        
+        # Execute workflow with increased recursion limit
+        # The limit should be at least 2x max_retries to account for all nodes per attempt
+        recursion_limit = max(50, max_retries * 3)
+        final_state = workflow.invoke(
+            initial_state,
+            {"recursion_limit": recursion_limit}
+        )
+        
+        # Check results
+        if final_state['workflow_complete'] and final_state['test_success']:
+            print("\n" + "="*80)
+            print("📊 EXECUTION SUMMARY (LangGraph)")
+            print("="*80)
+            print(f"✅ Workflow completed successfully!")
+            print(f"   Total attempts: {final_state['attempt']}")
+            print(f"   Playbook file: {final_state['filename']}")
+            print("="*80)
+        else:
+            print("\n" + "="*80)
+            print("📊 EXECUTION SUMMARY (LangGraph)")
+            print("="*80)
+            print(f"❌ Workflow failed")
+            print(f"   Total attempts: {final_state['attempt']}/{max_retries}")
+            print(f"   Last error: {final_state['error_message'][:200]}")
+            print("="*80)
+            sys.exit(1)
+            
+    except Exception as e:
+        print(f"\n❌ Error in LangGraph workflow: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,141 @@
+---
+- name: Data Collection for CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.1"
+    req_1: "Check if the cramfs kernel module exists in the filesystem by running the audit script from the CIS benchmark to search /usr/lib/modules and /lib/modules."
+    req_2: "Collect the output of the command 'lsmod | grep cramfs' to verify the cramfs kernel module is not currently loaded."
+    req_3: |
+      Collect the output of the command 'modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+cramfs\b'' to verify the module is configured to be non-loadable.
+    req_4: "Verify the output of the 'modprobe --showconfig' command includes the line 'blacklist cramfs'."
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_4: "Not collected yet"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if cramfs module exists in filesystem
+    - name: "Req 1: Search for cramfs kernel module in /usr/lib/modules and /lib/modules"
+      shell: >
+        find /usr/lib/modules /lib/modules -type f -name '*cramfs*' 2>/dev/null | head -20
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Search for cramfs kernel module in filesystem"
+        task_1_cmd: "find /usr/lib/modules /lib/modules -type f -name '*cramfs*' 2>/dev/null | head -20"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') }}"
+
+    # Requirement 2: Check if cramfs module is loaded
+    - name: "Req 2: Check if cramfs kernel module is currently loaded"
+      shell: >
+        lsmod | grep cramfs
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check if cramfs module is loaded"
+        task_2_cmd: "lsmod | grep cramfs"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') }}"
+
+    # Requirement 3: Check modprobe configuration for cramfs
+    - name: "Req 3: Check modprobe configuration for cramfs install/blacklist entries"
+      shell: >
+        modprobe --showconfig | grep -P -- "\b(install|blacklist)\h+cramfs\b"
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check modprobe config for cramfs entries"
+        task_3_cmd: |
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+cramfs\b'
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') }}"
+
+    # Requirement 4: Verify blacklist cramfs exists
+    - name: "Req 4: Verify modprobe config includes 'blacklist cramfs'"
+      shell: >
+        modprobe --showconfig | grep '^blacklist cramfs$'
+      register: result_4
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify blacklist cramfs exists in modprobe config"
+        task_4_cmd: "modprobe --showconfig | grep '^blacklist cramfs$'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') }}"
+
+    # Final compliance report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.1.1.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('Data collection failed') }}"
+          - "  Status: {{ 'PASS' if data_1 == '' else 'FAIL' }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('Data collection failed') }}"
+          - "  Status: {{ 'PASS' if data_2 == '' else 'FAIL' }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('Data collection failed') }}"
+          - "  Status: {{ 'PASS' if 'blacklist cramfs' in data_3 else 'FAIL' }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('Data collection failed') }}"
+          - "  Status: {{ 'PASS' if data_4 != '' else 'FAIL' }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  {{ 'PASS' if (data_1 == '' or (data_2 == '' and data_4 != '')) else 'FAIL' }}"
+          - "  Rationale: PASS if module not found OR (not loaded AND blacklisted)"
+          - "========================================================"

@@ -1,0 +1,54 @@
+---
+- name: Data Collection for KCS 4214501
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/4214501"
+    req_05: "Collect relevant journal log entries from systemd-logind containing the strings 'Failed to start user slice' or 'Failed to start session scope' in combination with 'Connection timed out' from a recent timeframe"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_05: "Not collected yet"
+        task_05_name: "Not executed"
+        task_05_cmd: "N/A"
+        task_05_rc: -1
+
+    - name: "Req 05: Collect journal logs from systemd-logind with specific patterns"
+      shell: >
+        journalctl -u systemd-logind --since="1 hour ago" 2>/dev/null |
+        grep -E "(Failed to start user slice|Failed to start session scope).*Connection timed out" ||
+        echo "No matching entries found"
+      register: result_05
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 05 details
+      set_fact:
+        task_05_name: "Collect journal logs from systemd-logind with specific patterns"
+        task_05_cmd: |
+          journalctl -u systemd-logind --since=\"1 hour ago\" 2>/dev/null | grep -E \"(Failed to start user slice|Failed to start session scope).*Connection timed out\" || echo \"No matching entries found\"
+        task_05_rc: "{{ result_05.rc | default(-1) }}"
+        data_05: "{{ result_05.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 05/14 - Requirement 05)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 05/14)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "systemd stops reading and processing dbus event of runc cgroup invokes"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 05 - {{ req_05 }}:"
+          - "  Task: {{ task_05_name | default('Task not recorded') }}"
+          - "  Command: {{ task_05_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_05_rc | default(-1) }}"
+          - "  Data: {{ data_05 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 05/14)"
+          - "========================================================"

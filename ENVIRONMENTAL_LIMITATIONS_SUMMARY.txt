@@ -1,0 +1,94 @@
+================================================================================
+HANDLING ENVIRONMENTAL LIMITATIONS IN ANALYSIS
+================================================================================
+
+ISSUE:
+  Analysis was failing when playbooks encountered environmental limitations
+  (missing credentials, network issues), even when the playbook correctly
+  reported NON-COMPLIANT with an explanation.
+
+CORE PRINCIPLE:
+  When environment prevents verification, reporting NON-COMPLIANT with 
+  explanation is CORRECT BEHAVIOR and should PASS analysis.
+
+EXAMPLES OF ACCEPTABLE NON-COMPLIANT REPORTS:
+
+  ✅ "Image Accessibility: NON-COMPLIANT (short of credential)"
+  ✅ "API Check: NON-COMPLIANT (network unreachable)"
+  ✅ "Service Status: NON-COMPLIANT (insufficient permissions)"
+  ✅ "Registry Connection: NON-COMPLIANT (cannot verify without auth)"
+  ✅ "Tool Check: NON-COMPLIANT (required tool not available)"
+
+WHAT ANALYSIS SHOULD PASS:
+
+  ✅ Missing credentials → Reports NON-COMPLIANT with note
+  ✅ Network issues → Reports NON-COMPLIANT (unreachable)
+  ✅ Auth failures → Reports NON-COMPLIANT (no auth)
+  ✅ Tool unavailable → Reports NON-COMPLIANT (tool missing)
+  ✅ Permissions denied → Reports NON-COMPLIANT (insufficient perms)
+
+WHAT ANALYSIS SHOULD FAIL:
+
+  ❌ Auth fails → Reports COMPLIANT (WRONG!)
+  ❌ Error occurs → Silently skipped (WRONG!)
+  ❌ Can't verify → Reports COMPLIANT (WRONG!)
+  ❌ Check missing entirely (WRONG!)
+
+REAL EXAMPLE: Image Accessibility Check
+
+  Requirement: Check if image is accessible/pullable
+  Environment: No credentials provided
+  
+  Playbook Action:
+    1. Tries podman login → Fails (no credential)
+    2. Sets compliant = false
+    3. Reports: "NON-COMPLIANT (short of credential)"
+  
+  Old Analysis: ❌ FAIL (incorrect reporting logic)
+  New Analysis: ✅ PASS (correctly reported limitation)
+
+DECISION TREE:
+
+  Can check be performed?
+  ├─ YES → Perform check
+  │   ├─ Pass → Report COMPLIANT ✅
+  │   └─ Fail → Report NON-COMPLIANT ✅
+  │
+  └─ NO (missing creds/env/perms)
+      ├─ Report NON-COMPLIANT with reason ✅ → Analysis PASS
+      └─ Report COMPLIANT or skip ❌ → Analysis FAIL
+
+PROMPT UPDATES:
+
+  Added guidance:
+  - "If credentials/environment info is missing, playbook SHOULD report
+     NON-COMPLIANT with explanation - this is CORRECT"
+  
+  Added PASS examples:
+  - Missing credentials → NON-COMPLIANT (short of credential) ✅
+  - Network issues → NON-COMPLIANT (cannot verify) ✅
+  - No auth token → NON-COMPLIANT (insufficient info) ✅
+
+  Added special cases to PASS:
+  - Can't check due to missing credentials → Reports NON-COMPLIANT → PASS
+  - Encounters auth error → Reports NON-COMPLIANT → PASS
+  - Lacks network access → Reports NON-COMPLIANT → PASS
+
+BENEFITS:
+
+  - More realistic testing (don't need perfect environment)
+  - Clearer failure reasons (users know what's missing)
+  - Fewer false negatives (valid playbooks no longer blocked)
+  - Better distinction between playbook bugs and env issues
+
+FILES CHANGED:
+  - deepseek_generate_playbook.py (analyze_playbook_output prompt)
+  - langgraph_deepseek_generate_playbook.py (imports updated function)
+
+KEY TAKEAWAY:
+  Honest reporting of limitations is GOOD, not BAD!
+  Analysis validates logic, not environment availability.
+
+STATUS: ✅ ENHANCED
+DATE: January 11, 2026
+================================================================================

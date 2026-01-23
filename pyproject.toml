@@ -1,0 +1,21 @@
+[project]
+name = "rhel-cis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ansible-core>=2.20.1",
+    "ansible-navigator[ansible-core]>=26.1.1",
+    "ddgs>=9.10.0",
+    "duckduckgo-search>=8.1.1",
+    "langchain>=1.2.6",
+    "langchain-chroma>=1.1.0",
+    "langchain-community>=0.4.1",
+    "langchain-deepseek>=1.0.1",
+    "langchain-huggingface>=1.2.0",
+    "langgraph>=1.0.7",
+    "pypdf>=6.6.0",
+    "python-dotenv>=1.2.1",
+    "sentence-transformers>=5.2.0",
+]

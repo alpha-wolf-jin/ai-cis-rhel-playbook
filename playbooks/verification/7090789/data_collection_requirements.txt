@@ -1,0 +1,26 @@
+================================================================================
+DATA COLLECTION REQUIREMENTS
+KCS Article: Building custom execution image using ansible-builder fails due to conflict for  package  python39-jmespath on Ansible Automation Platform.
+URL: https://access.redhat.com/solutions/7090789
+
+Objective: Collect server information to compare against KCS article: Building custom execution image using ansible-builder fails due to conflict for  package  python39-jmespath on Ansible Automation Platform.
+================================================================================
+
+1. Collect OS distribution, version, and family information
+
+2. Collect Ansible Automation Platform controller version information
+
+3. Collect installed package information for python39-jmespath, including version and repository
+
+4. Collect the list of all installed packages and their sources (e.g., via 'rpm -qa' or 'dnf list installed')
+
+5. Collect the configured system repositories (e.g., via 'dnf repolist' or repository files in /etc/yum.repos.d/)
+
+6. Collect the user's command history or recent processes to identify if ansible-builder build commands were executed
+
+7. Collect any recent logs or error messages from ansible-builder execution (e.g., from standard error output, log files, or shell history)
+
+8. Collect the presence and content of any ansible-builder configuration files (e.g., execution-environment.yml)
+
+9. Collect the version of ansible-builder installed on the system
+

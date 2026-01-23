@@ -1,0 +1,159 @@
+================================================================================
+TWO-CATEGORY REQUIREMENT SYSTEM
+================================================================================
+
+PURPOSE:
+  Make playbooks generic and reusable across different servers by separating
+  verification (compliance) from discovery (information collection).
+
+THE TWO CATEGORIES:
+
+  1. COMPLIANCE CHECKING
+     - Purpose: Verify if requirement is met
+     - Statuses: COMPLIANT / NON-COMPLIANT / UNKNOWN
+     - Examples: "Docker must be installed", "Service must be running"
+     - Playbook error → UNKNOWN (can't verify, NOT actual failure)
+  
+  2. INFORMATION COLLECTION  
+     - Purpose: Just collect and report data
+     - Output: Data OR error message
+     - Examples: "Show system info", "List packages"
+     - No compliance status - just report what found or error
+
+KEY DISTINCTION:
+
+  Compliance: JUDGE if met (yes/no/can't tell)
+  Information: REPORT data (here it is / error getting it)
+
+CRITICAL DIFFERENCE - PLAYBOOK ERRORS:
+
+  Compliance Check Error:
+    → Report: ⚠️ UNKNOWN (unable to verify due to error)
+    → Why: Error prevented verification, NOT actual non-compliance
+  
+  Information Collection Error:
+    → Report: "Error: [error message]"
+    → Why: Just report what happened, no compliance judgment
+
+VARIABLE NAMING:
+
+  Compliance:
+    compliant_<name>: true/false/'unknown'
+    reason_<name>: "explanation"
+    category_<name>: "compliance"
+  
+  Information:
+    info_<name>: "data or error message"
+    category_<name>: "information"
+
+REPORT STRUCTURE:
+
+  ========================================
+  SYSTEM VERIFICATION REPORT
+  ========================================
+  
+  COMPLIANCE CHECKS:
+  1. Docker: ✅ COMPLIANT (version 20.10.24)
+  2. Service: ❌ NON-COMPLIANT (service stopped)
+  3. Registry: ⚠️ UNKNOWN (short of credential)
+  4. API: ⚠️ UNKNOWN (unable to verify due to error)
+  
+  INFORMATION COLLECTED:
+  1. System: Linux 5.14.0 x86_64 GNU/Linux
+  2. Packages: docker-20.10.24, nginx-1.20.1, ...
+  3. Network: Error: permission denied
+  
+  ========================================
+
+EXAMPLES:
+
+  Compliance Check (Docker):
+    - Check if Docker installed
+    - Result: true/false/'unknown'
+    - Reason: "version 20.10.24 installed" OR "package not installed"
+    - Report: "Docker: COMPLIANT (version 20.10.24)"
+  
+  Information Collection (Package List):
+    - Collect installed packages
+    - Result: package list OR error
+    - Report: "Packages: docker-20.10.24, nginx..." OR "Error: command failed"
+
+WHEN TO USE UNKNOWN (Compliance Only):
+
+  ✅ Missing credentials
+  ✅ Tool not available
+  ✅ Network unreachable
+  ✅ Insufficient permissions
+  ✅ Playbook error (NOT actual non-compliance!)
+  ✅ Unclear requirement
+
+BENEFITS:
+
+  1. Generic Playbooks
+     - Same playbook for verification AND discovery
+     - Works across different servers
+  
+  2. Clear Categorization
+     - Know what's checked for compliance
+     - Know what's just informational
+  
+  3. Appropriate Error Handling
+     - Compliance errors → UNKNOWN (can't verify)
+     - Information errors → Error message (what happened)
+  
+  4. Flexibility
+     - Mix compliance and information in same playbook
+     - Add either category as needed
+
+USE CASES:
+
+  Pre-Deployment:
+    Compliance: Check requirements met
+    Information: Collect inventory
+  
+  Discovery:
+    Compliance: (minimal or none)
+    Information: Complete server inventory
+  
+  Audit:
+    Compliance: Verify compliance items
+    Information: Supporting documentation
+
+DECISION TREE:
+
+  What is the purpose of this requirement?
+  │
+  ├─ Verify if met? → COMPLIANCE
+  │   ├─ Can verify?
+  │   │   ├─ YES → COMPLIANT or NON-COMPLIANT (with reason)
+  │   │   └─ NO → UNKNOWN (with reason)
+  │
+  └─ Collect data? → INFORMATION
+      ├─ Can collect?
+      │   ├─ YES → Report data
+      │   └─ NO → Report error message
+
+COMPARISON:
+
+  Scenario                  | Type        | Output
+  --------------------------|-------------|--------------------------------
+  Docker version check      | Compliance  | COMPLIANT (v20.10.24)
+  List packages             | Information | docker-20.10.24, nginx...
+  Service must run          | Compliance  | NON-COMPLIANT (stopped)
+  Show service status       | Information | httpd: stopped, nginx: active
+  Image pullable            | Compliance  | UNKNOWN (no credential)
+  Get system info           | Information | Linux 5.14 x86_64...
+  Check registry (error)    | Compliance  | UNKNOWN (playbook error)
+  Collect logs (error)      | Information | Error: permission denied
+
+FILES CHANGED:
+  - deepseek_generate_playbook.py
+    * Added two-category system
+    * Updated variable initialization examples
+    * Updated report format (two sections)
+    * Updated analysis to understand categories
+
+STATUS: ✅ IMPLEMENTED
+DATE: January 11, 2026
+IMPACT: Generic playbooks, clear categorization, appropriate error handling
+================================================================================

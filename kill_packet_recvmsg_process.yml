@@ -1,0 +1,76 @@
+---
+- name: Verify Docker Installation
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    # Initialize compliance tracking
+    - name: Initialize compliance variables
+      ansible.builtin.set_fact:
+        compliant_docker_installed: false
+        overall_compliant: false
+      changed_when: false
+
+    # Task 1: Gather package facts to check installed packages
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: auto
+      register: pkg_facts
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    # Debug: Show full package facts structure
+    - name: Debug package facts result
+      ansible.builtin.debug:
+        var: pkg_facts
+      tags: [debug]
+
+    # Task 2: Check if Docker package is installed
+    - name: Check Docker package installation status
+      ansible.builtin.set_fact:
+        docker_installed: "{{ 'docker' in (pkg_facts.ansible_facts.packages | default({})) }}"
+      when: pkg_facts is defined and pkg_facts.ansible_facts is defined
+      ignore_errors: true
+      changed_when: false
+
+    # Debug: Show Docker installation status
+    - name: Show Docker installation status
+      ansible.builtin.debug:
+        msg: "Docker package: {{ 'Installed' if docker_installed | default(false) else 'Not installed' }}"
+      tags: [debug]
+
+    # Task 3: Set compliance status for Docker installation
+    - name: Set Docker installation compliance
+      ansible.builtin.set_fact:
+        compliant_docker_installed: "{{ docker_installed | default(false) }}"
+      changed_when: false
+
+    # Debug: Show compliance status
+    - name: Show Docker compliance status
+      ansible.builtin.debug:
+        msg: "Docker installation compliance: {{ 'COMPLIANT' if compliant_docker_installed else 'NON-COMPLIANT' }}"
+      tags: [debug]
+
+    # Task 4: Calculate overall compliance
+    - name: Calculate overall compliance status
+      ansible.builtin.set_fact:
+        overall_compliant: "{{ compliant_docker_installed }}"
+      changed_when: false
+
+    # Task 5: Generate compliance report
+    - name: Generate compliance report
+      ansible.builtin.debug:
+        msg:
+          - "============================================"
+          - "    DOCKER INSTALLATION VERIFICATION REPORT"
+          - "============================================"
+          - ""
+          - "CHECK RESULTS:"
+          - "  1. Docker package installed: {{ '✅ COMPLIANT' if compliant_docker_installed else '❌ NON-COMPLIANT' }}"
+          - ""
+          - "============================================"
+          - "OVERALL STATUS: {{ 'COMPLIANT ✅' if overall_compliant else 'NON-COMPLIANT ❌' }}"
+          - "============================================"
+      changed_when: false

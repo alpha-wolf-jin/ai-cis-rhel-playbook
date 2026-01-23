@@ -1,0 +1,15 @@
+ uv init
+ uv venv
+
+ uv add langchain_deepseek
+ uv add python-dotenv
+ uv add ansible-core
+uv add 'ansible-navigator[ansible-core]'
+uv add duckduckgo-search
+uv add ddgs
+uv add langgraph langchain 
+uv add langchain_community
+uv add langchain_chroma
+uv add pypdf
+uv add langchain_huggingface
+uv add sentence-transformers

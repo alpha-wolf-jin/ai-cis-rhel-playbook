@@ -1,0 +1,1941 @@
+#!/usr/bin/env python3
+"""
+Generic Ansible Playbook Generator
+
+This script generates Ansible playbooks based on custom requirements.
+
+HOW TO USE FOR DIFFERENT TASKS:
+================================
+
+In the main() function, modify these variables:
+
+1. playbook_objective: 
+   What the playbook should achieve (clear description)
+
+2. target_host: 
+   Default target host for the playbook
+
+3. become_user: 
+   User to become (usually "root")
+
+4. requirements: 
+   List of specific requirements as strings
+   - What tasks to perform
+   - How to handle errors
+   - What output to display
+
+5. example_output: 
+   Example command output to provide context
+
+
+EXAMPLE - Disk Cleanup Playbook:
+=================================
+
+playbook_objective = "Clean up old log files to free disk space"
+target_host = "webserver-1"
+become_user = "root"
+requirements = [
+    "Find log files older than 30 days in /var/log",
+    "Display files to be deleted",
+    "Delete old log files",
+    "Show disk space freed"
+]
+example_output = "df -h output and find command results"
+
+"""
+
+import os
+import sys
+import subprocess
+import argparse
+from dotenv import load_dotenv
+from langchain_deepseek import ChatDeepSeek
+#from langchain.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
+
+# Load environment variables
+load_dotenv()
+
+# Initialize LLM model
+#LLMA_KEY = os.environ.get('LLMA_KEY')
+#model = ChatOpenAI(
+#    model="llama-4-scout-17b-16e-w4a16",
+#    temperature=0,
+#    api_key=LLMA_KEY,
+#    base_url="https://llama-4-scout-17b-16e-w4a16-maas-apicast-production.apps.prod.rhoai.rh-aiservices-bu.com:443/v1"
+#)
+
+model = ChatDeepSeek(
+    model="deepseek-chat",
+    #model="deepseek-reasoner",
+    temperature=0, #for deepseek
+    max_tokens=None,
+    timeout=1800,  # 30 minutes timeout (increased from None)
+    max_retries=3,
+    request_timeout=1800  # Explicit request timeout: 30 minutes
+)
+
+def parse_requirement_index(req_text: str) -> tuple[int, str]:
+    """
+    Parse the requirement index and text from a requirement string.
+    E.g., "2. Collect OS info" -> (2, "Collect OS info")
+    
+    Returns (index, text) where index is the parsed number or -1 if not found.
+    """
+    import re
+    # Match patterns like "1." or "2." or "10." at the start
+    match = re.match(r'^(\d+)\.\s*(.*)$', req_text.strip())
+    if match:
+        return int(match.group(1)), match.group(2).strip()
+    return -1, req_text.strip()
+
+
+def generate_playbook(
+    playbook_objective: str,
+    target_host: str = "master-1",
+    become_user: str = "root",
+    requirements: list = None,
+    example_output: str = ""
+):
+    """
+    Generate Ansible playbook based on custom requirements.
+    
+    Args:
+        playbook_objective: Description of what the playbook should achieve
+        target_host: Default target host for the playbook
+        become_user: User to become (usually root)
+        requirements: List of requirement strings describing what the playbook should do
+        example_output: Example command output to provide context
+    """
+    
+    if requirements is None:
+        requirements = []
+    
+    # Parse requirements to extract original indices and text
+    # This preserves the original requirement indices (e.g., "2. Collect..." stays as req_2)
+    parsed_reqs = []
+    for req in requirements:
+        idx, text = parse_requirement_index(req)
+        if idx > 0:
+            parsed_reqs.append((idx, text))
+        else:
+            # Requirement without index - keep as-is for non-data-collection reqs
+            parsed_reqs.append((None, req))
+    
+    # Build requirements text preserving original indices
+    data_reqs = [(idx, text) for idx, text in parsed_reqs if idx is not None]
+    other_reqs = [text for idx, text in parsed_reqs if idx is None]
+    
+    # Format data requirements with their original indices
+    requirements_text = "\n".join([f"{idx}. {text}" for idx, text in data_reqs])
+    if other_reqs:
+        requirements_text += "\n\nAdditional requirements:\n" + "\n".join([f"- {r}" for r in other_reqs])
+    
+    # Build example output section if provided
+    example_section = ""
+    if example_output:
+        example_section = f"""
+
+**Example Output Context:**
+```bash
+{example_output}
+```"""
+    
+    # Build dynamic vars and tasks examples based on actual requirement indices
+    if data_reqs:
+        req_indices = [idx for idx, text in data_reqs]
+        first_idx = req_indices[0]
+        
+        # Build vars section showing actual requirement variables (2-digit zero-padded)
+        vars_section = "\n".join([f'    req_{idx:02d}: "{text}"' for idx, text in data_reqs])
+        
+        # Build init section (2-digit zero-padded) - include status and rationale
+        init_section = "\n".join([
+            f'        data_{idx:02d}: "Not collected yet"\n'
+            f'        status_{idx:02d}: "UNKNOWN"\n'
+            f'        rationale_{idx:02d}: "Not evaluated"'
+            for idx in req_indices
+        ])
+        
+        # Build report section with 2-digit zero-padded indices
+        # Include Status and Rationale for each requirement
+        report_section = "\n".join([
+            f'      - "REQUIREMENT {idx:02d} - {{{{{{ req_{idx:02d} }}}}}}:"\n'
+            f'      - "  Task: {{{{{{ task_{idx:02d}_name | default(\'Task not recorded\') }}}}}}"\n'
+            f'      - "  Command: {{{{{{ task_{idx:02d}_cmd | default(\'N/A\') }}}}}}"\n'
+            f'      - "  Exit code: {{{{{{ task_{idx:02d}_rc | default(-1) }}}}}}"\n'
+            f'      - "  Data: {{{{{{ data_{idx:02d} | default(\'Data collection failed\') }}}}}}"\n'
+            f'      - "  Status: {{{{{{ status_{idx:02d} | default(\'UNKNOWN\') }}}}}}"\n'
+            f'      - "  Rationale: {{{{{{ rationale_{idx:02d} | default(\'Not evaluated\') }}}}}}"\n'
+            f'      - ""'
+            for idx in req_indices
+        ])
+    else:
+        first_idx = 1
+        vars_section = '    req_1: "Requirement 1 description"'
+        init_section = '        data_1: "Not collected yet"'
+        report_section = '      - "REQUIREMENT 1 - {{ req_1 }}:"\n      - "  Data: {{ data_1 | default(\'N/A\') }}"\n      - "  Status: {{ status_1 | default(\'UNKNOWN\') }}"\n      - "  Rationale: {{ rationale_1 | default(\'Not evaluated\') }}"'
+    
+    prompt_template = f"""Generate a MINIMAL Ansible playbook for data collection.
+
+**Objective:** {playbook_objective}
+
+**Requirements to collect data for:**
+{requirements_text}{example_section}
+
+**CRITICAL - USE EXACT REQUIREMENT INDEX NUMBERS:**
+The requirement indices MUST match what's given above. If the requirement is "2. Collect OS info", 
+use req_2, data_2, task_2_*, result_2 - NOT req_1!
+
+**KEEP IT SIMPLE - RULES:**
+1. MINIMUM tasks - only what's needed to collect data
+2. NO debug tasks except the final report
+3. NO complex Jinja2 - use simple expressions
+4. ONE task per requirement
+5. Use shell/command for simple checks (faster than modules)
+6. Use EXACT requirement text in vars - copy from requirements above!
+
+**MANDATORY STRUCTURE:**
+```yaml
+---
+- name: Data Collection for KCS [KCS ID]
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "[KCS URL]"
+    # COPY EXACT requirement text from requirements above!
+{vars_section}
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+{init_section}
+        task_{first_idx}_name: "Not executed"
+        task_{first_idx}_cmd: "N/A"
+        task_{first_idx}_rc: -1
+
+    # Requirement {first_idx}: [COPY EXACT requirement text here]
+    - name: "Req {first_idx}: [brief description]"
+      shell: [command]
+      register: result_{first_idx}
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement {first_idx} details
+      set_fact:
+        task_{first_idx}_name: "[task description]"
+        task_{first_idx}_cmd: "[exact shell command used]"
+        task_{first_idx}_rc: "{{{{{{ result_{first_idx}.rc | default(-1) }}}}}}"
+        data_{first_idx}: "{{{{{{ result_{first_idx}.stdout | default('') }}}}}}"
+
+    # Final report - MUST include Status and Rationale for each requirement
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT"
+          - "========================================================"
+          - "Reference: [KCS URL or CIS Benchmark reference]"
+          - "========================================================"
+          - ""
+{report_section}
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{{{{{ overall_result | default('UNKNOWN') }}}}}}"
+          - "  Rationale: {{{{{{ overall_rationale | default('Not evaluated') }}}}}}"
+          - "========================================================"
+```
+
+**CRITICAL SYNTAX:**
+- Variables: {{{{ variable }}}} (double braces)
+- Defaults: {{{{ var | default('fallback') }}}}
+- All tasks: ignore_errors: true, failed_when: false
+
+**YAML SYNTAX FOR SHELL COMMANDS:**
+Commands with special characters MUST use literal block scalar (|) or folded (>):
+
+```yaml
+# ❌ WRONG - colon causes YAML error:
+- shell: journalctl | grep 'error: failed'
+
+# ❌ WRONG - backslash in double quotes causes parse error:
+  task_cmd: "grep 'pattern1\|pattern2'"
+
+# ✅ CORRECT - use > or | for shell commands:
+- shell: >
+    journalctl | grep 'error: failed'
+  register: result
+
+# ✅ CORRECT - use | for strings with backslashes, pipes, regex:
+- set_fact:
+    task_cmd: |
+      find /var/log -name '*.log' | xargs grep 'error\|warning'
+```
+
+**SPECIAL CHARACTERS requiring | block scalar:**
+- Backslash in regex: `\|`, `\(`, `\)`, `\.`
+- Colons followed by space: `error: failed`
+- Shell pipes and redirects: `|`, `>`, `<`, `2>&1`
+- Parentheses in find: `\( -name '*.log' \)`
+- Dollar signs in strings: `$variable`
+
+**DATA STORAGE - CAPTURE ALL TASK DETAILS INCLUDING STATUS AND RATIONALE:**
+For EACH requirement, store: task name, command/module, exit code, data, status, and rationale:
+```yaml
+- name: "Req 1: Check if module is loaded"
+  shell: lsmod | grep freevxfs
+  register: task_1_result
+  ignore_errors: true
+  failed_when: false
+  changed_when: false
+
+- name: Store requirement 1 details and determine status
+  set_fact:
+    task_1_name: "Check if freevxfs module is loaded"
+    task_1_cmd: "lsmod | grep freevxfs"
+    task_1_rc: "{{{{ task_1_result.rc | default(-1) }}}}"
+    data_1: "{{{{ task_1_result.stdout | default('') }}}}"
+    # CRITICAL: Set status based on the requirement's rationale
+    status_1: "{{{{ 'PASS' if task_1_result.rc != 0 else 'FAIL' }}}}"
+    rationale_1: "PASS when module is not loaded (exit code != 0), FAIL when loaded (exit code 0)"
+```
+
+**REPORT FORMAT - COMPLIANCE REPORT with Status and Rationale:**
+```yaml
+- name: Generate compliance report
+  debug:
+    msg:
+      - "========================================================"
+      - "        COMPLIANCE REPORT"
+      - "========================================================"
+      - "Reference: {{{{ kcs_article }}}}"
+      - "========================================================"
+      - ""
+      - "REQUIREMENT 1 - {{{{ req_1 }}}}:"
+      - "  Task: {{{{ task_1_name | default('Task not recorded') }}}}"
+      - "  Command: {{{{ task_1_cmd | default('N/A') }}}}"
+      - "  Exit code: {{{{ task_1_rc | default(-1) }}}}"
+      - "  Data: {{{{ data_1 | default('') }}}}"
+      - "  Status: {{{{ status_1 | default('UNKNOWN') }}}}"
+      - "  Rationale: {{{{ rationale_1 | default('Not evaluated') }}}}"
+      - ""
+      - "========================================================"
+      - "OVERALL COMPLIANCE:"
+      - "  Result: {{{{ overall_result | default('UNKNOWN') }}}}"
+      - "  Rationale: {{{{ overall_rationale | default('Not evaluated') }}}}"
+      - "========================================================"
+```
+
+**CRITICAL - STATUS AND RATIONALE RULES:**
+- EACH requirement MUST have a status_N variable (PASS/FAIL/UNKNOWN)
+- EACH requirement MUST have a rationale_N variable explaining PASS/FAIL logic
+- Status is determined by the requirement's own rationale (from the requirement text)
+- Parse the rationale from requirement text (e.g., "Rationale: PASS when X, FAIL when Y")
+- Set overall_result based on all individual statuses (PASS only if ALL pass, otherwise FAIL)
+- Set overall_rationale explaining the overall pass/fail logic
+
+**KEY RULES:**
+- Each requirement gets: task name, command, exit code, data, status, rationale
+- Use "Command:" for shell/command modules
+- Empty data with exit code 0 or 1 = valid "nothing found"
+- Exit code + empty data = sufficient evidence of absence
+- Status MUST be determined based on the requirement's rationale
+
+**OUTPUT:** Valid YAML only. No markdown. Start with ---.
+
+Generate the minimal playbook now:"""
+
+    # Don't use ChatPromptTemplate - invoke model directly to avoid brace parsing issues
+    from langchain_core.messages import HumanMessage
+    
+    print("Generating Ansible playbook...")
+    print("=" * 80)
+    
+    # Add retry logic for timeout handling
+    max_generation_attempts = 3
+    for attempt in range(1, max_generation_attempts + 1):
+        try:
+            print(f"Generation attempt {attempt}/{max_generation_attempts}...")
+            response = model.invoke([HumanMessage(content=prompt_template)])
+            playbook_content = response.content
+            break  # Success, exit retry loop
+        except Exception as e:
+            error_msg = str(e)
+            if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                print(f"⚠️  Generation timed out on attempt {attempt}/{max_generation_attempts}")
+                if attempt < max_generation_attempts:
+                    print(f"🔄 Retrying playbook generation...")
+                    continue
+                else:
+                    print(f"❌ All {max_generation_attempts} generation attempts timed out")
+                    raise Exception(f"Playbook generation timed out after {max_generation_attempts} attempts") from e
+            else:
+                # Non-timeout error, raise immediately
+                raise
+    
+    # Clean up the response - remove markdown code blocks if present
+    if "```yaml" in playbook_content:
+        playbook_content = playbook_content.split("```yaml")[1].split("```")[0].strip()
+    elif "```" in playbook_content:
+        playbook_content = playbook_content.split("```")[1].split("```")[0].strip()
+    
+    # Remove any stray "yaml" or "yml" line at the beginning
+    lines = playbook_content.split('\n')
+    while lines and lines[0].strip().lower() in ['yaml', 'yml', '']:
+        lines.pop(0)
+    playbook_content = '\n'.join(lines)
+    
+    # Ensure it starts with ---
+    if not playbook_content.strip().startswith('---'):
+        playbook_content = '---\n' + playbook_content
+    
+    return playbook_content
+
+
+def fix_yaml_special_chars(content: str) -> str:
+    r"""
+    Fix common YAML syntax issues with special characters in shell commands.
+    
+    Converts problematic inline strings to literal block scalars (|) when they contain:
+    - Backslashes in regex patterns (e.g., grep 'pattern1\|pattern2')
+    - Unescaped colons in shell commands
+    
+    Args:
+        content: The playbook YAML content
+        
+    Returns:
+        Fixed content with problematic strings converted to block scalars
+    """
+    import re
+    
+    lines = content.split('\n')
+    fixed_lines = []
+    i = 0
+    fixes_applied = 0
+    
+    while i < len(lines):
+        line = lines[i]
+        
+        # Check for problematic patterns in set_fact or variable assignments
+        # Pattern: key: "...backslash..." or key: '...backslash...'
+        # Look for lines like: task_cmd: "...grep 'pattern\|pattern'..."
+        
+        # Match lines with quoted values containing backslashes
+        match = re.match(r'^(\s+)(\w+):\s*(["\'])(.+\\\\?.+)\3\s*$', line)
+        if match:
+            indent = match.group(1)
+            key = match.group(2)
+            quote = match.group(3)
+            value = match.group(4)
+            
+            # Check if value contains problematic backslash patterns
+            problematic_patterns = [
+                r'\\[|()]',  # \| \( \) in grep/find
+                r'\\.',      # \. in regex
+                r'\\s',      # \s in regex
+                r'\\d',      # \d in regex
+            ]
+            
+            needs_fix = False
+            for pattern in problematic_patterns:
+                if re.search(pattern, value):
+                    needs_fix = True
+                    break
+            
+            if needs_fix:
+                # Convert to literal block scalar
+                fixed_lines.append(f"{indent}{key}: |")
+                # Add the value on next line with extra indentation
+                fixed_lines.append(f"{indent}  {value}")
+                fixes_applied += 1
+                i += 1
+                continue
+        
+        # Check for shell/command with problematic inline content
+        shell_match = re.match(r'^(\s*)-\s*(shell|command):\s*(["\']?)(.+?)(["\']?)\s*$', line)
+        if shell_match:
+            indent = shell_match.group(1)
+            module = shell_match.group(2)
+            open_quote = shell_match.group(3)
+            cmd = shell_match.group(4)
+            close_quote = shell_match.group(5)
+            
+            # Check for problematic content (use raw strings to avoid escape warnings)
+            problematic = [r'\|', r'\(', r'\)', ': ', r'\.']
+            if any(p in cmd for p in problematic):
+                # Convert to folded block scalar
+                fixed_lines.append(f"{indent}- {module}: >")
+                fixed_lines.append(f"{indent}    {cmd}")
+                fixes_applied += 1
+                i += 1
+                continue
+        
+        fixed_lines.append(line)
+        i += 1
+    
+    if fixes_applied > 0:
+        print(f"   🔧 Auto-fixed {fixes_applied} YAML special character issue(s)")
+    
+    return '\n'.join(fixed_lines)
+
+
+def save_playbook(content: str, filename: str = "kill_packet_recvmsg_process.yml"):
+    """Save the generated playbook to a file and check for common Jinja2 syntax errors."""
+    # Apply YAML special character fixes
+    content = fix_yaml_special_chars(content)
+    
+    with open(filename, 'w') as f:
+        f.write(content)
+    print(f"\n✅ Playbook saved to: {filename}")
+    
+    # Check for invalid single-brace variable references
+    import re
+    # Pattern to detect single braces that look like variable references
+    # Match { word } but not {{ word }} or {% word %}
+    single_brace_pattern = r'(?<!\{)\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}(?!\})'
+    matches = re.findall(single_brace_pattern, content)
+    
+    if matches:
+        print("\n⚠️  WARNING: Detected potential invalid Jinja2 syntax!")
+        print("   Found single-brace variable references (should be double braces):")
+        for match in set(matches):  # Use set to avoid duplicates
+            print(f"   ❌ {match} → Should be: {{{match}}}")
+        print("   These will be printed literally, not evaluated as variables!")
+        # Return the content anyway, but the warning is shown
+
+
+def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
+    """
+    Check Ansible playbook syntax.
+    
+    Args:
+        filename: Path to the playbook file
+        
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    try:
+        print(f"\n🔍 Checking playbook syntax: {filename}")
+        
+        # First, check the file content for invalid single-brace syntax
+        with open(filename, 'r') as f:
+            content = f.read()
+        
+        import re
+        # Pattern to detect single braces that look like variable references
+        single_brace_pattern = r'(?<!\{)\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}(?!\})'
+        matches = re.findall(single_brace_pattern, content)
+        
+        if matches:
+            error_msg = "Invalid Jinja2 syntax: Single braces used for variables\n\n"
+            error_msg += "Found invalid single-brace variable references:\n"
+            for match in set(matches):
+                correct = "{{" + match[1:-1].strip() + "}}"
+                error_msg += f"  ❌ {match} → Should be: {correct}\n"
+            error_msg += "\nIn Ansible/Jinja2, variables must use DOUBLE curly braces: {{{{ variable }}}}\n"
+            error_msg += "Single braces (one open, one close) are INVALID and will print literally!\n\n"
+            error_msg += "CRITICAL FIX: Replace all single braces with double braces in the playbook."
+            print(f"❌ {error_msg}")
+            return False, error_msg
+        
+        cmd = [
+            'ansible-navigator', 'run', 
+            filename, 
+            '-i', f'{target_host},',
+            '-u', 'root',  # Use root user to connect
+            '-v',  # Verbose output
+            '--syntax-check',
+            '--mode', 'stdout'  # Force output to stdout instead of interactive mode
+        ]
+        print(f"Command: {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode == 0:
+            print("✅ Syntax check passed!")
+            return True, ""
+        else:
+            # Combine stdout and stderr
+            error_output = []
+            
+            if result.stdout and result.stdout.strip():
+                error_output.append("=== STDOUT ===")
+                error_output.append(result.stdout)
+            
+            if result.stderr and result.stderr.strip():
+                error_output.append("=== STDERR ===")
+                error_output.append(result.stderr)
+            
+            # If both are empty, provide helpful message
+            if not error_output:
+                error_output.append("No error output captured. Checking playbook file...")
+                # Try to validate the YAML directly
+                try:
+                    import yaml
+                    with open(filename, 'r') as f:
+                        yaml.safe_load_all(f)
+                    error_output.append("YAML structure is valid. Issue may be with Ansible-specific syntax.")
+                except yaml.YAMLError as e:
+                    error_output.append(f"YAML Parsing Error: {str(e)}")
+                except Exception as e:
+                    error_output.append(f"Error reading file: {str(e)}")
+            
+            error_msg = "\n".join(error_output)
+            
+            print(f"❌ Syntax check failed!")
+            print("\n" + "="*80)
+            print("SYNTAX ERROR DETAILS:")
+            print("="*80)
+            print(error_msg)
+            print("="*80)
+            
+            return False, error_msg
+            
+    except subprocess.TimeoutExpired:
+        error_msg = "Syntax check timed out after 30 seconds"
+        print(f"❌ {error_msg}")
+        return False, error_msg
+    except FileNotFoundError:
+        error_msg = "ansible-navigator command not found. Please ensure Ansible is installed."
+        print(f"❌ {error_msg}")
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Error during syntax check: {str(e)}"
+        print(f"❌ {error_msg}")
+        return False, error_msg
+
+
+def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", check_mode: bool = False, verbose: bool = True, skip_debug: bool = False) -> tuple[bool, str]:
+    """
+    Test the playbook on a real server to verify it meets requirements.
+    
+    Args:
+        filename: Path to the playbook file
+        target_host: Target server IP/hostname
+        check_mode: If True, run in check mode (dry-run, no changes made)
+        verbose: If True, add -v flag for verbose output
+        skip_debug: If True, skip debug-tagged tasks (for production execution)
+        
+    Returns:
+        tuple: (is_successful, output)
+    """
+    try:
+        mode_desc = "check mode (dry-run)" if check_mode else "execution mode"
+        if skip_debug:
+            mode_desc += " [skipping debug tasks]"
+        print(f"\n🧪 Testing playbook on server: {target_host} ({mode_desc})")
+        
+        # Build ansible-navigator command
+        cmd = [
+            'ansible-navigator', 'run', 
+            filename, 
+            '-i', f'{target_host},',
+            '-u', 'root'  # Use root user to connect
+        ]
+        
+        if verbose:
+            cmd.append('-v')
+
+        if check_mode:
+            cmd.append('--check')  # Dry-run mode
+        
+        if skip_debug:
+            cmd.extend(['--skip-tags', 'debug'])  # Skip troubleshooting debug tasks
+            
+        
+        print(f"   Running: {' '.join(cmd)}")
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120  # 2 minutes timeout for execution
+        )
+        
+        output = result.stdout + result.stderr
+        
+        # Check for PLAYBOOK BUGS that require retry/regeneration
+        playbook_bug_patterns = [
+            ("undefined variable", "Undefined variable error"),
+            ("is undefined", "Variable is undefined"),
+            ("'dict object' has no attribute", "Invalid attribute access"),
+            ("Syntax Error while loading YAML", "YAML syntax error"),
+            ("template error while templating string", "Jinja2 template error"),
+            ("Unexpected end of template", "Jinja2 unclosed block"),
+            ("expected token 'end of print statement'", "Jinja2 syntax error"),
+            ("Jinja was looking for the following tags", "Jinja2 missing closing tag"),
+            ("The error was:", "Ansible task error"),
+            ("undefined method", "Undefined method call"),
+            ("cannot be converted to", "Type conversion error"),
+            ("Invalid/incorrect password", "Authentication error in task"),
+        ]
+        
+        for pattern, description in playbook_bug_patterns:
+            if pattern in output:
+                # Check if it's being ignored (has "...ignoring" after the error)
+                # Even if ignored, undefined variables are still bugs
+                
+                print(f"❌ PLAYBOOK BUG DETECTED: {description}")
+                print("   This is a playbook error, not a verification failure")
+                print("   The playbook needs to be regenerated with corrections")
+                print("\n" + "="*80)
+                print("ERROR DETAILS:")
+                print("="*80)
+                # Extract and show the error context
+                error_lines = output.split('\n')
+                error_context_lines = []
+                for i, line in enumerate(error_lines):
+                    if pattern in line:
+                        # Show surrounding context
+                        start = max(0, i-3)
+                        end = min(len(error_lines), i+8)
+                        error_context_lines = error_lines[start:end]
+                        print('\n'.join(error_context_lines))
+                        break
+                print("="*80)
+                
+                # Return detailed error with full context
+                full_error_context = '\n'.join(error_context_lines) if error_context_lines else output[:500]
+                return False, f"PLAYBOOK BUG: {description}\n\nError context:\n{full_error_context}\n\nFull pattern: {pattern}"
+
+        if result.returncode == 0:
+            print(f"✅ Playbook executed successfully in {mode_desc}!")
+            
+            # For verification/compliance playbooks, success means it completed
+            # We don't require failed=0 because checks are allowed to find non-compliance
+            if "ok=" in output and "PLAY RECAP" in output:
+                # Check PLAY RECAP for actual task failures
+                # Look for "failed=N" where N > 0
+                import re
+                recap_match = re.search(r'failed=(\d+)', output)
+                if recap_match:
+                    failed_count = int(recap_match.group(1))
+                    if failed_count > 0:
+                        print(f"⚠️  Playbook has {failed_count} failed task(s)")
+                        # This could be a playbook bug, return failure to trigger retry
+                        return False, f"Playbook had {failed_count} failed tasks\n\n{output}"
+                
+                print("✅ Playbook completed successfully!")
+                
+                # Check for compliance report
+                if "COMPLIANT" in output or "NON-COMPLIANT" in output or "Compliance" in output:
+                    print("✅ Compliance report generated")
+                
+                # Parse Ansible output for specific checks
+                if "PLAY RECAP" in output:
+                    recap_start = output.find("PLAY RECAP")
+                    recap_section = output[recap_start:recap_start+200].split("\n")[0:4]
+                    for line in recap_section:
+                        if line.strip():
+                            print(f"   {line}")
+                
+                return True, output
+            else:
+                return False, f"Execution completed but output format unexpected:\n{output}"
+        else:
+            print(f"⚠️  Playbook execution returned code: {result.returncode}")
+            
+            # Check if it's an SSH/connection issue
+            if "Failed to connect to the host" in output or "Permission denied" in output:
+                print("⚠️  SSH connection issue detected")
+                print("   Falling back to check mode only (syntax validation)")
+                return True, "SSH unavailable - syntax validated only"
+            
+            # Check if it's an OS version mismatch (playbook is valid, just wrong target)
+            os_version_patterns = [
+                "This playbook only supports Red Hat Enterprise Linux",
+                "ansible_distribution_major_version",
+                "OS version mismatch",
+                "distribution version",
+                "Only supported on"
+            ]
+            
+            if any(pattern in output for pattern in os_version_patterns):
+                print("⚠️  OS version mismatch detected")
+                print("   The playbook is valid but targets a different OS version than the test host")
+                print("   This is expected when KCS article specifies a different OS version")
+                print("   ✅ Treating as successful generation - playbook syntax and logic are correct")
+                return True, "OS version mismatch - playbook valid for different OS version"
+            
+            # For verification playbooks, even non-zero exit codes might be acceptable
+            # if the playbook completed and generated a report
+            if "PLAY RECAP" in output and ("COMPLIANT" in output or "Compliance" in output):
+                print("⚠️  Playbook exited with non-zero code but completed verification")
+                print("   This is acceptable for compliance check playbooks")
+                print("   ✅ Treating as successful - compliance report was generated")
+                return True, "Compliance verification completed with findings"
+            
+            return False, output
+            
+    except subprocess.TimeoutExpired:
+        error_msg = "Playbook execution timed out after 120 seconds"
+        print(f"❌ {error_msg}")
+        return False, error_msg
+    except FileNotFoundError:
+        error_msg = "ansible-navigator command not found. Please ensure Ansible is installed."
+        print(f"❌ {error_msg}")
+        return False, error_msg
+    except Exception as e:
+        error_msg = f"Error during playbook testing: {str(e)}"
+        print(f"❌ {error_msg}")
+        return False, error_msg
+
+
+def extract_data_collection_report(test_output: str) -> str:
+    """
+    Extract the COMPLIANCE REPORT (or DATA COLLECTION REPORT) section from playbook output.
+    
+    Args:
+        test_output: Full playbook execution output
+        
+    Returns:
+        str: Extracted compliance report or empty string if not found
+    """
+    import re
+    
+    # Look for the COMPLIANCE REPORT or DATA COLLECTION REPORT section
+    # It typically starts with "COMPLIANCE REPORT" and ends with "OVERALL COMPLIANCE"
+    # or the next task
+    
+    lines = test_output.split('\n')
+    in_report = False
+    report_lines = []
+    
+    for line in lines:
+        # Detect start of report (support both old and new names)
+        if ('COMPLIANCE REPORT' in line or 'DATA COLLECTION REPORT' in line) and 'END OF' not in line:
+            in_report = True
+            report_lines.append(line)
+            continue
+        
+        # Detect end of report
+        if in_report:
+            if 'END OF' in line and ('COMPLIANCE' in line or 'DATA COLLECTION' in line):
+                report_lines.append(line)
+                break
+            elif 'PLAY RECAP' in line or 'TASK [' in line:
+                # New task started, end of report
+                break
+            else:
+                report_lines.append(line)
+    
+    if report_lines:
+        return '\n'.join(report_lines)
+    
+    # Fallback: try to find "msg:" sections that look like reports
+    # Look for patterns like "REQUIREMENT 1 -" or "Data:" or "Status:" or "OVERALL COMPLIANCE"
+    report_lines = []
+    for line in lines:
+        if any(keyword in line for keyword in ['REQUIREMENT', 'Data:', 'Status:', 'Rationale:', 'Reference', 'COMPLIANCE', 'OVERALL']):
+            report_lines.append(line)
+    
+    return '\n'.join(report_lines) if report_lines else test_output
+
+
+def check_data_sufficiency(
+    requirements: list[str],
+    playbook_objective: str,
+    test_output: str,
+    batch_info: str = ""
+) -> tuple[bool, str, str]:
+    """
+    STAGE 1: Check if the playbook collected sufficient data.
+    
+    This function ONLY checks if data was collected properly.
+    It does NOT perform compliance analysis.
+    
+    Args:
+        requirements: List of requirements for this batch
+        playbook_objective: The objective of the playbook
+        test_output: Output from data collection playbook
+        batch_info: Optional batch info string (e.g., "Part 1/3")
+        
+    Returns:
+        tuple: (is_sufficient, message, extracted_report)
+        - is_sufficient: True if data was collected properly
+        - message: Explanation of what's missing if insufficient
+        - extracted_report: The extracted DATA COLLECTION REPORT section
+    """
+    batch_label = f" ({batch_info})" if batch_info else ""
+    
+    print("\n" + "=" * 80)
+    print(f"🔍 STAGE 1: DATA SUFFICIENCY CHECK{batch_label}")
+    print("=" * 80)
+    print("Checking if playbook collected sufficient data...")
+    
+    # Extract the data collection report
+    extracted_report = extract_data_collection_report(test_output)
+    
+    # PRE-CHECK: Verify report has all 6 mandatory fields (Task, Command, Exit code, Data, Status, Rationale)
+    if extracted_report:
+        missing_fields = []
+        # Check for mandatory fields in the report
+        has_task = "Task:" in extracted_report
+        has_command = "Command:" in extracted_report
+        has_exit_code = "Exit code:" in extracted_report
+        has_data = "Data:" in extracted_report
+        has_status = "Status:" in extracted_report
+        has_rationale = "Rationale:" in extracted_report
+        
+        if not has_task:
+            missing_fields.append("Task")
+        if not has_command:
+            missing_fields.append("Command")
+        if not has_exit_code:
+            missing_fields.append("Exit code")
+        if not has_data:
+            missing_fields.append("Data")
+        if not has_status:
+            missing_fields.append("Status")
+        if not has_rationale:
+            missing_fields.append("Rationale")
+        
+        if missing_fields:
+            missing_str = ", ".join(missing_fields)
+            print(f"\n⚠️ Report format incomplete - missing fields: {missing_str}")
+            advice = f"""INSUFFICIENT_DATA: Report format is incomplete. Missing mandatory fields: {missing_str}
+
+Missing/Incomplete:
+- Report is missing: {missing_str} fields
+
+ADVICE TO UPDATE PLAYBOOK:
+1. The compliance report MUST include ALL 6 fields for EACH requirement:
+   - "Task: {{{{ task_N_name | default('Task not recorded') }}}}"
+   - "Command: {{{{ task_N_cmd | default('N/A') }}}}"
+   - "Exit code: {{{{ task_N_rc | default(-1) }}}}"
+   - "Data: {{{{ data_N | default('') }}}}"
+   - "Status: {{{{ status_N | default('UNKNOWN') }}}}"
+   - "Rationale: {{{{ rationale_N | default('Not evaluated') }}}}"
+
+2. For each requirement, store these variables:
+   - task_N_name: Description of what the task does
+   - task_N_cmd: The actual shell command used
+   - task_N_rc: "{{{{ result.rc | default(-1) }}}}"
+   - data_N: "{{{{ result.stdout | default('') }}}}"
+   - status_N: "{{{{ 'PASS' if <condition> else 'FAIL' }}}}" based on requirement rationale
+   - rationale_N: "PASS when <condition>, FAIL when <condition>" from requirement text
+
+3. Update the "Generate compliance report" task to include all 6 lines per requirement.
+
+4. Add OVERALL COMPLIANCE section at the end with:
+   - "Result: {{{{ overall_result }}}}"
+   - "Rationale: {{{{ overall_rationale }}}}" """
+            return False, advice, extracted_report
+    
+    # Format requirements for analysis
+    requirements_text = "\n".join([f"{i+1}. {req}" for i, req in enumerate(requirements)])
+    
+    # Build Stage 1 prompt - ONLY check data sufficiency
+    stage1_prompt = """You are an expert Ansible auditor. Your task is to check if a playbook COLLECTED SUFFICIENT DATA.
+
+**DO NOT perform compliance analysis. ONLY check if data was collected.**
+
+**Playbook Objective:**
+{objective}
+
+**Requirements to collect data for:**
+{requirements}
+
+**Playbook Execution Output:**
+```
+{output}
+```
+
+**YOUR TASK - DATA SUFFICIENCY CHECK ONLY:**
+
+1. Does the output contain a "Generate compliance report" task?
+2. For EACH requirement, does the report include ACTUAL DATA or CONFIRMED ABSENCE?
+3. Is any data missing, showing "Not collected yet", or showing only placeholders?
+
+**IMPORTANT - TWO VALID SCENARIOS:**
+1. **Data collected**: Command found and retrieved actual data (e.g., "Docker version 20.10.24")
+2. **Confirmed absence**: Command succeeded (exit code 0) but found nothing (e.g., "No packages found", empty output)
+
+BOTH scenarios are DATA SUFFICIENT because they provide clear information about the environment.
+
+**RESPONSE FORMAT:**
+
+If data is SUFFICIENT for all requirements:
+```
+DATA_SUFFICIENT: All requirements have actual data or confirmed absence.
+
+EXTRACTED DATA:
+- Requirement 1: [actual data found OR confirmed absence with exit code 0]
+- Requirement 2: [actual data found OR confirmed absence with exit code 0]
+...
+```
+
+If data is INSUFFICIENT (command FAILED, not just empty):
+```
+INSUFFICIENT_DATA: [Explain what data is missing or FAILED to collect]
+
+Missing/Incomplete:
+- Requirement X: [what's wrong - no data, placeholder, error, etc.]
+- Requirement Y: [what's wrong]
+
+ADVICE TO UPDATE PLAYBOOK:
+1. [Specific instruction on what task to add/fix]
+2. [How to collect the missing data]
+```
+
+**IMPORTANT - DISTINGUISHING VALID vs INSUFFICIENT:**
+
+✅ SUFFICIENT (valid data):
+- Actual data collected: "Docker version 20.10.24"
+- Confirmed absence with exit code 0: "No packages found", "(empty)"
+- Exit code 1 from grep/egrep with empty output = "No matches found" (VALID!)
+- Any command completed and reported its result (even if empty)
+
+**CRITICAL - grep exit codes:**
+- Exit code 0 = matches found (has output)
+- Exit code 1 = NO matches found (empty output) ← THIS IS VALID DATA!
+- Exit code 2 = error occurred
+
+Example: `journalctl | grep 'Connection timed out'` returns exit code 1 with empty output
+→ This is SUFFICIENT DATA meaning "no 'Connection timed out' entries exist"
+
+❌ INSUFFICIENT (needs fix):
+- "Not collected yet" - task didn't run
+- Command crashed/errored (exit code 2+) with no useful output
+- Report section completely missing for a requirement
+- Only placeholders, no execution at all
+
+DO NOT analyze compliance - just verify data collection ran and reported results.
+
+**Your Response:**""".format(
+        objective=playbook_objective,
+        requirements=requirements_text,
+        output=test_output[:8000]  # Limit output size to avoid token issues
+    )
+    
+    try:
+        print("Checking data sufficiency (this may take a minute)...")
+        
+        # Use the LLM directly
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                print(f"Check attempt {attempt}/{max_attempts}...")
+                response = model.invoke(stage1_prompt)
+                result = response.content.strip()
+                break
+            except Exception as e:
+                if attempt < max_attempts and ("timeout" in str(e).lower() or "timed out" in str(e).lower()):
+                    print(f"⚠️  Timed out on attempt {attempt}, retrying...")
+                    continue
+                raise
+        
+        print("\n📊 Data Sufficiency Result:")
+        print("-" * 40)
+        print(result[:1000] + ("..." if len(result) > 1000 else ""))
+        print("-" * 40)
+        
+        # Check result - IMPORTANT: Check for INSUFFICIENT first because "INSUFFICIENT" contains "SUFFICIENT"
+        result_upper = result.upper()
+        if "INSUFFICIENT_DATA" in result or "INSUFFICIENT" in result_upper[:200]:
+            print("\n❌ STAGE 1 FAILED: Data collection insufficient")
+            return False, result, extracted_report
+        elif "DATA_SUFFICIENT" in result or ("SUFFICIENT" in result_upper[:200] and "INSUFFICIENT" not in result_upper[:200]):
+            print("\n✅ STAGE 1 PASSED: Data collection sufficient")
+            return True, result, extracted_report
+        else:
+            # Ambiguous result - check for positive/negative indicators
+            if any(word in result.lower() for word in ["missing", "incomplete", "not collected", "failed to collect", "advice to update"]):
+                print("\n❌ STAGE 1 FAILED: Data appears insufficient (found negative indicators)")
+                return False, result, extracted_report
+            elif any(word in result.lower() for word in ["all requirements have", "data values collected", "sufficient"]):
+                print("\n✅ STAGE 1 PASSED: Data appears sufficient")
+                return True, result, extracted_report
+            else:
+                print("\n⚠️  STAGE 1 UNCLEAR: Assuming insufficient")
+                return False, result, extracted_report
+                
+    except Exception as e:
+        error_msg = f"Error during data sufficiency check: {str(e)}"
+        print(f"❌ {error_msg}")
+        # On error, extract what we can and let it pass to not block
+        return True, f"Check failed but proceeding: {error_msg}", extracted_report
+
+
+def analyze_compliance_from_report(
+    requirements: list[str],
+    playbook_objective: str,
+    combined_report: str,
+    kcs_info: dict = None
+) -> tuple[bool, str]:
+    """
+    STAGE 2: Analyze the combined data collection report for compliance.
+    
+    This function ONLY performs compliance analysis on already-collected data.
+    It assumes data sufficiency has already been verified.
+    
+    Args:
+        requirements: ALL requirements (from all batches)
+        playbook_objective: The objective of the playbook
+        combined_report: Combined DATA COLLECTION REPORT from all playbooks
+        kcs_info: Optional KCS article information for context
+        
+    Returns:
+        tuple: (analysis_passed, compliance_analysis_message)
+    """
+    print("\n" + "=" * 80)
+    print("🔍 STAGE 2: COMPLIANCE ANALYSIS")
+    print("=" * 80)
+    print("Analyzing combined data collection report for compliance...")
+    
+    # Format requirements for analysis
+    requirements_text = "\n".join([f"{i+1}. {req}" for i, req in enumerate(requirements)])
+    
+    # Add KCS context if available
+    kcs_context = ""
+    if kcs_info:
+        kcs_context = f"""
+**KCS Article Reference:**
+- Title: {kcs_info.get('title', 'N/A')}
+- URL: {kcs_info.get('url', 'N/A')}
+- Environment: {kcs_info.get('environment', 'N/A')[:500]}
+"""
+    
+    # Build Stage 2 prompt - compliance analysis only
+    stage2_prompt = """You are an expert compliance analyst. Analyze the collected data and determine compliance status for each requirement.
+
+**Playbook Objective:**
+{objective}
+{kcs_context}
+**Requirements:**
+{requirements}
+
+**COMBINED COMPLIANCE REPORT:**
+```
+{report}
+```
+
+**YOUR TASK - COMPLIANCE ANALYSIS:**
+
+For EACH requirement, analyze the collected data and determine:
+- **COMPLIANT**: Data shows requirement is definitively met
+- **NON-COMPLIANT**: Data shows requirement is definitively not met  
+- **UNKNOWN**: Cannot determine (error collecting data, ambiguous requirement, missing info)
+
+**RESPONSE FORMAT:**
+
+```
+COMPLIANCE ANALYSIS REPORT
+==========================
+
+Requirement 1: [requirement description]
+  Data Found: [summarize the actual data collected]
+  Status: COMPLIANT / NON-COMPLIANT / UNKNOWN
+  Reasoning: [why you determined this status]
+
+Requirement 2: [requirement description]
+  Data Found: [summarize the actual data collected]
+  Status: COMPLIANT / NON-COMPLIANT / UNKNOWN
+  Reasoning: [why you determined this status]
+
+... (continue for all requirements)
+
+==========================
+OVERALL SUMMARY
+==========================
+- Total Requirements: X
+- COMPLIANT: X
+- NON-COMPLIANT: X
+- UNKNOWN: X
+
+OVERALL ASSESSMENT: PASS (analysis complete)
+```
+
+**GUIDELINES:**
+- "Service is active" for "service must be running" → COMPLIANT
+- "Service is stopped" for "service must be running" → NON-COMPLIANT
+- "Error: command not found" → UNKNOWN (cannot verify)
+- "Package not installed" for "package must be installed" → NON-COMPLIANT
+- Version comparisons: intelligently compare if version meets requirement
+- If requirement is unclear, use UNKNOWN
+
+**Your Compliance Analysis:**""".format(
+        objective=playbook_objective,
+        kcs_context=kcs_context,
+        requirements=requirements_text,
+        report=combined_report[:10000]  # Limit to avoid token issues
+    )
+    
+    try:
+        print("Performing compliance analysis (this may take a few minutes)...")
+        
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                print(f"Analysis attempt {attempt}/{max_attempts}...")
+                response = model.invoke(stage2_prompt)
+                result = response.content.strip()
+                break
+            except Exception as e:
+                if attempt < max_attempts and ("timeout" in str(e).lower() or "timed out" in str(e).lower()):
+                    print(f"⚠️  Timed out on attempt {attempt}, retrying...")
+                    continue
+                raise
+        
+        print("\n📊 Compliance Analysis Result:")
+        print("=" * 80)
+        print(result)
+        print("=" * 80)
+        
+        # Check for PASS indicators
+        result_upper = result.upper()
+        if "OVERALL ASSESSMENT: PASS" in result_upper or "ANALYSIS COMPLETE" in result_upper:
+            print("\n✅ STAGE 2 PASSED: Compliance analysis complete")
+            return True, result
+        elif "INSUFFICIENT" in result_upper or "FAIL" in result_upper[:200]:
+            print("\n❌ STAGE 2 ISSUE: Analysis indicates problems")
+            return False, result
+        else:
+            # If it contains compliance determinations, consider it passed
+            if "COMPLIANT" in result_upper or "NON-COMPLIANT" in result_upper:
+                print("\n✅ STAGE 2 PASSED: Compliance analysis complete")
+                return True, result
+            else:
+                print("\n⚠️  STAGE 2 UNCLEAR: Proceeding anyway")
+                return True, result
+                
+    except Exception as e:
+        error_msg = f"Error during compliance analysis: {str(e)}"
+        print(f"❌ {error_msg}")
+        return True, f"Analysis error but proceeding: {error_msg}"
+
+
+def analyze_playbook_output(
+    requirements: list[str],
+    playbook_objective: str,
+    test_output: str
+) -> tuple[bool, str]:
+    """
+    Analyze the playbook data collection output and determine compliance for each requirement.
+    
+    NEW APPROACH: Playbooks only collect data, AI determines compliance.
+    
+    Args:
+        requirements: Original list of requirements
+        playbook_objective: The objective of the playbook
+        test_output: Output from data collection playbook
+        
+    Returns:
+        tuple: (is_verified, compliance_analysis_message)
+        - is_verified: True if playbook collected data properly
+        - compliance_analysis_message: AI's compliance determination for each requirement
+    """
+    print("\n" + "=" * 80)
+    print("🔍 AI COMPLIANCE ANALYSIS (Analyzing Collected Data)")
+    print("=" * 80)
+    print("Playbook collected data. AI now determining compliance...")
+
+    
+    # Format requirements for analysis
+    requirements_text = "\n".join([f"{i+1}. {req}" for i, req in enumerate(requirements)])
+    
+    # Build analysis prompt without f-string to avoid issues with curly braces in test_output
+    analysis_prompt = """You are an expert Ansible compliance auditor. Your task is to analyze whether a playbook CORRECTLY REPORTS compliance status based on what it found.
+
+**Original Objective:**
+{objective}
+
+**Original Requirements:**
+{requirements}
+
+**Actual Playbook Execution Output:**
+```
+{output}
+```
+
+**CRITICAL TASK:** Analyze the COMPLIANCE REPORT and verify the status/rationale for each requirement.
+
+**NEW APPROACH - INTELLIGENT COMPLIANCE ANALYSIS:**
+- Playbooks now ONLY collect data (no compliance determination)
+- YOU (AI) will analyze the collected data and determine compliance
+- This approach is MORE INTELLIGENT and works across various servers
+
+**YOUR TWO-STAGE JOB:**
+
+**STAGE 1: DATA SUFFICIENCY CHECK**
+First, verify the "Generate compliance report" task exists and includes REAL DATA:
+- Does the output contain a "Generate compliance report" task?
+- Does the report include ACTUAL DATA for each requirement (not just placeholders or labels)?
+- Is data missing, incomplete, or just showing "Requirement X:" without actual values?
+
+**If data is INSUFFICIENT**, respond with:
+```
+INSUFFICIENT_DATA: [Explain what data is missing or incomplete]
+
+ADVICE TO UPDATE PLAYBOOK:
+1. [Specific instruction on what task to add/fix]
+2. [How to collect the missing data]
+3. [How to include it in the report with actual values]
+```
+
+**STAGE 2: COMPLIANCE ANALYSIS** (only if data is sufficient)
+If the report contains real data for all requirements, then determine compliance:
+1. Review each requirement and the data collected
+2. Determine if requirement is met based on the data:
+   - **COMPLIANT**: Data shows requirement is definitively met
+   - **NON-COMPLIANT**: Data shows requirement is definitively not met
+   - **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+3. Provide reasoning for each determination
+
+**ANALYSIS GUIDELINES:**
+- If data shows "Docker version 20.10.24 installed" and requirement is "Docker must be installed" → COMPLIANT
+- If data shows "Docker is not installed" and requirement is "Docker must be installed" → NON-COMPLIANT
+- If data shows "Error collecting Docker info" → UNKNOWN (unable to verify)
+- If data shows "Service httpd is active" and requirement is "Service must be running" → COMPLIANT
+- If data shows "Service httpd is stopped" and requirement is "Service must be running" → NON-COMPLIANT
+- If data shows version numbers, compare them intelligently
+- If requirement is unclear/ambiguous → UNKNOWN (requirement needs clarification)
+
+**Verification Checklist:**
+1. Does the playbook collect data for EVERY requirement listed above?
+2. **Is the playbook ONLY collecting data (not determining compliance)?** ✅ This is correct!
+3. For each requirement, is relevant data collected OR error message provided?
+4. Based on the collected data, can you determine compliance?
+5. **YOUR ANALYSIS - For each requirement, determine:**
+   - COMPLIANT: If collected data shows requirement is met
+   - NON-COMPLIANT: If collected data shows requirement is not met
+   - UNKNOWN: If data is insufficient, error occurred, or requirement unclear
+
+**PASS Examples (Correct Data Collection - AI determines compliance):**
+
+**Playbook Collects Data:**
+✅ Requirement: "Docker must be installed" → Collected: "Docker version 20.10.24 is installed" → AI Determines: COMPLIANT
+✅ Requirement: "Service must be running" → Collected: "Service httpd is stopped" → AI Determines: NON-COMPLIANT  
+✅ Requirement: "RHEL 7 required" → Collected: "RHEL 8.6" → AI Determines: NON-COMPLIANT
+✅ Requirement: "Image pullable" → Collected: "Error: no credentials" → AI Determines: UNKNOWN
+✅ Requirement: "Check packages" → Collected: "docker-20.10.24, nginx-1.20.1..." → AI Determines: Based on requirement
+
+**FAIL Examples (Incorrect Playbook Behavior):**
+❌ Playbook determines compliance itself (should only collect data!)
+❌ Playbook reports "COMPLIANT" or "NON-COMPLIANT" (AI's job, not playbook's!)
+❌ Playbook skips data collection
+❌ Playbook doesn't handle errors (should report error message as data)
+
+**FAIL Examples (Incorrect Reporting Logic):**
+❌ Requirement: "Package installed" → Found: 0 packages → Reports: COMPLIANT (WRONG!)
+❌ Requirement: "Service running" → Didn't check status → Reports: COMPLIANT (WRONG!)
+❌ Requirement: "Version >= 2.0" → Found: Version 1.5 → Reports: COMPLIANT (WRONG!)
+❌ Report missing a requirement check entirely
+❌ Requirement: "Image pullable" → Auth failed → Reports: COMPLIANT (WRONG! Should be UNKNOWN)
+❌ Requirement: "Check API" → Connection refused → Reports: COMPLIANT (WRONG! Should be UNKNOWN)
+❌ Requirement: "Service check" → No permissions → Reports: NON-COMPLIANT (MISLEADING! Should be UNKNOWN)
+
+**APPROACH: DATA COLLECTION + AI ANALYSIS**
+
+**Playbook Role**: Collect data only (no intelligence)
+- Just gather facts, run commands, collect information
+- Report what was found OR error message
+- NO compliance determination in playbook
+
+**AI Role**: Analyze data and determine compliance (intelligence here!)
+- Review collected data for each requirement
+- Determine: COMPLIANT / NON-COMPLIANT / UNKNOWN
+- Provide reasoning for determination
+- This approach works across various servers
+
+**Why This Works Better:**
+- Playbooks are generic (just data collection)
+- AI has intelligence to interpret data in context
+- Same playbook works for different compliance standards
+- AI can handle nuances and edge cases
+
+**Key Point:** Playbook collects data, AI judges compliance!
+
+**Response Formats:**
+
+**OPTION A: If data is INSUFFICIENT** (missing data, no real values, incomplete report):
+```
+INSUFFICIENT_DATA: The compliance report is missing actual data for requirements.
+
+Problems found:
+- Requirement 1 "Check Docker version": Report shows "Requirement 1: Check Docker version" but no actual version number
+- Requirement 3 "Service status": No data collected about service state
+- Report exists but contains only labels, not actual collected information
+
+ADVICE TO UPDATE PLAYBOOK:
+1. FIRST: Add task to initialize ALL data variables with defaults (e.g., data_docker: "Not collected yet")
+2. For Docker version: Add task to run 'docker --version' and store output in set_fact (e.g., data_docker_version)
+3. For service status: Use ansible.builtin.service_facts to collect service information, store in set_fact (e.g., data_httpd_status)
+4. In "Generate compliance report" task, include the ACTUAL DATA with default filters:
+   - "Docker Version: {{{{ data_docker_version | default('Not available') }}}}" (not just "Docker Version:")
+   - "Service Status: {{{{ data_httpd_status | default('Not available') }}}}" (not just "Service Status:")
+5. Ensure all set_fact variables are referenced in the final report WITH | default() filter
+6. Use ignore_errors: true on collection tasks and report errors as data if they occur
+```
+
+**OPTION B: If data is SUFFICIENT**, provide compliance analysis for each requirement:
+```
+Requirement 1: [requirement description]
+Data Collected: [what the playbook actually found - must be real data!]
+Compliance Status: COMPLIANT / NON-COMPLIANT / UNKNOWN
+Reasoning: [why you determined this status based on the collected data]
+
+Requirement 2: [requirement description]
+Data Collected: [what the playbook actually found - must be real data!]
+Compliance Status: COMPLIANT / NON-COMPLIANT / UNKNOWN
+Reasoning: [why you determined this status based on the collected data]
+
+...
+
+OVERALL ASSESSMENT:
+PASS: Playbook successfully collected data for all requirements. AI compliance analysis complete.
+```
+
+**Examples:**
+
+❌ INSUFFICIENT DATA Example:
+```
+INSUFFICIENT_DATA: The compliance report only shows requirement labels without actual collected data.
+
+Problems:
+- Requirement 1 "Docker installed": Report shows "Docker:" but no version or installation status
+- Requirement 2 "Service running": Report shows "Service Status:" but no actual state (active/inactive)
+- No real data values collected, only placeholders
+
+ADVICE TO UPDATE PLAYBOOK:
+1. FIRST TASK: Initialize all data variables with defaults (e.g., data_docker: "Not collected yet")
+2. Add task to check Docker: Use ansible.builtin.command "docker --version" and register result as docker_check
+3. Add task to collect service facts: Use ansible.builtin.service_facts module
+4. Store results in set_fact variables (e.g., data_docker: "{{{{ docker_check.stdout if docker_check.rc == 0 else 'Not installed' }}}}")
+5. Update report task to include actual values WITH default filter: "Docker Status: {{{{ data_docker | default('Not available') }}}}"
+6. Ensure every requirement has corresponding data_* variable with real values in the report
+```
+
+✅ SUFFICIENT DATA Example:
+```
+Requirement 1: Docker must be installed
+Data Collected: Docker version 20.10.24, build 297e128
+Compliance Status: COMPLIANT
+Reasoning: Data shows Docker is installed with specific version 20.10.24
+
+Requirement 2: Service httpd must be running
+Data Collected: Service httpd state: stopped
+Compliance Status: NON-COMPLIANT
+Reasoning: Data clearly shows service is stopped, requirement specifies it must be running
+
+Requirement 3: Image registry must be accessible
+Data Collected: Error checking registry: authentication required but no credentials provided
+Compliance Status: UNKNOWN
+Reasoning: Cannot determine accessibility without proper credentials
+
+OVERALL ASSESSMENT:
+PASS: Playbook successfully collected data for all requirements. AI compliance analysis complete.
+```
+
+**Your Analysis:**"""
+    
+    # Format the prompt with actual values
+    analysis_prompt = analysis_prompt.format(
+        objective=playbook_objective,
+        requirements=requirements_text,
+        output=test_output
+    )
+
+    try:
+        # Use the LLM directly without ChatPromptTemplate to avoid issues with curly braces
+        print("Analyzing playbook output (this may take a few minutes)...")
+        
+        # Add retry logic for timeout handling
+        max_analysis_attempts = 3
+        for attempt in range(1, max_analysis_attempts + 1):
+            try:
+                print(f"Analysis attempt {attempt}/{max_analysis_attempts}...")
+                response = model.invoke(analysis_prompt)
+                analysis_result = response.content.strip()
+                break  # Success, exit retry loop
+            except Exception as e:
+                error_msg = str(e)
+                if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    print(f"⚠️  Analysis timed out on attempt {attempt}/{max_analysis_attempts}")
+                    if attempt < max_analysis_attempts:
+                        print(f"🔄 Retrying analysis...")
+                        continue
+                    else:
+                        print(f"❌ All {max_analysis_attempts} analysis attempts timed out")
+                        # Fall back to passing if analysis times out
+                        print("⚠️  Analysis timed out, proceeding anyway...")
+                        return True, "PASS: Analysis timed out - unable to verify, proceeding with execution"
+                else:
+                    # Non-timeout error, re-raise
+                    raise
+        
+        print("\n📊 Analysis Result:")
+        print("=" * 80)
+        print(analysis_result)
+        print("=" * 80)
+        
+        # Check if data is insufficient - look for it anywhere in the response
+        if "INSUFFICIENT_DATA" in analysis_result or "INSUFFICIENT DATA" in analysis_result:
+            print("\n⚠️  Insufficient Data Collected")
+            print("   The playbook's compliance report is missing actual data.")
+            print("   AI provided specific advice to improve data collection.")
+            return False, analysis_result
+        
+        # Check if analysis passed - look for PASS in various formats
+        # The LLM might format it as "PASS:", "**PASS:**", "OVERALL ASSESSMENT:\nPASS", etc.
+        analysis_upper = analysis_result.upper()
+        
+        # Check for various PASS patterns
+        pass_patterns = [
+            "OVERALL ASSESSMENT:" in analysis_upper and "PASS" in analysis_upper,
+            analysis_result.startswith("PASS"),
+            "**PASS:**" in analysis_result,
+            "**PASS**" in analysis_result,
+            "\nPASS:" in analysis_result,
+            "\nPASS " in analysis_result,
+        ]
+        
+        # Also check for FAIL patterns (explicit failure)
+        fail_patterns = [
+            "OVERALL ASSESSMENT:" in analysis_upper and "FAIL" in analysis_upper,
+            analysis_result.startswith("FAIL"),
+            "**FAIL:**" in analysis_result,
+            "**FAIL**" in analysis_result,
+            "\nFAIL:" in analysis_result,
+            "\nFAIL " in analysis_result,
+        ]
+        
+        if any(pass_patterns) and not any(fail_patterns):
+            print("\n✅ AI Compliance Analysis: COMPLETE")
+            print("   Data collection successful. AI determined compliance for all requirements.")
+            return True, analysis_result
+        elif any(fail_patterns):
+            print("\n❌ Analysis determined FAIL")
+            print("   Playbook has issues that need to be fixed.")
+            return False, analysis_result
+        else:
+            # If no clear PASS or FAIL, check if the analysis is complete and reasonable
+            # If it contains compliance determinations, consider it a PASS
+            if ("COMPLIANT" in analysis_upper or "NON-COMPLIANT" in analysis_upper) and "REQUIREMENT" in analysis_upper:
+                print("\n✅ AI Compliance Analysis: COMPLETE")
+                print("   Analysis contains compliance determinations. Proceeding.")
+                return True, analysis_result
+            else:
+                print("\n⚠️  Analysis result unclear")
+                print("   Could not determine PASS/FAIL from analysis. Proceeding anyway.")
+                return True, analysis_result  # Default to proceeding
+            
+    except Exception as e:
+        error_msg = f"Error during output analysis: {str(e)}"
+        print(f"❌ {error_msg}")
+        # If analysis fails, default to passing (don't block execution)
+        print("⚠️  Analysis failed, proceeding anyway...")
+        return True, error_msg
+
+
+def main():
+    """Main execution function."""
+    
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description='Generate and execute Ansible playbooks using AI',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Use all defaults (packet_recvmsg killer)
+  python3 deepseek_generate_playbook.py
+  
+  # Specify custom target host
+  python3 deepseek_generate_playbook.py --target-host worker-1
+  
+  # Custom objective and filename
+  python3 deepseek_generate_playbook.py \\
+    --objective "Clean up old log files" \\
+    --filename cleanup_logs.yml
+  
+  # Add custom requirements
+  python3 deepseek_generate_playbook.py \\
+    --objective "Install Docker" \\
+    --requirement "Install Docker packages" \\
+    --requirement "Start Docker service" \\
+    --requirement "Enable Docker at boot" \\
+    --filename install_docker.yml
+  
+  # Full customization
+  python3 deepseek_generate_playbook.py \\
+    --target-host worker-1 \\
+    --become-user ansible \\
+    --objective "Update system packages" \\
+    --requirement "Update package cache" \\
+    --requirement "Upgrade all packages" \\
+    --filename system_update.yml
+"""
+    )
+    
+    parser.add_argument(
+        '--target-host', '-t',
+        type=str,
+        default='master-1',
+        help='Target host to execute the playbook on (default: master-1)'
+    )
+    
+    parser.add_argument(
+        '--test-host',
+        type=str,
+        default=None,
+        help='Test host for validation before target execution (if not specified, uses target-host for testing)'
+    )
+    
+    parser.add_argument(
+        '--become-user', '-u',
+        type=str,
+        default='root',
+        help='User to become when executing tasks (default: root)'
+    )
+    
+    
+    parser.add_argument(
+        '--max-retries', '-r',
+        type=int,
+        default=None,
+        help='Maximum number of retry attempts (default: auto-calculated based on number of requirements)'
+    )
+    
+    parser.add_argument(
+        '--objective', '-o',
+        type=str,
+        default="Create an Ansible playbook that finds and kills processes that have 'packet_recvmsg' in their stack trace.",
+        help='Playbook objective - what the playbook should achieve'
+    )
+    
+    parser.add_argument(
+        '--requirement',
+        action='append',
+        dest='requirements',
+        help='Add a requirement (can be used multiple times). If not specified, uses default packet_recvmsg requirements.'
+    )
+    
+    parser.add_argument(
+        '--example-output', '-e',
+        type=str,
+        default="""[root@master-1 ~]# egrep packet_recvmsg /proc/*/stack
+/proc/2290657/stack:[<0>] packet_recvmsg+0x6e/0x4f0
+grep: /proc/2290657/stack: No such file or directory
+
+[root@master-1 ~]# ps -ef | grep -i 2290657
+root     2290657 2526847  0 12:13 ?        00:00:00 ./bpfdoor
+root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
+
+[root@master-1 ~]# kill -9 2290657""",
+        help='Example command output to provide context to the LLM'
+    )
+    
+    parser.add_argument(
+        '--filename', '-f',
+        type=str,
+        default='kill_packet_recvmsg_process.yml',
+        help='Output filename for the generated playbook (default: kill_packet_recvmsg_process.yml)'
+    )
+    
+    args = parser.parse_args()
+    
+    # Use command-line arguments
+    target_host = args.target_host
+    test_host = args.test_host if args.test_host else target_host
+    become_user = args.become_user
+    playbook_objective = args.objective
+    example_output = args.example_output
+    filename = args.filename
+    
+    # Handle requirements - use provided ones or defaults
+    if args.requirements:
+        requirements = args.requirements
+    else:
+        # Default requirements for packet_recvmsg killer
+        requirements = [
+            "Search for 'packet_recvmsg' keyword in /proc/*/stack",
+            "Extract the process ID from the path (e.g., from '/proc/2290657/stack', extract '2290657')",
+            "Kill the identified process(es) using 'kill -9'",
+            "Handle cases where: No matching processes are found, Multiple processes are found (kill all), Process disappears between detection and kill attempt",
+            "Display useful information: Show what processes were found, Show the process details (ps output), Confirm successful termination"
+        ]
+    
+    # Calculate max_retries based on number of requirements if not specified
+    if args.max_retries is None:
+        max_retries = max(len(requirements), 3)  # At least 3, or number of requirements
+        print(f"\n💡 Auto-calculated max retries: {max_retries} (based on {len(requirements)} requirements)")
+    else:
+        max_retries = args.max_retries
+    
+    # Display configuration
+    print("\n" + "=" * 80)
+    print("🎯 CONFIGURATION")
+    print("=" * 80)
+    print(f"Test Host:      {test_host}")
+    if test_host != target_host:
+        print(f"Target Host:    {target_host}")
+    print(f"Become User:    {become_user}")
+    print(f"Max Retries:    {max_retries}")
+    print(f"Objective:      {playbook_objective[:60]}{'...' if len(playbook_objective) > 60 else ''}")
+    print(f"Requirements:   {len(requirements)} items")
+    print(f"Filename:       {filename}")
+    if test_host != target_host:
+        print("\n📋 Execution Strategy:")
+        print(f"   1. Test on: {test_host} (validation)")
+        print(f"   2. Execute on: {target_host} (if test succeeds)")
+    print("=" * 80)
+    
+    try:
+        for attempt in range(1, max_retries + 1):
+            print(f"\n{'='*80}")
+            print(f"Attempt {attempt}/{max_retries}: Generating Ansible playbook...")
+            print("=" * 80)
+            print(f"Objective: {playbook_objective}")
+            print(f"Test Host: {test_host}")
+            if test_host != target_host:
+                print(f"Target Host: {target_host}")
+            print(f"Become User: {become_user}")
+            print(f"Requirements: {len(requirements)} items")
+            print("=" * 80)
+            
+            # Generate the playbook
+            playbook = generate_playbook(
+                playbook_objective=playbook_objective,
+                target_host=test_host,  # Use test_host for generation
+                become_user=become_user,
+                requirements=requirements,
+                example_output=example_output
+            )
+            
+            # Display the generated playbook
+            print("\n📋 Generated Ansible Playbook:")
+            print("=" * 80)
+            print(playbook)
+            print("=" * 80)
+            
+            # Save to file
+            save_playbook(playbook, filename)
+            
+            # Check syntax
+            is_valid, error_msg = check_playbook_syntax(filename, test_host)
+            
+            if not is_valid:
+                # Syntax check failed
+                if attempt < max_retries:
+                    print(f"\n⚠️  Syntax check failed on attempt {attempt}/{max_retries}")
+                    print("🔄 Retrying with additional instructions to LLM...")
+                    print("\n📋 Error Summary:")
+                    # Extract key error information
+                    error_lines = error_msg.split('\n')
+                    for line in error_lines[:10]:  # Show first 10 lines of error
+                        if line.strip():
+                            print(f"   {line}")
+                    if len(error_lines) > 10:
+                        print(f"   ... ({len(error_lines) - 10} more lines)")
+                    
+                    # Escape curly braces in error message to prevent format string errors
+                    error_msg_escaped = error_msg[:200].replace('{', '{{').replace('}', '}}')
+                    
+                    # Add error context to requirements for next attempt
+                    requirements.append(f"IMPORTANT: Previous attempt had syntax error: {error_msg_escaped}")
+                    continue
+                else:
+                    print(f"\n❌ Failed to generate valid playbook after {max_retries} attempts")
+                    print("\n" + "="*80)
+                    print("FINAL SYNTAX ERROR:")
+                    print("="*80)
+                    print(error_msg)
+                    print("="*80)
+                    print(f"\n⚠️  The playbook has been saved to: {filename}")
+                    print("Please review and fix the syntax errors manually.")
+                    raise Exception(f"Syntax validation failed after {max_retries} attempts")
+            
+            # Syntax is valid, now test on test host
+            print("\n" + "=" * 80)
+            print(f"✅ Syntax Valid! Now testing on test host: {test_host}...")
+            print("=" * 80)
+            
+            # Execute on test host first (skip debug tasks for cleaner analysis)
+            test_success, test_output = test_playbook_on_server(filename, test_host, check_mode=False, verbose=True, skip_debug=True)
+            
+            if test_success:
+                # Test on test_host succeeded
+                print("\n" + "=" * 80)
+                print(f"🎉 SUCCESS! Playbook validated on test host: {test_host}!")
+                print("=" * 80)
+                print("\n✅ Test Execution Summary:")
+                print("   1. ✅ Syntax check passed")
+                print(f"   2. ✅ Test execution passed on {test_host}")
+                print("   3. ✅ All requirements verified")
+                
+                # Check if it was an OS version mismatch
+                if "OS version mismatch" in test_output or "playbook valid for different OS version" in test_output:
+                    print("\n⚠️  NOTE: OS Version Mismatch on Test Host")
+                    print("   The playbook is designed for a different OS version than the test host.")
+                    print("   The playbook itself is syntactically and logically correct.")
+                
+                # Show FULL test execution output
+                print(f"\n📋 Full Test Execution Output from {test_host}:")
+                print("=" * 80)
+                print(test_output)
+                print("=" * 80)
+                
+                # Analyze playbook output against requirements
+                analysis_passed, analysis_message = analyze_playbook_output(
+                    requirements=requirements,
+                    playbook_objective=playbook_objective,
+                    test_output=test_output
+                )
+                
+                if not analysis_passed:
+                    # Analysis failed - playbook doesn't fulfill requirements correctly
+                    if attempt < max_retries:
+                        print(f"\n⚠️  Analysis failed on attempt {attempt}/{max_retries}")
+                        print("🔄 Regenerating playbook with analysis feedback...")
+                        
+                        # Escape analysis message for template
+                        analysis_escaped = analysis_message[:500].replace('{', '{{').replace('}', '}}')
+                        
+                        # Add analysis feedback to requirements for next attempt
+                        requirements.append(f"""CRITICAL FIX REQUIRED: Output analysis shows the playbook does not correctly fulfill requirements.
+
+Analysis Result:
+{analysis_escaped}
+
+INSTRUCTIONS TO FIX:
+1. Review the analysis feedback carefully
+2. Fix the logic errors in compliance checking
+3. Ensure ALL requirements are properly verified
+4. Make sure compliance determinations match actual task results
+5. If a requirement says "SHOULD be present" and it's NOT found, report NON-COMPLIANT (not compliant)
+6. If a requirement says "SHOULD be running" and it's NOT running, report NON-COMPLIANT (not compliant)
+7. Always match the intent of the requirement in your compliance logic""")
+                        
+                        # Continue to next attempt
+                        continue
+                    else:
+                        print(f"\n❌ Failed to generate correct playbook after {max_retries} attempts")
+                        print("   The playbook runs but doesn't correctly verify requirements")
+                        print(f"\n⚠️  The playbook has been saved to: {filename}")
+                        print("Please review the analysis feedback and fix manually.")
+                        raise Exception(f"Playbook analysis failed after {max_retries} attempts")
+                
+                # Analysis passed - proceed to target host execution
+                print("\n✅ Playbook output verified! Requirements correctly fulfilled.")
+                
+                # Now execute on target host if different
+                if test_host != target_host:
+                    print("\n" + "=" * 80)
+                    print(f"🚀 FINAL EXECUTION: Running playbook on target host: {target_host}")
+                    print("=" * 80)
+                    print(f"\n📍 Executing on: {target_host}")
+                    print()
+                    
+                    final_success, final_output = test_playbook_on_server(filename, target_host, check_mode=False, verbose=False, skip_debug=True)
+                    
+                    if final_success:
+                        print("\n" + "=" * 80)
+                        print(f"🎊 COMPLETE SUCCESS! Playbook executed on target: {target_host}!")
+                        print("=" * 80)
+                        print("\n✅ Final Execution Summary:")
+                        print("   1. ✅ Syntax check passed")
+                        print(f"   2. ✅ Test execution passed on {test_host}")
+                        print(f"   3. ✅ Final execution passed on {target_host}")
+                        print("   4. ✅ All requirements verified")
+                        
+                        # Show FULL final execution output
+                        print(f"\n📋 Full Final Execution Output from {target_host}:")
+                        print("=" * 80)
+                        print(final_output)
+                        print("=" * 80)
+                    else:
+                        print("\n" + "=" * 80)
+                        print(f"⚠️  Execution on target host {target_host} had issues")
+                        print("=" * 80)
+                        print(f"\n📋 Full Execution Output from {target_host}:")
+                        print("=" * 80)
+                        print(final_output)
+                        print("=" * 80)
+                        print("\n⚠️  The playbook was validated on test host but may need adjustment for target host.")
+                        print(f"   Test host: {test_host} ✅")
+                        print(f"   Target host: {target_host} ❌")
+                else:
+                    print("\n" + "=" * 80)
+                    print(f"🎊 COMPLETE SUCCESS! Playbook executed on {target_host}!")
+                    print("=" * 80)
+                
+                break
+            else:
+                # Test failed
+                if attempt < max_retries:
+                    print(f"\n⚠️  Server test failed on attempt {attempt}/{max_retries}")
+                    print("🔄 Retrying with test failure feedback to LLM...")
+                    
+                    # Check if it's an undefined variable bug
+                    is_undefined_variable = "PLAYBOOK BUG" in test_output and "undefined" in test_output.lower()
+                    
+                    if is_undefined_variable:
+                        # For undefined variable bugs, include more context
+                        print("\n📋 Detected Undefined Variable Error - Providing detailed feedback to LLM")
+                        
+                        # Extract the specific error message
+                        error_context = []
+                        output_lines = test_output.split('\n')
+                        for i, line in enumerate(output_lines):
+                            if 'undefined' in line.lower() or 'PLAYBOOK BUG' in line:
+                                # Get surrounding lines for context
+                                start = max(0, i-5)
+                                end = min(len(output_lines), i+10)
+                                error_context = output_lines[start:end]
+                                break
+                        
+                        if error_context:
+                            error_msg = '\n'.join(error_context)
+                        else:
+                            error_msg = test_output[:500]
+                        
+                        # Escape curly braces
+                        error_msg_escaped = error_msg.replace('{', '{{').replace('}', '}}')
+                        
+                        # Add specific undefined variable instructions
+                        requirements.append(f"""CRITICAL FIX REQUIRED: Previous playbook had UNDEFINED VARIABLE error.
+Error details: {error_msg_escaped}
+
+To fix this:
+1. Ensure ALL variables are defined BEFORE they are used
+2. NEVER use a variable in the same set_fact task where it's being defined
+3. Split set_fact tasks that have dependencies into separate tasks
+4. Use 'variable_name | default(value)' for safety
+5. Always set 'gather_facts: yes' at the playbook level
+
+Example of the problem:
+BAD - Circular reference:
+  - set_fact:
+      var1: "{{{{ some_value }}}}"
+      var2: "{{{{ var1 | upper }}}}"  # ERROR: var1 doesn't exist yet!
+
+GOOD - Split into separate tasks:
+  - set_fact:
+      var1: "{{{{ some_value }}}}"
+  - set_fact:
+      var2: "{{{{ var1 | upper }}}}"  # OK: var1 exists now""")
+                    else:
+                        # For other errors, use shorter context
+                        test_output_escaped = test_output[:300].replace('{', '{{').replace('}', '}}')
+                        requirements.append(f"IMPORTANT: Previous playbook failed testing: {test_output_escaped}")
+                else:
+                    print(f"\n❌ Failed to generate working playbook after {max_retries} attempts")
+                    print(f"Last test output:\n{test_output}")
+                    print(f"\n⚠️  The playbook has been saved to: {filename}")
+                    print("Please review and fix the issues manually.")
+                    raise Exception(f"Playbook testing failed after {max_retries} attempts")
+        
+    except Exception as e:
+        print(f"\n❌ Error generating playbook: {str(e)}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
+

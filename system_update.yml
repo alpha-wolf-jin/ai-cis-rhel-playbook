@@ -1,0 +1,139 @@
+---
+- name: Update system packages
+  hosts: all
+  become: yes
+  gather_facts: yes
+
+  tasks:
+    # Task 1: Update package cache
+    - name: Update package cache
+      ansible.builtin.package:
+        update_cache: yes
+      register: cache_update
+      changed_when: cache_update.changed
+      ignore_errors: yes
+      tags: cache
+
+    # Task 2: Check for available upgrades (idempotency check)
+    - name: Check if packages need upgrading
+      ansible.builtin.shell:
+        cmd: |
+          # Different package managers have different check commands
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get -s upgrade | grep -q "^Inst"
+          elif command -v yum >/dev/null 2>&1; then
+            yum check-update --quiet || [ $? -eq 100 ]
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf check-update --quiet || [ $? -eq 100 ]
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive list-updates | grep -q "v |"
+          else
+            echo "Unsupported package manager"
+            exit 1
+          fi
+      register: upgrades_available
+      changed_when: false
+      failed_when: 
+        - upgrades_available.rc != 0
+        - upgrades_available.rc != 100  # yum/dnf return 100 when updates available
+      ignore_errors: yes
+      tags: check
+
+    # Task 3: Upgrade all packages
+    - name: Upgrade all packages
+      ansible.builtin.package:
+        name: "*"
+        state: latest
+      register: package_upgrade
+      changed_when: package_upgrade.changed
+      when: upgrades_available.rc == 0 or upgrades_available.rc == 100
+      ignore_errors: yes
+      tags: upgrade
+
+    # Task 4: Alternative shell-based upgrade for edge cases
+    - name: Alternative package upgrade via shell
+      ansible.builtin.shell:
+        cmd: |
+          # Determine package manager and run appropriate upgrade command
+          if command -v apt-get >/dev/null 2>&1; then
+            DEBIAN_FRONTEND=noninteractive apt-get -y upgrade
+          elif command -v yum >/dev/null 2>&1; then
+            yum -y update
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf -y update
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive update
+          else
+            echo "Unsupported package manager"
+            exit 1
+          fi
+      register: shell_upgrade
+      changed_when: "'0 upgraded, 0 newly installed' not in shell_upgrade.stdout"
+      when: 
+        - package_upgrade is failed or package_upgrade is skipped
+        - upgrades_available.rc == 0 or upgrades_available.rc == 100
+      ignore_errors: yes
+      tags: upgrade
+
+    # Task 5: Clean up package cache to free disk space
+    - name: Clean package cache
+      ansible.builtin.shell:
+        cmd: |
+          if command -v apt-get >/dev/null 2>&1; then
+            apt-get -y autoremove
+            apt-get -y autoclean
+          elif command -v yum >/dev/null 2>&1; then
+            yum -y autoremove
+            yum clean all
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf -y autoremove
+            dnf clean all
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive clean
+          fi
+      register: cache_clean
+      changed_when: cache_clean.rc == 0
+      ignore_errors: yes
+      tags: cleanup
+
+    # Task 6: Debug output for troubleshooting
+    - name: Display upgrade results
+      ansible.builtin.debug:
+        msg: |
+          Cache update: {{ cache_update.changed | default('skipped') }}
+          Upgrades available check: {{ upgrades_available.rc }}
+          Package upgrade: {{ package_upgrade.changed | default('skipped') }}
+          Shell upgrade: {{ shell_upgrade.changed | default('skipped') }}
+          Cache clean: {{ cache_clean.changed | default('skipped') }}
+      when: 
+        - cache_update is defined
+        - upgrades_available is defined
+      tags: debug
+
+    # Task 7: Verify system is operational after upgrade
+    - name: Verify system services
+      ansible.builtin.shell:
+        cmd: |
+          # Check if critical services are running
+          if systemctl is-system-running --quiet 2>/dev/null; then
+            echo "System operational"
+          elif [ -f /proc/1/comm ] && grep -q "systemd" /proc/1/comm; then
+            systemctl is-system-running | grep -E "(running|degraded)"
+          else
+            echo "Non-systemd system, basic check passed"
+          fi
+      register: system_check
+      changed_when: false
+      failed_when: "'running' not in system_check.stdout and 'degraded' not in system_check.stdout"
+      ignore_errors: yes
+      tags: verify
+
+  handlers:
+    # Handler to reboot if kernel was updated (optional)
+    - name: Reboot if required
+      ansible.builtin.reboot:
+        msg: "Rebooting after kernel update"
+        reboot_timeout: 300
+      when: 
+        - ansible_distribution in ['Ubuntu', 'Debian', 'CentOS', 'RedHat', 'Fedora']
+        - "'kernel' in package_upgrade.changes or 'linux-image' in package_upgrade.changes"

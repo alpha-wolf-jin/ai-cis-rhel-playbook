@@ -1,0 +1,176 @@
+---
+- name: Data Collection for Compliance Analysis
+  hosts: all
+  become: yes
+  gather_facts: yes
+  
+  tasks:
+    - name: Initialize data collection variables
+      set_fact:
+        data_os_info: ""
+        data_atomic_openshift_node_package: ""
+        data_atomic_openshift_node_service: ""
+        data_docker_package: ""
+        data_systemd_logind_service: ""
+    
+    # Requirement 1: Collect OS distribution, version, and kernel information
+    - name: Store OS information data
+      set_fact:
+        data_os_info: "{{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }} (Kernel: {{ ansible_facts['kernel'] }})"
+    
+    - name: Debug OS information
+      debug:
+        msg: "OS Info: {{ data_os_info }}"
+      tags: [debug]
+    
+    # Requirement 2: Collect installed version and status of atomic-openshift-node package
+    - name: Collect package facts for atomic-openshift-node
+      package_facts:
+        manager: auto
+      register: pkg_facts_atomic
+      ignore_errors: true
+      failed_when: false
+    
+    - name: Debug atomic-openshift-node package facts
+      debug:
+        var: pkg_facts_atomic
+      tags: [debug]
+    
+    - name: Store atomic-openshift-node package data
+      set_fact:
+        data_atomic_openshift_node_package: >-
+          {% if pkg_facts_atomic is succeeded and 'atomic-openshift-node' in (pkg_facts_atomic.ansible_facts.packages | default({})) %}
+          Package atomic-openshift-node version {{ pkg_facts_atomic.ansible_facts.packages['atomic-openshift-node'][0].version }} is installed
+          {% elif pkg_facts_atomic is succeeded %}
+          Package atomic-openshift-node is NOT installed
+          {% else %}
+          Error collecting atomic-openshift-node package info: {{ pkg_facts_atomic.msg | default('unknown error') }}
+          {% endif %}
+    
+    - name: Debug atomic-openshift-node package status
+      debug:
+        msg: "Atomic OpenShift Node Package: {{ data_atomic_openshift_node_package }}"
+      tags: [debug]
+    
+    # Requirement 3: Collect the status and active state of the systemd service
+    - name: Collect atomic-openshift-node service status
+      systemd:
+        name: atomic-openshift-node
+      register: service_atomic
+      ignore_errors: true
+      failed_when: false
+    
+    - name: Debug atomic-openshift-node service result
+      debug:
+        var: service_atomic
+      tags: [debug]
+    
+    - name: Store atomic-openshift-node service data
+      set_fact:
+        data_atomic_openshift_node_service: >-
+          {% if service_atomic is succeeded and service_atomic.status is defined %}
+          Service atomic-openshift-node is {{ service_atomic.status.ActiveState }} (LoadState: {{ service_atomic.status.LoadState }}, SubState: {{ service_atomic.status.SubState }})
+          {% elif service_atomic is succeeded %}
+          Service atomic-openshift-node exists but status unavailable
+          {% else %}
+          Error collecting atomic-openshift-node service info: {{ service_atomic.msg | default('service query failed') }}
+          {% endif %}
+    
+    - name: Debug atomic-openshift-node service status
+      debug:
+        msg: "Atomic OpenShift Node Service: {{ data_atomic_openshift_node_service }}"
+      tags: [debug]
+    
+    # Requirement 4: Collect installed version and status of docker package (docker or docker-current)
+    - name: Collect docker package facts
+      package_facts:
+        manager: auto
+      register: pkg_facts_docker
+      ignore_errors: true
+      failed_when: false
+    
+    - name: Debug docker package facts
+      debug:
+        var: pkg_facts_docker
+      tags: [debug]
+    
+    - name: Store docker package data
+      set_fact:
+        data_docker_package: >-
+          {% if pkg_facts_docker is succeeded %}
+            {% set docker_packages = [] %}
+            {% if 'docker' in (pkg_facts_docker.ansible_facts.packages | default({})) %}
+              {% set _ = docker_packages.append('docker version ' + pkg_facts_docker.ansible_facts.packages['docker'][0].version) %}
+            {% endif %}
+            {% if 'docker-current' in (pkg_facts_docker.ansible_facts.packages | default({})) %}
+              {% set _ = docker_packages.append('docker-current version ' + pkg_facts_docker.ansible_facts.packages['docker-current'][0].version) %}
+            {% endif %}
+            {% if docker_packages %}
+              {{ docker_packages | join(' and ') }} installed
+            {% else %}
+              Neither docker nor docker-current package is installed
+            {% endif %}
+          {% else %}
+          Error collecting docker package info: {{ pkg_facts_docker.msg | default('unknown error') }}
+          {% endif %}
+    
+    - name: Debug docker package status
+      debug:
+        msg: "Docker Package: {{ data_docker_package }}"
+      tags: [debug]
+    
+    # Requirement 5: Collect the status and active state of the systemd-logind service
+    - name: Collect systemd-logind service status
+      systemd:
+        name: systemd-logind
+      register: service_logind
+      ignore_errors: true
+      failed_when: false
+    
+    - name: Debug systemd-logind service result
+      debug:
+        var: service_logind
+      tags: [debug]
+    
+    - name: Store systemd-logind service data
+      set_fact:
+        data_systemd_logind_service: >-
+          {% if service_logind is succeeded and service_logind.status is defined %}
+          Service systemd-logind is {{ service_logind.status.ActiveState }} (LoadState: {{ service_logind.status.LoadState }}, SubState: {{ service_logind.status.SubState }})
+          {% elif service_logind is succeeded %}
+          Service systemd-logind exists but status unavailable
+          {% else %}
+          Error collecting systemd-logind service info: {{ service_logind.msg | default('service query failed') }}
+          {% endif %}
+    
+    - name: Debug systemd-logind service status
+      debug:
+        msg: "Systemd-Logind Service: {{ data_systemd_logind_service }}"
+      tags: [debug]
+    
+    # FINAL REPORT - DATA ONLY (no compliance determination)
+    - name: Generate data collection report
+      debug:
+        msg:
+          - "========================================"
+          - "DATA COLLECTION REPORT"
+          - "========================================"
+          - ""
+          - "Requirement 1 - OS distribution, version, and kernel information:"
+          - "  Data: {{ data_os_info }}"
+          - ""
+          - "Requirement 2 - Installed version and status of atomic-openshift-node package:"
+          - "  Data: {{ data_atomic_openshift_node_package }}"
+          - ""
+          - "Requirement 3 - Status and active state of atomic-openshift-node systemd service:"
+          - "  Data: {{ data_atomic_openshift_node_service }}"
+          - ""
+          - "Requirement 4 - Installed version and status of docker package (docker or docker-current):"
+          - "  Data: {{ data_docker_package }}"
+          - ""
+          - "Requirement 5 - Status and active state of systemd-logind service:"
+          - "  Data: {{ data_systemd_logind_service }}"
+          - ""
+          - "========================================"
+          - "NOTE: AI will analyze this data to determine compliance"
+          - "========================================"

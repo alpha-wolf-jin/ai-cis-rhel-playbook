@@ -1,0 +1,58 @@
+================================================================================
+LANGGRAPH RECURSION LIMIT FIX - SUMMARY
+================================================================================
+
+PROBLEM:
+  ❌ Error in LangGraph workflow: Recursion limit of 25 reached without 
+     hitting a stop condition.
+  
+  The workflow was looping infinitely because the attempt counter never 
+  incremented - it stayed at 1 forever.
+
+ROOT CAUSE:
+  Conditional edges were trying to increment the 'attempt' counter:
+  
+    def should_continue(state):
+        state['attempt'] += 1  # ❌ THIS DOESN'T PERSIST!
+        return "retry"
+  
+  In LangGraph, only NODES can modify state. Conditional edges receive 
+  a read-only copy, so any state changes are discarded.
+
+SOLUTION:
+  Added a dedicated "increment_attempt" node that increments the counter:
+  
+    def increment_attempt_node(state):
+        state['attempt'] += 1  # ✅ Persists because it's a node!
+        return state
+  
+  All retry paths now route through this node:
+  
+    check_syntax [fail] → increment_attempt → generate (retry)
+    test_host [fail]    → increment_attempt → generate (retry)
+    analyze [fail]      → increment_attempt → generate (retry)
+
+CHANGES:
+  1. Added increment_attempt_node() function
+  2. Modified conditional edges to be pure (no state modification)
+  3. Updated workflow graph to route all retries through increment node
+  4. Increased recursion limit to max(50, max_retries * 3)
+
+TEST RESULTS:
+  Before: ❌ Recursion limit of 50 reached
+  After:  ✅ Attempt 1/2 → Attempt 2/2 → Graceful exit
+  
+  ✅ Proper attempt tracking
+  ✅ Respects max_retries limit
+  ✅ No infinite loops
+  ✅ No recursion errors
+
+KEY LESSON:
+  In LangGraph:
+  - Nodes = Execute tasks & modify state ✅
+  - Conditional Edges = Make routing decisions only (pure functions) ✅
+  
+  If you need to increment a counter on retry, create a dedicated node!
+
+STATUS: ✅ FIXED AND TESTED
+================================================================================

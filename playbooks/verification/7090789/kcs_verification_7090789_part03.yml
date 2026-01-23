@@ -1,0 +1,52 @@
+---
+- name: Data Collection for KCS 7090789
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/7090789"
+    req_03: "Collect installed package information for python39-jmespath, including version and repository"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_03: "Not collected yet"
+        task_03_name: "Not executed"
+        task_03_cmd: "N/A"
+        task_03_rc: -1
+
+    # Requirement 3: Collect installed package information for python39-jmespath, including version and repository
+    - name: "Req 03: Check python39-jmespath package info"
+      shell: >
+        rpm -qi python39-jmespath 2>/dev/null || echo "Package not installed"
+      register: result_03
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 03 details
+      set_fact:
+        task_03_name: "Check python39-jmespath package info"
+        task_03_cmd: "rpm -qi python39-jmespath 2>/dev/null || echo 'Package not installed'"
+        task_03_rc: "{{ result_03.rc | default(-1) }}"
+        data_03: "{{ result_03.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 03/09 - Requirement 03)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 03/09)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "Building custom execution image using ansible-builder fails due to conflict for  package  python39-jmespath on Ansible Automation Platform."
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 03 - {{ req_03 }}:"
+          - "  Task: {{ task_03_name | default('Task not recorded') }}"
+          - "  Command: {{ task_03_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_03_rc | default(-1) }}"
+          - "  Data: {{ data_03 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 03/09)"
+          - "========================================================"

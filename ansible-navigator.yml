@@ -1,0 +1,10 @@
+---
+ansible-navigator:
+  mode: stdout
+  playbook-artifact:
+    enable: false
+  execution-environment:
+    pull:
+      policy: "never"
+  # Optional: set the default image name here
+    image: "registry.redhat.io/ansible-automation-platform-26/ee-supported-rhel9:latest"

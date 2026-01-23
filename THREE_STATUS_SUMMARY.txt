@@ -1,0 +1,124 @@
+================================================================================
+THREE-STATUS COMPLIANCE REPORTING
+================================================================================
+
+OVERVIEW:
+  Instead of binary (COMPLIANT/NON-COMPLIANT), system now supports three
+  statuses for more accurate real-world reporting.
+
+THE THREE STATUSES:
+
+  ✅ COMPLIANT
+     - Requirement is definitively MET
+     - Example: Package IS installed (verified)
+  
+  ❌ NON-COMPLIANT
+     - Requirement is definitively NOT met
+     - Example: Package is NOT installed (verified absent)
+  
+  ⚠️ UNKNOWN
+     - Cannot determine due to environmental limitations
+     - Example: Cannot check without registry credentials
+
+KEY DISTINCTION:
+
+  ❌ NON-COMPLIANT: We checked and it FAILED
+  ⚠️ UNKNOWN: We COULDN'T CHECK
+
+  Don't confuse "can't check" with "checked and failed"!
+
+WHEN TO USE UNKNOWN:
+
+  ✅ Missing credentials → UNKNOWN (short of credential)
+  ✅ Tool not available → UNKNOWN (required tool not available)
+  ✅ Network unreachable → UNKNOWN (network unreachable)
+  ✅ No permissions → UNKNOWN (insufficient permissions)
+  ✅ Missing input info → UNKNOWN (missing required information)
+  ✅ Command unavailable → UNKNOWN (unable to verify)
+
+WHEN TO USE NON-COMPLIANT:
+
+  ✅ Package NOT installed (checked via package_facts)
+  ✅ Service NOT running (checked via systemctl)
+  ✅ Wrong version (checked and confirmed mismatch)
+  ✅ File does NOT exist (checked filesystem)
+
+IMPLEMENTATION:
+
+  Initialize with string 'unknown':
+    - set_fact:
+        compliant_package: false          # Boolean
+        compliant_image: 'unknown'         # String for UNKNOWN
+
+  Set status conditionally:
+    - set_fact:
+        compliant_check: >-
+          {{ 'unknown' if cannot_check
+             else (true if passes else false) }}
+
+  Report with three statuses:
+    - debug:
+        msg: >-
+          {{ '✅ COMPLIANT' if status == true
+             else ('⚠️ UNKNOWN (reason)' if status == 'unknown'
+             else '❌ NON-COMPLIANT') }}
+
+REAL EXAMPLE:
+
+  Requirement: Check if image pullable
+  Environment: No credentials
+  
+  Old (Binary):
+    Reports: ❌ NON-COMPLIANT
+    Problem: Misleading! We didn't check, we couldn't!
+  
+  New (Three-Status):
+    Reports: ⚠️ UNKNOWN (short of credential)
+    Better: Accurate! We couldn't verify without creds!
+
+BENEFITS:
+
+  1. Accuracy: Truthful reporting
+  2. Actionability: Users know what to fix
+     - COMPLIANT → Nothing
+     - NON-COMPLIANT → Fix the issue
+     - UNKNOWN → Provide creds/tools/network/info
+  3. Testing Flexibility: Can test in imperfect environments
+  4. Clear Communication: No ambiguity
+
+DECISION TREE:
+
+  Can you perform the check?
+  ├─ YES → Perform check
+  │   ├─ Passes → ✅ COMPLIANT
+  │   └─ Fails → ❌ NON-COMPLIANT
+  └─ NO (missing creds/tools/network/perms/info)
+      └─ ⚠️ UNKNOWN (with reason)
+
+ANALYSIS VALIDATION:
+
+  PASS:
+    ✅ Reports UNKNOWN when credentials missing
+    ✅ Reports UNKNOWN when network unreachable
+    ✅ Reports NON-COMPLIANT when definitively fails
+    ✅ Reports COMPLIANT when definitively passes
+
+  FAIL:
+    ❌ Reports COMPLIANT despite errors
+    ❌ Reports NON-COMPLIANT when should be UNKNOWN
+    ❌ Silently skips checks
+
+FILES CHANGED:
+  - deepseek_generate_playbook.py
+    * Updated prompt to generate three-status playbooks
+    * Updated analysis to accept UNKNOWN status
+  - langgraph_deepseek_generate_playbook.py
+    * Automatically inherits changes (imports functions)
+
+CORE PRINCIPLE:
+  Use UNKNOWN when you CAN'T VERIFY,
+  NON-COMPLIANT when you VERIFIED AND IT FAILED.
+
+STATUS: ✅ IMPLEMENTED
+DATE: January 11, 2026
+================================================================================

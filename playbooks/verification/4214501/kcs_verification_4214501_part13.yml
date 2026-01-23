@@ -1,0 +1,63 @@
+---
+- name: Data Collection for KCS 4214501
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/4214501"
+    req_13: "Gather system resource information (e.g., memory, disk space, process limits) that could contribute to connection limits or timeouts"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_13: "Not collected yet"
+        task_13_name: "Not executed"
+        task_13_cmd: "N/A"
+        task_13_rc: -1
+
+    # Requirement 13: Gather system resource information
+    - name: "Req 13: Collect system resource info"
+      shell: |
+        echo "=== Memory ==="
+        free -h
+        echo ""
+        echo "=== Disk space ==="
+        df -h
+        echo ""
+        echo "=== Process limits ==="
+        ulimit -a
+        echo ""
+        echo "=== System load ==="
+        uptime
+      register: result_13
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 13 details
+      set_fact:
+        task_13_name: "Collect system resource info"
+        task_13_cmd: |
+          echo "=== Memory ==="; free -h; echo ""; echo "=== Disk space ==="; df -h; echo ""; echo "=== Process limits ==="; ulimit -a; echo ""; echo "=== System load ==="; uptime
+        task_13_rc: "{{ result_13.rc | default(-1) }}"
+        data_13: "{{ result_13.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 13/14 - Requirement 13)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 13/14)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "systemd stops reading and processing dbus event of runc cgroup invokes"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 13 - {{ req_13 }}:"
+          - "  Task: {{ task_13_name | default('Task not recorded') }}"
+          - "  Command: {{ task_13_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_13_rc | default(-1) }}"
+          - "  Data: {{ data_13 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 13/14)"
+          - "========================================================"

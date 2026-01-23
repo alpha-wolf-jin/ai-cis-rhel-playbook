@@ -1,0 +1,147 @@
+================================================================================
+ENHANCED THREE-STATUS REPORTING WITH COMMENTS
+================================================================================
+
+TWO MAJOR ENHANCEMENTS:
+
+  1. COMMENTS/REASONS REQUIRED FOR EVERY STATUS
+     - Users need to know WHY each requirement has its status
+     - Format: "Requirement: STATUS (reason/comment)"
+  
+  2. UNKNOWN FOR UNCLEAR REQUIREMENTS (NEW!)
+     - Some requirements may be ambiguous or vague
+     - Report UNKNOWN when requirement needs clarification
+
+THE THREE STATUSES (WITH COMMENTS):
+
+  ✅ COMPLIANT (reason)
+     - Example: "Docker: COMPLIANT (version 20.10.24 installed)"
+  
+  ❌ NON-COMPLIANT (reason)
+     - Example: "Service: NON-COMPLIANT (service is stopped)"
+  
+  ⚠️ UNKNOWN (reason)
+     - Environmental: "Image: UNKNOWN (short of credential)"
+     - Unclear: "Check XYZ: UNKNOWN (requirement unclear)" ← NEW!
+
+WHEN TO USE UNKNOWN (EXPANDED):
+
+  Environmental Limitations (Original):
+    ✅ Missing credentials
+    ✅ Tool not available
+    ✅ Network unreachable
+    ✅ Insufficient permissions
+    ✅ Missing input info
+
+  Requirement Issues (NEW):
+    ✅ Requirement is unclear/ambiguous
+    ✅ Requirement contradicts other requirements
+    ✅ Requirement lacks specific criteria
+    ✅ Requirement is too vague to verify
+
+IMPLEMENTATION:
+
+  Initialize with reasons:
+    - set_fact:
+        compliant_package: false
+        reason_package: ""          # ← Store reason!
+        compliant_image: 'unknown'
+        reason_image: ""            # ← Store reason!
+
+  Set status AND reason together:
+    - set_fact:
+        compliant_package: true
+        reason_package: "version 20.10.24 installed"  # ← Explain!
+
+  For unclear requirements (NEW):
+    - set_fact:
+        compliant_unclear: 'unknown'
+        reason_unclear: "requirement 'check system ready' is too vague"
+
+  Report with comments:
+    - debug:
+        msg:
+          - "1. Docker: {{ status }} ({{ reason_docker }})"
+          - "2. Image: {{ status }} ({{ reason_image }})"
+          - "3. Check: UNKNOWN ({{ reason_unclear }})"
+
+GOOD COMMENTS (Specific):
+
+  ✅ "Docker version 20.10.24 installed"
+  ✅ "service httpd is stopped, expected running"
+  ✅ "short of credential - no registry authentication"
+  ✅ "requirement 'verify system setup' lacks specific criteria"
+
+BAD COMMENTS (Too Generic):
+
+  ❌ "check passed"  ← What check? What value?
+  ❌ "failed"  ← Why? What was expected?
+  ❌ "cannot check"  ← Why can't you check?
+
+BENEFITS:
+
+  1. Transparency: Know WHY each status assigned
+  2. Actionability: Know what to do next
+     - COMPLIANT (version X) → Nothing needed
+     - NON-COMPLIANT (service stopped) → Start service
+     - UNKNOWN (no credential) → Provide credential
+     - UNKNOWN (requirement unclear) → Clarify requirement
+  3. Quality: Identifies unclear requirements
+  4. Audit: Clear record of what was verified
+
+DECISION TREE (UPDATED):
+
+  For each requirement:
+  │
+  ├─ Is requirement clear and specific?
+  │  ├─ NO → UNKNOWN (requirement unclear)  ← NEW!
+  │  └─ YES ↓
+  │
+  ├─ Can check be performed?
+  │  ├─ NO → UNKNOWN (missing creds/tools/network)
+  │  └─ YES ↓
+  │
+  ├─ Perform check
+  │  ├─ Pass → COMPLIANT (specific result)
+  │  └─ Fail → NON-COMPLIANT (specific reason)
+  │
+  └─ ALWAYS include explanatory comment!
+
+ANALYSIS VALIDATION:
+
+  PASS:
+    ✅ Each status has explanatory comment
+    ✅ Comments accurately describe findings
+    ✅ UNKNOWN for unclear requirements (with explanation)
+    ✅ UNKNOWN for env limitations (with explanation)
+
+  FAIL:
+    ❌ Status without comment/reason
+    ❌ Comment doesn't match evidence
+    ❌ Generic/unhelpful comments
+
+EXAMPLE REPORT:
+
+  ============================================
+  COMPLIANCE VERIFICATION REPORT
+  ============================================
+  
+  CHECK RESULTS:
+  1. Docker Package: ✅ COMPLIANT (version 20.10.24 installed)
+  2. RHEL Version: ❌ NON-COMPLIANT (found RHEL 8, need RHEL 7)
+  3. Image Registry: ⚠️ UNKNOWN (short of credential)
+  4. System Readiness: ⚠️ UNKNOWN (requirement too vague - needs criteria)
+  
+  OVERALL: ⚠️ PARTIAL (some checks UNKNOWN)
+  ============================================
+
+FILES CHANGED:
+  - deepseek_generate_playbook.py
+    * Added reason/comment storage for each requirement
+    * Added UNKNOWN for unclear requirements
+    * Updated examples to show comments
+    * Updated analysis to validate comments present
+
+STATUS: ✅ IMPLEMENTED
+DATE: January 11, 2026
+================================================================================

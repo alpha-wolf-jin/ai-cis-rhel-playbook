@@ -1,0 +1,58 @@
+---
+- name: Data Collection for KCS 7101627
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/7101627"
+    req_07: "Gather logs from recent ansible-builder build processes, specifically looking for error output"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_07: "Not collected yet"
+        task_07_name: "Not executed"
+        task_07_cmd: "N/A"
+        task_07_rc: -1
+
+    - name: "Req 07: Check recent ansible-builder logs for errors"
+      shell: >
+        journalctl -u ansible-builder --since "1 day ago" 2>/dev/null ||
+        find /var/log -type f -name "*ansible-builder*" -o -name "*builder*" 2>/dev/null |
+        head -5 | xargs tail -n 50 2>/dev/null ||
+        echo "No ansible-builder logs found"
+      register: result_07
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 07 details
+      set_fact:
+        task_07_name: "Check recent ansible-builder logs for errors"
+        task_07_cmd: |
+          journalctl -u ansible-builder --since "1 day ago" 2>/dev/null ||
+          find /var/log -type f -name "*ansible-builder*" -o -name "*builder*" 2>/dev/null |
+          head -5 | xargs tail -n 50 2>/dev/null ||
+          echo "No ansible-builder logs found"
+        task_07_rc: "{{ result_07.rc | default(-1) }}"
+        data_07: "{{ result_07.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 07/11 - Requirement 07)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 07/11)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "Ansible-builder fails to build custom EE with error ‘Cannot find libsystemd or libsystemd-journal:’ when using image: registry.redhat.io/ansible-automation-platform-25/ee-supported-rhel8"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 07 - {{ req_07 }}:"
+          - "  Task: {{ task_07_name | default('Task not recorded') }}"
+          - "  Command: {{ task_07_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_07_rc | default(-1) }}"
+          - "  Data: {{ data_07 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 07/11)"
+          - "========================================================"

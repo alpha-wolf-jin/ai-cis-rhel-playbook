@@ -1,0 +1,63 @@
+---
+- name: Data Collection for KCS 4214501
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "https://access.redhat.com/solutions/4214501"
+    req_12: "Collect the container runtime in use and its version (e.g., docker, cri-o)"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_12: "Not collected yet"
+        task_12_name: "Not executed"
+        task_12_cmd: "N/A"
+        task_12_rc: -1
+
+    # Requirement 12: Collect the container runtime in use and its version (e.g., docker, cri-o)
+    - name: "Req 12: Check container runtime and version"
+      shell: |
+        if command -v docker >/dev/null 2>&1; then
+          echo "docker: $(docker version --format '{{"{{"}}.Server.Version{{"}}"}}' 2>/dev/null || echo 'unknown')"
+        elif command -v crictl >/dev/null 2>&1; then
+          echo "cri-o: $(crictl version | grep -oP 'RuntimeName:\s*\K\S+' || echo 'unknown')"
+        elif command -v podman >/dev/null 2>&1; then
+          echo "podman: $(podman version --format '{{"{{"}}.Version{{"}}"}}' 2>/dev/null || echo 'unknown')"
+        elif command -v containerd >/dev/null 2>&1; then
+          echo "containerd: $(containerd --version 2>/dev/null || echo 'unknown')"
+        else
+          echo "No container runtime detected"
+        fi
+      register: result_12
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 12 details
+      set_fact:
+        task_12_name: "Check container runtime and version"
+        task_12_cmd: |
+          Check for docker, crictl, podman, containerd with version commands
+        task_12_rc: "{{ result_12.rc | default(-1) }}"
+        data_12: "{{ result_12.stdout | default('') }}"
+
+    - name: Generate data collection report (Part 12/14 - Requirement 12)
+      debug:
+        msg:
+          - "========================================================"
+          - "        DATA COLLECTION REPORT (Part 12/14)"
+          - "========================================================"
+          - "Reference KCS Article: {{ kcs_article }}"
+          - "systemd stops reading and processing dbus event of runc cgroup invokes"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 12 - {{ req_12 }}:"
+          - "  Task: {{ task_12_name | default('Task not recorded') }}"
+          - "  Command: {{ task_12_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_12_rc | default(-1) }}"
+          - "  Data: {{ data_12 | default('Data collection failed') }}"
+          - ""
+          - "========================================================"
+          - "        END OF DATA COLLECTION REPORT (Part 12/14)"
+          - "========================================================"
