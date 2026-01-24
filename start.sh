@@ -46,3 +46,6 @@ python3 cis_checkpoint_to_playbook.py --checkpoint "5.2.4" --skip-execution
 
 # Non-interactive (auto-accept requirements)
 python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --no-interactive
+
+
+./cis_checkpoint_to_playbook.py --checkpoint "1.1.1.4" --test-host 192.168.122.16 --target-host 192.168.122.17

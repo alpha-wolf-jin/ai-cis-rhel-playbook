@@ -48,7 +48,55 @@ import os
 import sys
 import subprocess
 import argparse
+import shutil
 from dotenv import load_dotenv
+
+
+def get_ansible_navigator_path() -> str:
+    """
+    Find the path to ansible-navigator executable.
+    Checks multiple locations including virtual environments.
+    """
+    # First try shutil.which with current PATH
+    ansible_nav = shutil.which('ansible-navigator')
+    if ansible_nav:
+        print(f"   Found ansible-navigator using shutil.which: {ansible_nav}")
+        return ansible_nav
+    
+    # Try to find it relative to the Python interpreter (works for venv)
+    python_dir = os.path.dirname(sys.executable)
+    venv_ansible = os.path.join(python_dir, 'ansible-navigator')
+    if os.path.isfile(venv_ansible) and os.access(venv_ansible, os.X_OK):
+        print(f"   Found ansible-navigator in Python venv: {venv_ansible}")
+        return venv_ansible
+    
+    # Check common virtual environment locations
+    possible_paths = [
+        # Current directory venv
+        os.path.join(os.getcwd(), '.venv', 'bin', 'ansible-navigator'),
+        # Home directory venv
+        os.path.expanduser('~/ai/rhel-cis/.venv/bin/ansible-navigator'),
+        # Generic venv in current dir
+        os.path.join(os.getcwd(), 'venv', 'bin', 'ansible-navigator'),
+        # System paths
+        '/usr/bin/ansible-navigator',
+        '/usr/local/bin/ansible-navigator',
+    ]
+    
+    for path in possible_paths:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            print(f"   Found ansible-navigator at: {path}")
+            return path
+    
+    # If nothing found, print debug info
+    print(f"   ⚠️  Could not find ansible-navigator in:")
+    print(f"      - Current PATH: {os.environ.get('PATH', 'Not set')}")
+    print(f"      - Python executable: {sys.executable}")
+    print(f"      - Python dir: {python_dir}")
+    print(f"      - Checked paths: {possible_paths}")
+    
+    # Last resort: return the command name and hope it's in PATH
+    return 'ansible-navigator'
 from langchain_deepseek import ChatDeepSeek
 #from langchain.prompts import ChatPromptTemplate
 from langchain_core.prompts import ChatPromptTemplate
@@ -95,10 +143,11 @@ def generate_playbook(
     target_host: str = "master-1",
     become_user: str = "root",
     requirements: list = None,
-    example_output: str = ""
+    example_output: str = "",
+    audit_procedure: str = None
 ):
     """
-    Generate Ansible playbook based on custom requirements.
+    Generate Ansible playbook based on custom requirements or audit procedure.
     
     Args:
         playbook_objective: Description of what the playbook should achieve
@@ -106,10 +155,40 @@ def generate_playbook(
         become_user: User to become (usually root)
         requirements: List of requirement strings describing what the playbook should do
         example_output: Example command output to provide context
+        audit_procedure: CIS Benchmark audit procedure (script/commands) - when provided,
+                        generates an audit playbook based on this procedure
     """
     
     if requirements is None:
         requirements = []
+    
+    # Build audit procedure section if provided
+    audit_procedure_section = ""
+    if audit_procedure:
+        audit_procedure_section = f"""
+
+**CIS BENCHMARK AUDIT PROCEDURE:**
+The following is the official audit procedure from the CIS Benchmark. 
+Your playbook MUST implement this audit procedure:
+
+```bash
+{audit_procedure}
+```
+
+**CRITICAL INSTRUCTIONS FOR AUDIT PROCEDURE:**
+1. Convert the audit procedure script/commands into Ansible tasks
+2. Each distinct check in the audit procedure should become a separate requirement/task
+3. Capture the output of each command for the compliance report
+4. **USE THE EXPECTED OUTPUT** from the audit procedure to determine PASS/FAIL status:
+   - If the procedure shows "Example output: generated", then "generated" = PASS
+   - If the procedure shows "Verify output is not masked or disabled", then check for those strings
+   - Compare actual command output against the expected output shown in the procedure
+5. The audit procedure defines what PASS and FAIL mean - use this for status determination logic
+6. If the audit procedure is a script, break it into individual commands that can be run as Ansible tasks
+7. Preserve the exact commands from the audit procedure where possible
+8. **Extract expected outputs and failure conditions** from the procedure text and use them in your status variables
+
+"""
     
     # Parse requirements to extract original indices and text
     # This preserves the original requirement indices (e.g., "2. Collect..." stays as req_2)
@@ -127,9 +206,12 @@ def generate_playbook(
     other_reqs = [text for idx, text in parsed_reqs if idx is None]
     
     # Format data requirements with their original indices
+    # Instructions to avoid colons in task names
     requirements_text = "\n".join([f"{idx}. {text}" for idx, text in data_reqs])
     if other_reqs:
         requirements_text += "\n\nAdditional requirements:\n" + "\n".join([f"- {r}" for r in other_reqs])
+    
+    requirements_text += "\n\nCRITICAL TASK NAMING RULE: For Ansible task names, use ' - ' (dash) instead of ':' (colon) to separate requirement numbers from descriptions. E.g., use 'Req 1 - description' instead of 'Req 1: description'."
     
     # Build example output section if provided
     example_section = ""
@@ -147,7 +229,15 @@ def generate_playbook(
         first_idx = req_indices[0]
         
         # Build vars section showing actual requirement variables (2-digit zero-padded)
-        vars_section = "\n".join([f'    req_{idx:02d}: "{text}"' for idx, text in data_reqs])
+        # Properly escape double quotes and backslashes in requirement text
+        def escape_yaml_string(s):
+            """Escape special characters for YAML double-quoted strings."""
+            return s.replace('\\', '\\\\').replace('"', '\\"')
+        
+        vars_section = "\n".join([
+            f'    req_{idx:02d}: "{escape_yaml_string(text)}"' 
+            for idx, text in data_reqs
+        ])
         
         # Build init section (2-digit zero-padded) - include status and rationale
         init_section = "\n".join([
@@ -159,27 +249,40 @@ def generate_playbook(
         
         # Build report section with 2-digit zero-padded indices
         # Include Status and Rationale for each requirement
-        report_section = "\n".join([
-            f'      - "REQUIREMENT {idx:02d} - {{{{{{ req_{idx:02d} }}}}}}:"\n'
-            f'      - "  Task: {{{{{{ task_{idx:02d}_name | default(\'Task not recorded\') }}}}}}"\n'
-            f'      - "  Command: {{{{{{ task_{idx:02d}_cmd | default(\'N/A\') }}}}}}"\n'
-            f'      - "  Exit code: {{{{{{ task_{idx:02d}_rc | default(-1) }}}}}}"\n'
-            f'      - "  Data: {{{{{{ data_{idx:02d} | default(\'Data collection failed\') }}}}}}"\n'
-            f'      - "  Status: {{{{{{ status_{idx:02d} | default(\'UNKNOWN\') }}}}}}"\n'
-            f'      - "  Rationale: {{{{{{ rationale_{idx:02d} | default(\'Not evaluated\') }}}}}}"\n'
-            f'      - ""'
-            for idx in req_indices
-        ])
+        report_lines = []
+        for idx in req_indices:
+            report_lines.append(
+                f'      - "REQUIREMENT {idx:02d} - {{{{{{ req_{idx:02d} }}}}}}:"\n'
+                f'      - "  Task: {{{{{{ task_{idx:02d}_name | default(\'Task not recorded\') }}}}}}"\n'
+                f'      - "  Command: {{{{{{ task_{idx:02d}_cmd | default(\'N/A\') }}}}}}"\n'
+                f'      - "  Exit code: {{{{{{ task_{idx:02d}_rc | default(-1) }}}}}}"\n'
+                f'      - "  Data: {{{{{{ data_{idx:02d} | default(\'Data collection failed\') }}}}}}"\n'
+                f'      - "  Status: {{{{{{ status_{idx:02d} | default(\'UNKNOWN\') }}}}}}"\n'
+                f'      - "  Rationale: {{{{{{ rationale_{idx:02d} | default(\'Not evaluated\') }}}}}}"\n'
+                f'      - ""'
+            )
+        
+        # Add OVERALL COMPLIANCE section using the LAST requirement's status
+        last_idx = req_indices[-1]
+        report_lines.append(
+            f'      - "========================================================"\n'
+            f'      - "OVERALL COMPLIANCE:"\n'
+            f'      - "  Result: {{{{{{ status_{last_idx:02d} | default(\'UNKNOWN\') }}}}}}"\n'
+            f'      - "  Rationale: {{{{{{ rationale_{last_idx:02d} | default(\'Not evaluated\') }}}}}}"\n'
+            f'      - "========================================================"'
+        )
+        
+        report_section = "\n".join(report_lines)
     else:
         first_idx = 1
         vars_section = '    req_1: "Requirement 1 description"'
         init_section = '        data_1: "Not collected yet"'
-        report_section = '      - "REQUIREMENT 1 - {{ req_1 }}:"\n      - "  Data: {{ data_1 | default(\'N/A\') }}"\n      - "  Status: {{ status_1 | default(\'UNKNOWN\') }}"\n      - "  Rationale: {{ rationale_1 | default(\'Not evaluated\') }}"'
+        report_section = '      - "REQUIREMENT 1 - {{ req_1 }}:"\n      - "  Data: {{ data_1 | default(\'N/A\') }}"\n      - "  Status: {{ status_1 | default(\'UNKNOWN\') }}"\n      - "  Rationale: {{ rationale_1 | default(\'Not evaluated\') }}"\n      - ""\n      - "========================================================"\n      - "OVERALL COMPLIANCE:"\n      - "  Result: {{ status_1 | default(\'UNKNOWN\') }}"\n      - "  Rationale: {{ rationale_1 | default(\'Not evaluated\') }}"\n      - "========================================================"'
     
     prompt_template = f"""Generate a MINIMAL Ansible playbook for data collection.
 
 **Objective:** {playbook_objective}
-
+{audit_procedure_section}
 **Requirements to collect data for:**
 {requirements_text}{example_section}
 
@@ -194,6 +297,7 @@ use req_2, data_2, task_2_*, result_2 - NOT req_1!
 4. ONE task per requirement
 5. Use shell/command for simple checks (faster than modules)
 6. Use EXACT requirement text in vars - copy from requirements above!
+7. CRITICAL: ALWAYS use `args: executable: /bin/bash` for ALL shell tasks (CIS scripts require bash)
 
 **MANDATORY STRUCTURE:**
 ```yaml
@@ -216,8 +320,10 @@ use req_2, data_2, task_2_*, result_2 - NOT req_1!
         task_{first_idx}_rc: -1
 
     # Requirement {first_idx}: [COPY EXACT requirement text here]
-    - name: "Req {first_idx}: [brief description]"
+    - name: "Req {first_idx} - [brief description]"
       shell: [command]
+      args:
+        executable: /bin/bash
       register: result_{first_idx}
       ignore_errors: true
       failed_when: false
@@ -242,15 +348,11 @@ use req_2, data_2, task_2_*, result_2 - NOT req_1!
           - ""
 {report_section}
           - "========================================================"
-          - "OVERALL COMPLIANCE:"
-          - "  Result: {{{{{{ overall_result | default('UNKNOWN') }}}}}}"
-          - "  Rationale: {{{{{{ overall_rationale | default('Not evaluated') }}}}}}"
-          - "========================================================"
 ```
 
 **CRITICAL SYNTAX:**
-- Variables: {{{{ variable }}}} (double braces)
-- Defaults: {{{{ var | default('fallback') }}}}
+- Variables: {{{{{{ variable }}}}}} (double braces)
+- Defaults: {{{{{{ variable | default('fallback') }}}}}}
 - All tasks: ignore_errors: true, failed_when: false
 
 **YAML SYNTAX FOR SHELL COMMANDS:**
@@ -261,7 +363,7 @@ Commands with special characters MUST use literal block scalar (|) or folded (>)
 - shell: journalctl | grep 'error: failed'
 
 # ❌ WRONG - backslash in double quotes causes parse error:
-  task_cmd: "grep 'pattern1\|pattern2'"
+  task_cmd: "grep 'pattern1\\|pattern2'"
 
 # ✅ CORRECT - use > or | for shell commands:
 - shell: >
@@ -271,21 +373,81 @@ Commands with special characters MUST use literal block scalar (|) or folded (>)
 # ✅ CORRECT - use | for strings with backslashes, pipes, regex:
 - set_fact:
     task_cmd: |
-      find /var/log -name '*.log' | xargs grep 'error\|warning'
+      find /var/log -name '*.log' | xargs grep 'error\\|warning'
+```
+
+**CRITICAL: HANDLING COMPLEX BASH SCRIPTS:**
+If a requirement contains a complex multi-line bash script (especially those with {{ }} blocks, arrays, or complex variable substitutions), DO NOT embed it directly in the `shell:` module if it's longer than a few lines. Instead, use this pattern to avoid YAML/Jinja2 parsing errors. 
+
+**CRITICAL:** You MUST wrap the script content in `{{% raw %}}` and `{{% endraw %}}` tags to prevent Ansible from trying to parse script variables (like `${{#arr[@]}}`) as Jinja2 templates.
+
+```yaml
+- name: "Req N - Create temporary audit script"
+  copy:
+    dest: "/tmp/cis_audit_script_N.sh"
+    mode: '0700'
+    content: |
+      {{% raw %}}
+      #!/usr/bin/env bash
+      # [FULL SCRIPT CONTENT HERE]
+      {{% endraw %}}
+  register: script_created_N
+
+- name: "Req N - Execute audit script"
+  shell: "/tmp/cis_audit_script_N.sh"
+  args:
+    executable: /bin/bash
+  register: result_N
+  ignore_errors: true
+  failed_when: false
+  changed_when: false
+
+- name: "Req N - Remove temporary audit script"
+  file:
+    path: "/tmp/cis_audit_script_N.sh"
+    state: absent
+  ignore_errors: true
+```
+
+**WHY THIS IS REQUIRED:**
+1. Embedding complex scripts directly in `shell: |` often fails with "unbalanced jinja2 block".
+2. Script variables like `${{#a_output[@]}}` look like Jinja2 comments `{{# ... #}}` to Ansible.
+3. Using `{{% raw %}}` blocks is the ONLY reliable way to ensure the script content is copied exactly as-is without template errors.
+
+**CRITICAL: ALWAYS USE BASH - Add this to ALL shell tasks:**
+```yaml
+# ✅ CORRECT - ALWAYS include args: executable: /bin/bash:
+- name: "Any shell task"
+  shell: |
+    # any command or script here
+    lsmod | grep module_name
+  args:
+    executable: /bin/bash   # <-- REQUIRED for ALL shell tasks
+  register: result
+  ignore_errors: true
+  failed_when: false
+
+# This is required because CIS audit scripts use bash-specific syntax:
+# - Process substitution: < <(cmd)
+# - Arrays: arr=(a b c)
+# - [[ ]] tests
+# - ${{var//pattern/replacement}}
 ```
 
 **SPECIAL CHARACTERS requiring | block scalar:**
-- Backslash in regex: `\|`, `\(`, `\)`, `\.`
+- Backslash in regex: `\\|`, `\\(`, `\\)`, `\\.`
 - Colons followed by space: `error: failed`
 - Shell pipes and redirects: `|`, `>`, `<`, `2>&1`
-- Parentheses in find: `\( -name '*.log' \)`
+- Parentheses in find: `\\( -name '*.log' \\)`
 - Dollar signs in strings: `$variable`
 
 **DATA STORAGE - CAPTURE ALL TASK DETAILS INCLUDING STATUS AND RATIONALE:**
 For EACH requirement, store: task name, command/module, exit code, data, status, and rationale:
 ```yaml
-- name: "Req 1: Check if module is loaded"
+- name: "Req 1 - Check if module is loaded"
   shell: lsmod | grep freevxfs
+  args:
+    executable: /bin/bash
   register: task_1_result
   ignore_errors: true
   failed_when: false
@@ -321,10 +483,12 @@ For EACH requirement, store: task name, command/module, exit code, data, status,
       - "  Status: {{{{ status_1 | default('UNKNOWN') }}}}"
       - "  Rationale: {{{{ rationale_1 | default('Not evaluated') }}}}"
       - ""
+      # ... repeat for all requirements ...
+      - ""
       - "========================================================"
       - "OVERALL COMPLIANCE:"
-      - "  Result: {{{{ overall_result | default('UNKNOWN') }}}}"
-      - "  Rationale: {{{{ overall_rationale | default('Not evaluated') }}}}"
+      - "  Result: {{{{ status_N }}}}"
+      - "  Rationale: {{{{ rationale_N }}}}"
       - "========================================================"
 ```
 
@@ -333,8 +497,7 @@ For EACH requirement, store: task name, command/module, exit code, data, status,
 - EACH requirement MUST have a rationale_N variable explaining PASS/FAIL logic
 - Status is determined by the requirement's own rationale (from the requirement text)
 - Parse the rationale from requirement text (e.g., "Rationale: PASS when X, FAIL when Y")
-- Set overall_result based on all individual statuses (PASS only if ALL pass, otherwise FAIL)
-- Set overall_rationale explaining the overall pass/fail logic
+- The LAST requirement (usually "OVERALL Verify") determines the OVERALL COMPLIANCE result
 
 **KEY RULES:**
 - Each requirement gets: task name, command, exit code, data, status, rationale
@@ -342,6 +505,12 @@ For EACH requirement, store: task name, command/module, exit code, data, status,
 - Empty data with exit code 0 or 1 = valid "nothing found"
 - Exit code + empty data = sufficient evidence of absence
 - Status MUST be determined based on the requirement's rationale
+
+**OVERALL COMPLIANCE SECTION:**
+- Add "OVERALL COMPLIANCE:" section at the END of the report
+- The "Result:" should use the status of the LAST requirement (the OVERALL Verify requirement)
+- The "Rationale:" should use the rationale of the LAST requirement
+- If the last requirement is "OVERALL Verify", its status IS the overall compliance
 
 **OUTPUT:** Valid YAML only. No markdown. Start with ---.
 
@@ -490,12 +659,16 @@ def save_playbook(content: str, filename: str = "kill_packet_recvmsg_process.yml
         f.write(content)
     print(f"\n✅ Playbook saved to: {filename}")
     
-    # Check for invalid single-brace variable references
+    # Check for invalid single-brace variable references, but ignore content inside {% raw %} blocks
     import re
+    
+    # Remove {% raw %} ... {% endraw %} blocks before checking for single braces
+    content_for_check = re.sub(r'\{%\s*raw\s*%\}.*?\{%\s*endraw\s*%\}', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
     # Pattern to detect single braces that look like variable references
     # Match { word } but not {{ word }} or {% word %}
     single_brace_pattern = r'(?<!\{)\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}(?!\})'
-    matches = re.findall(single_brace_pattern, content)
+    matches = re.findall(single_brace_pattern, content_for_check)
     
     if matches:
         print("\n⚠️  WARNING: Detected potential invalid Jinja2 syntax!")
@@ -519,14 +692,28 @@ def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
     try:
         print(f"\n🔍 Checking playbook syntax: {filename}")
         
-        # First, check the file content for invalid single-brace syntax
+        # Initialize ansible_nav early in case of errors
+        ansible_nav = get_ansible_navigator_path()
+        
+        # First, check if the playbook file exists
+        if not os.path.isfile(filename):
+            error_msg = f"Playbook file not found: {filename}"
+            print(f"❌ {error_msg}")
+            return False, error_msg
+        
+        # Check the file content for invalid single-brace syntax, but ignore content inside {% raw %} blocks
         with open(filename, 'r') as f:
             content = f.read()
         
         import re
+        
+        # Remove {% raw %} ... {% endraw %} blocks before checking for single braces
+        # This prevents valid bash scripts inside raw blocks from triggering syntax errors
+        content_for_check = re.sub(r'\{%\s*raw\s*%\}.*?\{%\s*endraw\s*%\}', '', content, flags=re.DOTALL | re.IGNORECASE)
+        
         # Pattern to detect single braces that look like variable references
         single_brace_pattern = r'(?<!\{)\{\s*[a-zA-Z_][a-zA-Z0-9_]*\s*\}(?!\})'
-        matches = re.findall(single_brace_pattern, content)
+        matches = re.findall(single_brace_pattern, content_for_check)
         
         if matches:
             error_msg = "Invalid Jinja2 syntax: Single braces used for variables\n\n"
@@ -541,7 +728,7 @@ def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
             return False, error_msg
         
         cmd = [
-            'ansible-navigator', 'run', 
+            ansible_nav, 'run', 
             filename, 
             '-i', f'{target_host},',
             '-u', 'root',  # Use root user to connect
@@ -554,7 +741,8 @@ def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
+            env=os.environ  # Pass current environment
         )
         
         if result.returncode == 0:
@@ -601,8 +789,11 @@ def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
         error_msg = "Syntax check timed out after 30 seconds"
         print(f"❌ {error_msg}")
         return False, error_msg
-    except FileNotFoundError:
-        error_msg = "ansible-navigator command not found. Please ensure Ansible is installed."
+    except FileNotFoundError as e:
+        error_msg = f"ansible-navigator command not found: {e}\n"
+        error_msg += f"   Tried to execute: {ansible_nav}\n"
+        error_msg += f"   Python executable: {sys.executable}\n"
+        error_msg += f"   PATH: {os.environ.get('PATH', 'Not set')}"
         print(f"❌ {error_msg}")
         return False, error_msg
     except Exception as e:
@@ -631,9 +822,18 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
             mode_desc += " [skipping debug tasks]"
         print(f"\n🧪 Testing playbook on server: {target_host} ({mode_desc})")
         
+        # Initialize ansible_nav early in case of errors
+        ansible_nav = get_ansible_navigator_path()
+        
+        # Check if the playbook file exists
+        if not os.path.isfile(filename):
+            error_msg = f"Playbook file not found: {filename}"
+            print(f"❌ {error_msg}")
+            return False, error_msg
+        
         # Build ansible-navigator command
         cmd = [
-            'ansible-navigator', 'run', 
+            ansible_nav, 'run', 
             filename, 
             '-i', f'{target_host},',
             '-u', 'root'  # Use root user to connect
@@ -655,7 +855,8 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
             cmd,
             capture_output=True,
             text=True,
-            timeout=120  # 2 minutes timeout for execution
+            timeout=120,  # 2 minutes timeout for execution
+            env=os.environ  # Pass current environment to find ansible-navigator in venv
         )
         
         output = result.stdout + result.stderr
@@ -674,6 +875,16 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
             ("undefined method", "Undefined method call"),
             ("cannot be converted to", "Type conversion error"),
             ("Invalid/incorrect password", "Authentication error in task"),
+            ("failed at splitting arguments", "YAML/Jinja2 parsing error - likely due to complex script in shell module"),
+            ("unbalanced jinja2 block", "Jinja2 parsing error - likely due to curly braces in shell script"),
+            ("Missing end of comment tag", "Jinja2 parsing error - likely bash variable ${#var} mistaken for Jinja2 comment"),
+            # Shell syntax errors (even if task shows ok due to ignore_errors)
+            ("syntax error near unexpected token", "Shell syntax error - likely bash-specific syntax used with /bin/sh"),
+            ("syntax error:", "Shell syntax error in command"),
+            ("/bin/sh: -c: line", "Shell script error - command may require bash instead of sh"),
+            ("bad substitution", "Shell bad substitution - bash syntax used with /bin/sh"),
+            ("unexpected EOF", "Shell unexpected end of file"),
+            ("command not found", "Command not found - missing binary or path issue"),
         ]
         
         for pattern, description in playbook_bug_patterns:
@@ -777,8 +988,11 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
         error_msg = "Playbook execution timed out after 120 seconds"
         print(f"❌ {error_msg}")
         return False, error_msg
-    except FileNotFoundError:
-        error_msg = "ansible-navigator command not found. Please ensure Ansible is installed."
+    except FileNotFoundError as e:
+        error_msg = f"ansible-navigator command not found: {e}\n"
+        error_msg += f"   Tried to execute: {ansible_nav}\n"
+        error_msg += f"   Python executable: {sys.executable}\n"
+        error_msg += f"   PATH: {os.environ.get('PATH', 'Not set')}"
         print(f"❌ {error_msg}")
         return False, error_msg
     except Exception as e:
@@ -921,11 +1135,7 @@ ADVICE TO UPDATE PLAYBOOK:
    - status_N: "{{{{ 'PASS' if <condition> else 'FAIL' }}}}" based on requirement rationale
    - rationale_N: "PASS when <condition>, FAIL when <condition>" from requirement text
 
-3. Update the "Generate compliance report" task to include all 6 lines per requirement.
-
-4. Add OVERALL COMPLIANCE section at the end with:
-   - "Result: {{{{ overall_result }}}}"
-   - "Rationale: {{{{ overall_rationale }}}}" """
+3. Update the "Generate compliance report" task to include all 6 lines per requirement."""
             return False, advice, extracted_report
     
     # Format requirements for analysis
@@ -1214,7 +1424,8 @@ OVERALL ASSESSMENT: PASS (analysis complete)
 def analyze_playbook_output(
     requirements: list[str],
     playbook_objective: str,
-    test_output: str
+    test_output: str,
+    audit_procedure: str = None
 ) -> tuple[bool, str]:
     """
     Analyze the playbook data collection output and determine compliance for each requirement.
@@ -1225,6 +1436,7 @@ def analyze_playbook_output(
         requirements: Original list of requirements
         playbook_objective: The objective of the playbook
         test_output: Output from data collection playbook
+        audit_procedure: CIS Benchmark audit procedure with expected outputs (optional)
         
     Returns:
         tuple: (is_verified, compliance_analysis_message)
@@ -1240,6 +1452,27 @@ def analyze_playbook_output(
     # Format requirements for analysis
     requirements_text = "\n".join([f"{i+1}. {req}" for i, req in enumerate(requirements)])
     
+    # Build audit procedure context if provided
+    audit_context = ""
+    if audit_procedure:
+        audit_context = f"""
+
+**CIS BENCHMARK AUDIT PROCEDURE FOR REFERENCE:**
+The audit procedure below contains expected outputs and pass/fail criteria.
+Use this to determine compliance status:
+
+```
+{audit_procedure}
+```
+
+**IMPORTANT:** 
+- If the procedure shows "Example output: generated", compare actual output to "generated"
+- If the procedure says "Verify output is not masked or disabled", check for those strings
+- Use the expected outputs shown in the procedure to determine PASS/FAIL status
+- The procedure defines what constitutes compliance vs non-compliance
+
+"""
+    
     # Build analysis prompt without f-string to avoid issues with curly braces in test_output
     analysis_prompt = """You are an expert Ansible compliance auditor. Your task is to analyze whether a playbook CORRECTLY REPORTS compliance status based on what it found.
 
@@ -1248,7 +1481,7 @@ def analyze_playbook_output(
 
 **Original Requirements:**
 {requirements}
-
+{audit_context}
 **Actual Playbook Execution Output:**
 ```
 {output}
@@ -1260,6 +1493,7 @@ def analyze_playbook_output(
 - Playbooks now ONLY collect data (no compliance determination)
 - YOU (AI) will analyze the collected data and determine compliance
 - This approach is MORE INTELLIGENT and works across various servers
+- **USE THE AUDIT PROCEDURE** (if provided above) to understand expected outputs and pass/fail criteria
 
 **YOUR TWO-STAGE JOB:**
 
@@ -1374,23 +1608,49 @@ ADVICE TO UPDATE PLAYBOOK:
 6. Use ignore_errors: true on collection tasks and report errors as data if they occur
 ```
 
-**OPTION B: If data is SUFFICIENT**, provide compliance analysis for each requirement:
+**OPTION B: If data is SUFFICIENT**, provide compliance analysis using this EXACT FORMAT:
 ```
-Requirement 1: [requirement description]
-Data Collected: [what the playbook actually found - must be real data!]
-Compliance Status: COMPLIANT / NON-COMPLIANT / UNKNOWN
-Reasoning: [why you determined this status based on the collected data]
+## STAGE 2: COMPLIANCE ANALYSIS
 
-Requirement 2: [requirement description]
-Data Collected: [what the playbook actually found - must be real data!]
-Compliance Status: COMPLIANT / NON-COMPLIANT / UNKNOWN
-Reasoning: [why you determined this status based on the collected data]
+Based on the collected data, here is the compliance analysis for each requirement:
 
-...
+**Requirement 1: [requirement description]**
+- **Data Collected**: [Exit code: X, Output: "actual output"]
+- **Compliance Status**: COMPLIANT / NON-COMPLIANT / UNKNOWN
+- **Reasoning**: [detailed explanation referencing the requirement rationale]
 
-OVERALL ASSESSMENT:
-PASS: Playbook successfully collected data for all requirements. AI compliance analysis complete.
+**Requirement 2: [requirement description]**
+- **Data Collected**: [Exit code: X, Output: "actual output"]
+- **Compliance Status**: COMPLIANT / NON-COMPLIANT / UNKNOWN
+- **Reasoning**: [detailed explanation referencing the requirement rationale]
+
+... (continue for all requirements)
+
+## OVERALL ASSESSMENT
+
+- **DATA COLLECTION**: PASS 
+  - Playbook successfully collected sufficient data for all requirements. 
+  - The report includes actual command outputs, exit codes, and task details.
+  
+- **COMPLIANCE STATUS**: COMPLIANT or NON-COMPLIANT 
+  - [Summary of why the system is/is not compliant with specific numbered reasons]
+  - Example: "The system does not meet CIS checkpoint requirements because: 1) reason one, 2) reason two, 3) reason three."
+    
+- **RECOMMENDATION**: 
+  To achieve compliance: 
+  1) [First action to take], 
+  2) [Second action to take], 
+  3) [Third action if needed].
 ```
+
+IMPORTANT: Always use this exact format with:
+- "## STAGE 2: COMPLIANCE ANALYSIS" header
+- "**Requirement N:**" with bold formatting
+- "- **Data Collected**:", "- **Compliance Status**:", "- **Reasoning**:" sub-items
+- "## OVERALL ASSESSMENT" header with proper indentation:
+  * Main items: "- **ITEM**:" 
+  * Sub-bullets: "  - details" (2 spaces indent)
+  * Numbered lists: "  1) item" (2 spaces indent)
 
 **Examples:**
 
@@ -1414,23 +1674,40 @@ ADVICE TO UPDATE PLAYBOOK:
 
 ✅ SUFFICIENT DATA Example:
 ```
-Requirement 1: Docker must be installed
-Data Collected: Docker version 20.10.24, build 297e128
-Compliance Status: COMPLIANT
-Reasoning: Data shows Docker is installed with specific version 20.10.24
+## STAGE 2: COMPLIANCE ANALYSIS
 
-Requirement 2: Service httpd must be running
-Data Collected: Service httpd state: stopped
-Compliance Status: NON-COMPLIANT
-Reasoning: Data clearly shows service is stopped, requirement specifies it must be running
+Based on the collected data, here is the compliance analysis for each requirement:
 
-Requirement 3: Image registry must be accessible
-Data Collected: Error checking registry: authentication required but no credentials provided
-Compliance Status: UNKNOWN
-Reasoning: Cannot determine accessibility without proper credentials
+**Requirement 1: Docker must be installed**
+- **Data Collected**: Exit code: 0, Output: "Docker version 20.10.24, build 297e128"
+- **Compliance Status**: COMPLIANT
+- **Reasoning**: Data shows Docker is installed with specific version 20.10.24. According to the requirement, Docker must be installed, and it is.
 
-OVERALL ASSESSMENT:
-PASS: Playbook successfully collected data for all requirements. AI compliance analysis complete.
+**Requirement 2: Service httpd must be running**
+- **Data Collected**: Exit code: 0, Output: "Service httpd state: stopped"
+- **Compliance Status**: NON-COMPLIANT
+- **Reasoning**: Data clearly shows service is stopped. According to the requirement rationale, the service must be running.
+
+**Requirement 3: Image registry must be accessible**
+- **Data Collected**: Exit code: 1, Output: "Error: authentication required but no credentials provided"
+- **Compliance Status**: UNKNOWN
+- **Reasoning**: Cannot determine accessibility without proper credentials. This is an error condition, not a compliance determination.
+
+## OVERALL ASSESSMENT
+
+- **DATA COLLECTION**: PASS 
+  - Playbook successfully collected sufficient data for all requirements. 
+  - The report includes actual command outputs, exit codes, and task details.
+  
+- **COMPLIANCE STATUS**: NON-COMPLIANT 
+  - The system does not meet all requirements because: 
+    1) Service httpd is not running (Requirement 2), 
+    2) Registry accessibility cannot be verified (Requirement 3).
+    
+- **RECOMMENDATION**: 
+  To achieve compliance: 
+  1) Start the httpd service with `systemctl start httpd`, 
+  2) Configure registry authentication credentials and re-run the check.
 ```
 
 **Your Analysis:**"""
@@ -1439,6 +1716,7 @@ PASS: Playbook successfully collected data for all requirements. AI compliance a
     analysis_prompt = analysis_prompt.format(
         objective=playbook_objective,
         requirements=requirements_text,
+        audit_context=audit_context,
         output=test_output
     )
 
@@ -1632,6 +1910,13 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     )
     
     parser.add_argument(
+        '--audit-procedure',
+        type=str,
+        default=None,
+        help='CIS Benchmark audit procedure (shell script or commands). When provided, generates an audit playbook based on this procedure.'
+    )
+    
+    parser.add_argument(
         '--filename', '-f',
         type=str,
         default='kill_packet_recvmsg_process.yml',
@@ -1647,6 +1932,7 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     playbook_objective = args.objective
     example_output = args.example_output
     filename = args.filename
+    audit_procedure = args.audit_procedure
     
     # Handle requirements - use provided ones or defaults
     if args.requirements:
@@ -1679,6 +1965,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     print(f"Max Retries:    {max_retries}")
     print(f"Objective:      {playbook_objective[:60]}{'...' if len(playbook_objective) > 60 else ''}")
     print(f"Requirements:   {len(requirements)} items")
+    if audit_procedure:
+        print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure provided)")
     print(f"Filename:       {filename}")
     if test_host != target_host:
         print("\n📋 Execution Strategy:")
@@ -1705,7 +1993,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
                 target_host=test_host,  # Use test_host for generation
                 become_user=become_user,
                 requirements=requirements,
-                example_output=example_output
+                example_output=example_output,
+                audit_procedure=audit_procedure
             )
             
             # Display the generated playbook

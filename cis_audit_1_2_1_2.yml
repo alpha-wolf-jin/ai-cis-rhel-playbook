@@ -1,0 +1,114 @@
+---
+- name: Data Collection for CIS checkpoint 1.2.1.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.2.1.2"
+    req_1: |
+      Execute audit command: grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
+    req_2: |
+      Execute audit command: grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
+    req_3: "OVERALL Verify: PASS when req_1=PASS AND req_2=PASS, FAIL when either check fails"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        data_2: ""
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    # Requirement 1: Global gpgcheck configuration
+    - name: "Req 1: Check global gpgcheck configuration"
+      shell: |
+        grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check global gpgcheck configuration"
+        task_1_cmd: |
+          grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') }}"
+        status_1: "{{ 'PASS' if result_1.stdout_lines | length > 0 else 'FAIL' }}"
+        rationale_1: "PASS when command returns output (gpgcheck=1/true/yes found), FAIL when no output (non-compliant)"
+
+    # Requirement 2: Repository gpgcheck configuration
+    - name: "Req 2: Check repository gpgcheck configuration"
+      shell: |
+        grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check repository gpgcheck configuration"
+        task_2_cmd: |
+          grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') }}"
+        status_2: "{{ 'PASS' if result_2.stdout_lines | length == 0 else 'FAIL' }}"
+        rationale_2: "PASS when command returns no output (nothing found), FAIL when output is returned (non-compliant settings found)"
+
+    # Requirement 3: Overall verification
+    - name: Determine overall compliance status
+      set_fact:
+        status_3: "{{ 'PASS' if status_1 == 'PASS' and status_2 == 'PASS' else 'FAIL' }}"
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL when either check fails"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.2.1.2"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

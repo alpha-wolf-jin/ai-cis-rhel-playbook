@@ -50,6 +50,7 @@ class PlaybookGenerationState(TypedDict):
     example_output: str
     filename: str
     max_retries: int
+    audit_procedure: str  # CIS Benchmark audit procedure
     
     # Workflow state
     attempt: int
@@ -88,7 +89,8 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
             target_host=state['test_host'],
             become_user=state['become_user'],
             requirements=state['requirements'],
-            example_output=state['example_output']
+            example_output=state['example_output'],
+            audit_procedure=state.get('audit_procedure', '')
         )
         
         # Display the generated playbook
@@ -213,7 +215,8 @@ def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationSta
         analysis_passed, analysis_message = analyze_playbook_output(
             requirements=state['requirements'],
             playbook_objective=state['playbook_objective'],
-            test_output=state['test_output']
+            test_output=state['test_output'],
+            audit_procedure=state.get('audit_procedure')
         )
         
         state['analysis_passed'] = analysis_passed
@@ -252,6 +255,25 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
         state['final_success'] = True
         state['final_output'] = state['test_output']
         state['workflow_complete'] = True
+        
+        # Display Analysis Result for same-host execution
+        print("\n" + "=" * 80)
+        print(f"🎊 COMPLETE SUCCESS! Playbook executed on: {state['target_host']}!")
+        print("=" * 80)
+        
+        # Perform full analysis (same as test host)
+        print("\n" + "=" * 80)
+        print(f"📊 Analysis Result for {state['target_host']}:")
+        print("=" * 80)
+        analysis_passed, analysis_message = analyze_playbook_output(
+            requirements=state['requirements'],
+            playbook_objective=state['playbook_objective'],
+            test_output=state['test_output'],
+            audit_procedure=state.get('audit_procedure')
+        )
+        print(analysis_message)
+        print("=" * 80)
+        
         return state
     
     print("\n" + "=" * 80)
@@ -264,7 +286,7 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
         state['filename'],
         state['target_host'],
         check_mode=False,
-        verbose=False,
+        verbose=True,  # Need verbose=True to capture compliance report output
         skip_debug=True  # Skip debug tasks on target host
     )
     
@@ -286,6 +308,19 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
         print("=" * 80)
         print(final_output)
         print("=" * 80)
+        
+        # Perform full analysis (same as test host)
+        print("\n" + "=" * 80)
+        print(f"📊 Analysis Result for {state['target_host']}:")
+        print("=" * 80)
+        analysis_passed, analysis_message = analyze_playbook_output(
+            requirements=state['requirements'],
+            playbook_objective=state['playbook_objective'],
+            test_output=final_output,
+            audit_procedure=state.get('audit_procedure')
+        )
+        print(analysis_message)
+        print("=" * 80)
     else:
         print("\n" + "=" * 80)
         print(f"⚠️  Execution on target host {state['target_host']} had issues")
@@ -293,6 +328,19 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
         print(f"\n📋 Full Execution Output from {state['target_host']}:")
         print("=" * 80)
         print(final_output)
+        print("=" * 80)
+        
+        # Perform full analysis even on failure
+        print("\n" + "=" * 80)
+        print(f"📊 Analysis Result for {state['target_host']}:")
+        print("=" * 80)
+        analysis_passed, analysis_message = analyze_playbook_output(
+            requirements=state['requirements'],
+            playbook_objective=state['playbook_objective'],
+            test_output=final_output,
+            audit_procedure=state.get('audit_procedure')
+        )
+        print(analysis_message)
         print("=" * 80)
     
     return state
@@ -402,7 +450,8 @@ def generate_playbook(
     target_host: str = "master-1",
     become_user: str = "root",
     requirements: list = None,
-    example_output: str = ""
+    example_output: str = "",
+    audit_procedure: str = None
 ):
     """
     Generate Ansible playbook based on custom requirements.
@@ -414,6 +463,7 @@ def generate_playbook(
         become_user: User to become (usually root)
         requirements: List of requirement strings describing what the playbook should do
         example_output: Example command output to provide context
+        audit_procedure: CIS Benchmark audit procedure (script/commands)
     
     Returns:
         str: Generated playbook content
@@ -424,8 +474,144 @@ def generate_playbook(
         target_host=target_host,
         become_user=become_user,
         requirements=requirements,
-        example_output=example_output
+        example_output=example_output,
+        audit_procedure=audit_procedure
     )
+
+
+def generate_playbook_workflow(
+    objective: str,
+    requirements: list,
+    target_host: str = "master-1",
+    test_host: str = None,
+    become_user: str = "root",
+    filename: str = "generated_playbook.yml",
+    example_output: str = "",
+    audit_procedure: str = None,
+    max_retries: int = None,
+    verbose: bool = True
+) -> dict:
+    """
+    Generate and execute an Ansible playbook using LangGraph workflow.
+    
+    This is the programmatic API that can be called from other Python scripts.
+    
+    Args:
+        objective: Playbook objective description
+        requirements: List of requirement strings
+        target_host: Target host for execution
+        test_host: Test host for validation (defaults to target_host)
+        become_user: User to become when executing tasks
+        filename: Output filename for generated playbook
+        example_output: Example command output for context
+        audit_procedure: CIS Benchmark audit procedure (optional)
+        max_retries: Maximum retry attempts (auto-calculated if None)
+        verbose: Print progress information
+        
+    Returns:
+        dict: Final workflow state with results
+        
+    Raises:
+        Exception: If workflow fails
+    """
+    import sys
+    
+    # Set defaults
+    if test_host is None:
+        test_host = target_host
+    
+    if max_retries is None:
+        max_retries = max(len(requirements), 3)
+        if verbose:
+            print(f"\n💡 Auto-calculated max retries: {max_retries} (based on {len(requirements)} requirements)")
+    
+    # Display configuration
+    if verbose:
+        print("\n" + "=" * 80)
+        print("🎯 CONFIGURATION (LangGraph Workflow)")
+        print("=" * 80)
+        print(f"Test Host:      {test_host}")
+        if test_host != target_host:
+            print(f"Target Host:    {target_host}")
+        print(f"Become User:    {become_user}")
+        print(f"Max Retries:    {max_retries}")
+        print(f"Objective:      {objective[:60]}{'...' if len(objective) > 60 else ''}")
+        print(f"Requirements:   {len(requirements)} items")
+        if audit_procedure:
+            print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure provided)")
+        print(f"Filename:       {filename}")
+        if test_host != target_host:
+            print("\n📋 Execution Strategy:")
+            print(f"   1. Test on: {test_host} (validation)")
+            print(f"   2. Execute on: {target_host} (if test succeeds)")
+        print("=" * 80)
+    
+    # Initialize state
+    initial_state: PlaybookGenerationState = {
+        "playbook_objective": objective,
+        "target_host": target_host,
+        "test_host": test_host,
+        "become_user": become_user,
+        "requirements": requirements.copy(),
+        "example_output": example_output,
+        "filename": filename,
+        "max_retries": max_retries,
+        "audit_procedure": audit_procedure or "",
+        "attempt": 1,
+        "playbook_content": "",
+        "syntax_valid": False,
+        "test_success": False,
+        "analysis_passed": False,
+        "analysis_message": "",
+        "final_success": False,
+        "error_message": "",
+        "test_output": "",
+        "final_output": "",
+        "should_retry": False,
+        "workflow_complete": False,
+    }
+    
+    # Create and run workflow
+    try:
+        if verbose:
+            print("\n🔄 Starting LangGraph workflow...")
+        workflow = create_playbook_workflow()
+        
+        # Execute workflow with increased recursion limit
+        recursion_limit = max(50, max_retries * 3)
+        final_state = workflow.invoke(
+            initial_state,
+            {"recursion_limit": recursion_limit}
+        )
+        
+        # Check results
+        if final_state['workflow_complete'] and final_state['test_success']:
+            if verbose:
+                print("\n" + "="*80)
+                print("📊 EXECUTION SUMMARY (LangGraph)")
+                print("="*80)
+                print(f"✅ Workflow completed successfully!")
+                print(f"   Total attempts: {final_state['attempt']}")
+                print(f"   Playbook file: {final_state['filename']}")
+                print("="*80)
+            return final_state
+        else:
+            if verbose:
+                print("\n" + "="*80)
+                print("📊 EXECUTION SUMMARY (LangGraph)")
+                print("="*80)
+                print(f"❌ Workflow failed")
+                print(f"   Total attempts: {final_state['attempt']}/{max_retries}")
+                print(f"   Last error: {final_state['error_message'][:200]}")
+                print("="*80)
+            raise Exception(f"Workflow failed: {final_state['error_message']}")
+            
+    except Exception as e:
+        if verbose:
+            print(f"\n❌ Error in LangGraph workflow: {str(e)}")
+            import traceback
+            traceback.print_exc()
+        raise
 
 
 def main():
@@ -479,6 +665,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     parser.add_argument('--filename', '-f', type=str,
                         default='kill_packet_recvmsg_process.yml',
                         help='Output filename for the generated playbook')
+    parser.add_argument('--audit-procedure', type=str, default=None,
+                        help='CIS Benchmark audit procedure (shell script or commands)')
     
     args = parser.parse_args()
     
@@ -489,6 +677,7 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     playbook_objective = args.objective
     example_output = args.example_output
     filename = args.filename
+    audit_procedure = args.audit_procedure
     
     if args.requirements:
         requirements = args.requirements
@@ -518,6 +707,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     print(f"Max Retries:    {max_retries}")
     print(f"Objective:      {playbook_objective[:60]}{'...' if len(playbook_objective) > 60 else ''}")
     print(f"Requirements:   {len(requirements)} items")
+    if audit_procedure:
+        print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure provided)")
     print(f"Filename:       {filename}")
     if test_host != target_host:
         print("\n📋 Execution Strategy:")
@@ -535,6 +726,7 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
         "example_output": example_output,
         "filename": filename,
         "max_retries": max_retries,
+        "audit_procedure": audit_procedure or "",  # CIS Benchmark audit procedure
         "attempt": 1,
         "playbook_content": "",
         "syntax_valid": False,
