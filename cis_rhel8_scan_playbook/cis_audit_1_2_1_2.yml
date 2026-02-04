@@ -1,0 +1,117 @@
+---
+- name: Data Collection for CIS 1.2.1.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.2.1.2"
+    req_1: "Verify the global gpgcheck setting in /etc/dnf/dnf.conf is enabled (set to 1, true, or yes)"
+    req_2: "Verify no repository configuration in /etc/yum.repos.d/ has gpgcheck disabled (set to 0, any number 2 or greater, false, or no)"
+    req_3: "OVERALL Verify: Ensure gpgcheck is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify the global gpgcheck setting in /etc/dnf/dnf.conf is enabled (set to 1, true, or yes)
+    - name: "Req 1 - Check global gpgcheck setting"
+      shell: >
+        grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check global gpgcheck setting"
+        task_1_cmd: |
+          grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim) in ['gpgcheck=1', 'gpgcheck=true', 'gpgcheck=yes'] else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is gpgcheck=1, gpgcheck=true, or gpgcheck=yes, FAIL otherwise. Output: ' ~ (result_1.stdout | default('') | trim)) | trim }}"
+
+    # Requirement 2: Verify no repository configuration in /etc/yum.repos.d/ has gpgcheck disabled (set to 0, any number 2 or greater, false, or no)
+    - name: "Req 2 - Check repository gpgcheck settings"
+      shell: >
+        grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check repository gpgcheck settings"
+        task_2_cmd: |
+          grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim) == '' else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when command returns no output, FAIL if any output is returned. Output: ' ~ (result_2.stdout | default('') | trim)) | trim }}"
+
+    # Requirement 3: OVERALL Verify: Ensure gpgcheck is configured
+    - name: "Req 3 - Determine overall compliance"
+      set_fact:
+        task_3_name: "Determine overall compliance"
+        task_3_cmd: "N/A - Calculated from req_1 and req_2"
+        task_3_rc: 0
+        data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise. Status: req_1=' ~ status_1 ~ ', req_2=' ~ status_2) | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.2.1.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.2.1.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

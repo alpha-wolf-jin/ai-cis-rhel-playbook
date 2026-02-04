@@ -1,0 +1,128 @@
+---
+- name: Data Collection for CIS 1.1.2.3.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.2.3.2"
+    req_1: "Verify that a separate partition for /home exists"
+    req_2: "IF a separate /home partition exists, verify the 'nodev' mount option is set"
+    req_3: "OVERALL Verify: Ensure nodev option set on /home partition"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify that a separate partition for /home exists
+    - name: "Req 1 - Check for separate /home partition"
+      shell: >
+        findmnt -kn /home
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check for separate /home partition"
+        task_1_cmd: "findmnt -kn /home"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when a mount point for /home is returned, FAIL when no output is returned (indicating no separate /home partition)' | trim) }}"
+
+    # Requirement 2: IF a separate /home partition exists, verify the 'nodev' mount option is set
+    - name: "Req 2 - Check nodev option on /home partition"
+      shell: >
+        findmnt -kn /home | grep -v nodev
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check nodev option on /home partition"
+        task_2_cmd: "findmnt -kn /home | grep -v nodev"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (status_1 == 'FAIL') else ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL')) | trim }}"
+        rationale_2: "{{ ('PASS when req_1=FAIL (no separate partition) OR (req_1=PASS AND command returns no output indicating nodev is present), FAIL when req_1=PASS AND command returns output (indicating nodev is missing)' | trim) }}"
+      when: status_1 == 'PASS'
+
+    - name: Set requirement 2 as NA when no separate partition
+      set_fact:
+        task_2_name: "Check nodev option on /home partition"
+        task_2_cmd: "findmnt -kn /home | grep -v nodev"
+        task_2_rc: -1
+        data_2: "N/A - No separate /home partition"
+        status_2: "NA"
+        rationale_2: "Not applicable - no separate /home partition exists"
+      when: status_1 == 'FAIL'
+
+    # Requirement 3: OVERALL Verify: Ensure nodev option set on /home partition
+    - name: "Req 3 - Determine overall compliance"
+      set_fact:
+        task_3_name: "Overall compliance determination"
+        task_3_cmd: "N/A - Logical evaluation"
+        task_3_rc: 0
+        data_3: "req_1={{ status_1 }}, req_2={{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'FAIL') or (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=FAIL (no separate partition) OR (req_1=PASS AND req_2=PASS), FAIL otherwise' | trim) }}"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.1.2.3.2"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

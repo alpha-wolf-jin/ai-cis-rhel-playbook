@@ -1,0 +1,160 @@
+---
+- name: Data Collection for CIS 1.8.5
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.8.5"
+    req_1: "Verify the autorun-never setting is locked (not user-writable)"
+    req_2: "Verify the autorun-never option is enabled"
+    req_3: "OVERALL Verify: Ensure GDM autorun-never is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated - GDM may not be installed or configured"
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated - GDM may not be installed or configured"
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated - GDM may not be installed or configured"
+
+    # Requirement 1: Verify the autorun-never setting is locked (not user-writable)
+    - name: "Req 1 - Check if autorun-never setting is locked"
+      shell: >
+        gsettings writable org.gnome.desktop.media-handling autorun-never
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if autorun-never setting is locked"
+        task_1_cmd: "gsettings writable org.gnome.desktop.media-handling autorun-never"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {{ 
+            ('PASS' if (result_1.stdout | default('') | trim == 'false') 
+            else ('FAIL' if (result_1.stdout | default('') | trim == 'true') 
+            else ('UNKNOWN' if (result_1.rc != 0) else 'FAIL'))) | trim 
+          }}
+        rationale_1: >-
+          {{
+            ('PASS when output is false (locked)' if (result_1.stdout | default('') | trim == 'false')
+            else ('FAIL when output is true (writable)' if (result_1.stdout | default('') | trim == 'true')
+            else ('UNKNOWN - GDM may not be installed or configured (exit code: ' ~ result_1.rc | string ~ ')' if (result_1.rc != 0)
+            else 'FAIL - Unexpected output'))) | trim
+          }}
+
+    # Requirement 2: Verify the autorun-never option is enabled
+    # Only execute if Requirement 1 returned valid output (exit code 0)
+    - name: "Req 2 - Check if autorun-never option is enabled"
+      shell: >
+        gsettings get org.gnome.desktop.media-handling autorun-never
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: result_1.rc == 0
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check if autorun-never option is enabled"
+        task_2_cmd: "gsettings get org.gnome.desktop.media-handling autorun-never"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {{
+            ('PASS' if (result_2.stdout | default('') | trim == 'true')
+            else ('FAIL' if (result_2.stdout | default('') | trim == 'false')
+            else ('UNKNOWN' if (result_2.rc != 0 or result_1.rc != 0)
+            else 'FAIL'))) | trim
+          }}
+        rationale_2: >-
+          {{
+            ('PASS when output is true (enabled)' if (result_2.stdout | default('') | trim == 'true')
+            else ('FAIL when output is false (disabled)' if (result_2.stdout | default('') | trim == 'false')
+            else ('UNKNOWN - GDM may not be installed or configured' if (result_2.rc != 0 or result_1.rc != 0)
+            else 'FAIL - Unexpected output'))) | trim
+          }}
+      when: result_1.rc == 0
+
+    # Requirement 3: OVERALL Verify: Ensure GDM autorun-never is configured
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "OVERALL Verify: Ensure GDM autorun-never is configured"
+        task_3_cmd: "N/A - Combined check of requirements 1 and 2"
+        task_3_rc: 0
+        data_3: "Req1 status: {{ status_1 }}, Req2 status: {{ status_2 }}"
+        status_3: >-
+          {{
+            ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS')
+            else ('FAIL' if (status_1 == 'FAIL' or status_2 == 'FAIL')
+            else ('PASS' if (status_1 == 'UNKNOWN' and status_2 == 'UNKNOWN')
+            else 'UNKNOWN'))) | trim
+          }}
+        rationale_3: >-
+          {{
+            ('PASS when both requirement 1 and 2 are PASS' if (status_1 == 'PASS' and status_2 == 'PASS')
+            else ('FAIL when either requirement 1 or 2 is FAIL' if (status_1 == 'FAIL' or status_2 == 'FAIL')
+            else ('PASS - GDM not installed/configured, setting does not apply' if (status_1 == 'UNKNOWN' and status_2 == 'UNKNOWN')
+            else 'UNKNOWN - Could not determine compliance status'))) | trim
+          }}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.8.5"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

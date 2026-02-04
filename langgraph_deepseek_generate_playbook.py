@@ -9,11 +9,8 @@ The interface (inputs, outputs, and main functions) remains exactly the same
 as deepseek_generate_playbook.py for compatibility.
 """
 
-import os
-import sys
 from typing import TypedDict, Literal
 from dotenv import load_dotenv
-from langchain_deepseek import ChatDeepSeek
 from langgraph.graph import StateGraph, END
 
 # Import all functions from the original module
@@ -23,20 +20,12 @@ from deepseek_generate_playbook import (
     check_playbook_syntax,
     test_playbook_on_server,
     analyze_playbook_output,  # New analysis function
+    extract_playbook_issues_from_analysis,  # Helper to detect issues/advice
     # Keep argparse and main separate for now
 )
 
 # Load environment variables
 load_dotenv()
-
-## Initialize LLM model
-#model = ChatDeepSeek(
-#    model="deepseek-chat",
-#    temperature=0,
-#    max_tokens=None,
-#    timeout=None,
-#    max_retries=3
-#)
 
 # Define State for LangGraph workflow
 class PlaybookGenerationState(TypedDict):
@@ -63,6 +52,7 @@ class PlaybookGenerationState(TypedDict):
     error_message: str
     test_output: str
     final_output: str
+    connection_error: bool  # Flag for connection errors (cannot validate on host)
     
     # Control flow
     should_retry: bool
@@ -70,9 +60,14 @@ class PlaybookGenerationState(TypedDict):
 
 
 def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
-    """LangGraph node: Generate playbook using LLM."""
-    print(f"\n{'='*80}")
-    print(f"Attempt {state['attempt']}/{state['max_retries']}: Generating Ansible playbook...")
+    """LangGraph node: Generate or enhance playbook using LLM."""
+    is_enhancement = state.get('playbook_content') and state.get('analysis_message')
+    
+    print(f"\n{'='*80} generate_playbook_node")
+    if is_enhancement:
+        print(f"Attempt {state['attempt']}/{state['max_retries']}: Enhancing Ansible playbook...")
+    else:
+        print(f"Attempt {state['attempt']}/{state['max_retries']}: Generating Ansible playbook...")
     print("=" * 80)
     print(f"Objective: {state['playbook_objective']}")
     print(f"Test Host: {state['test_host']}")
@@ -80,9 +75,35 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
         print(f"Target Host: {state['target_host']}")
     print(f"Become User: {state['become_user']}")
     print(f"Requirements: {len(state['requirements'])} items")
+    if is_enhancement:
+        print(f"Mode: Enhancement (based on existing playbook and feedback)")
     print("=" * 80)
     
     try:
+        # Extract feedback from analysis_message if available
+        feedback_content = None
+        if state.get('analysis_message'):
+            # Extract the PLAYBOOK ANALYSIS section and recommendations
+            analysis_msg = state['analysis_message']
+            from deepseek_generate_playbook import extract_playbook_issues_from_analysis
+            has_issues, extracted_advice = extract_playbook_issues_from_analysis(analysis_msg)
+            if has_issues and extracted_advice:
+                feedback_content = extracted_advice
+            elif has_issues:
+                # Extract PLAYBOOK ANALYSIS section
+                lines = analysis_msg.split('\n')
+                feedback_lines = []
+                for i, line in enumerate(lines):
+                    if "PLAYBOOK ANALYSIS" in line.upper():
+                        feedback_lines.append(line)
+                        # Get next 20-30 lines for context
+                        for j in range(i+1, min(i+30, len(lines))):
+                            if lines[j].strip().startswith('- **') and 'PLAYBOOK' not in lines[j].upper() and 'DATA COLLECTION' not in lines[j].upper():
+                                break
+                            feedback_lines.append(lines[j])
+                        break
+                feedback_content = '\n'.join(feedback_lines).strip()
+        
         # Use the original generate_playbook function
         playbook = _original_generate_playbook(
             playbook_objective=state['playbook_objective'],
@@ -90,11 +111,16 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
             become_user=state['become_user'],
             requirements=state['requirements'],
             example_output=state['example_output'],
-            audit_procedure=state.get('audit_procedure', '')
+            audit_procedure=state.get('audit_procedure', ''),
+            current_playbook=state.get('playbook_content'),  # Pass current playbook for enhancement
+            feedback=feedback_content  # Pass feedback for enhancement
         )
         
-        # Display the generated playbook
-        print("\n📋 Generated Ansible Playbook:")
+        # Display the generated/enhanced playbook
+        if is_enhancement:
+            print("\n📋 Enhanced Ansible Playbook:")
+        else:
+            print("\n📋 Generated Ansible Playbook:")
         print("=" * 80)
         print(playbook)
         print("=" * 80)
@@ -113,12 +139,14 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
 def increment_attempt_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Increment attempt counter for retry."""
     state['attempt'] += 1
+    print(f"\n{'='*80} increment_attempt_node")
     print(f"\n🔄 Incrementing attempt counter: {state['attempt']}/{state['max_retries']}")
     return state
 
 
 def save_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Save playbook to file."""
+    print(f"\n{'='*80} save_playbook_node")
     if state['playbook_content']:
         save_playbook(state['playbook_content'], state['filename'])
     return state
@@ -127,6 +155,7 @@ def save_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationStat
 def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Check playbook syntax."""
     is_valid, error_msg = check_playbook_syntax(state['filename'], state['test_host'])
+    print(f"\n{'='*80} check_syntax_node")
     
     state['syntax_valid'] = is_valid
     if not is_valid:
@@ -154,6 +183,7 @@ def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState
 def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Test playbook on test host."""
     print("\n" + "=" * 80)
+    print(f"\n{'='*80} test_on_test_host_node")
     print(f"✅ Syntax Valid! Now testing on test host: {state['test_host']}...")
     print("=" * 80)
     
@@ -168,6 +198,26 @@ def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGeneration
     
     state['test_success'] = test_success
     state['test_output'] = test_output
+    
+    # Check if it's a connection error (cannot validate on host)
+    if not test_success and test_output.startswith("CONNECTION_ERROR:"):
+        print("\n" + "=" * 80)
+        print("⚠️  WARNING: Cannot connect to test host for validation")
+        print("=" * 80)
+        print(f"\n❌ Connection Error Details:")
+        print(f"   Host: {state['test_host']}")
+        print(f"   Error: {test_output.replace('CONNECTION_ERROR: ', '')}")
+        print(f"\n⚠️  The playbook syntax is valid, but execution validation cannot be performed.")
+        print(f"   Please ensure:")
+        print(f"   1. The host {state['test_host']} is reachable")
+        print(f"   2. SSH access is configured correctly")
+        print(f"   3. Authentication credentials are valid")
+        print(f"\n✅ Playbook has been saved with valid syntax: {state['filename']}")
+        print("=" * 80)
+        # Set error message and mark as connection error (don't retry)
+        state['error_message'] = test_output
+        state['connection_error'] = True
+        return state
     
     if test_success:
         print("\n" + "=" * 80)
@@ -197,14 +247,79 @@ def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGeneration
     
     return state
 
+def parse_compliance_report(text):
+    """Parse compliance report into structured sections."""
+    requirements = []
+    data_collection = []
+    playbook_analysis = []
+    compliance_status = []
+    recommendation = []
+    
+    requirements_target_block = False
+    data_collection_target_block = False
+    playbook_analysis_target_block = False
+    compliance_status_target_block = False
+    recommendation_target_block = False
+    
+    lines = text.split('\n')
+
+    for line in lines:
+        if "Based on the collected data" in line:
+            requirements_target_block = True
+            continue
+        if requirements_target_block and "OVERALL ASSESSMENT" in line:
+            requirements_target_block = False
+        if requirements_target_block:
+            requirements.append(line)
+            
+        if "DATA COLLECTION" in line and ':' in line:
+            data_collection_target_block = True
+        if data_collection_target_block:
+            if not line.strip():
+                data_collection_target_block = False
+        if data_collection_target_block:
+            data_collection.append(line)
+
+        if "PLAYBOOK ANALYSIS" in line and ':' in line:
+            playbook_analysis_target_block = True
+        if playbook_analysis_target_block:
+            if not line.strip():
+                playbook_analysis_target_block = False
+        if playbook_analysis_target_block:
+            playbook_analysis.append(line)
+
+        if "COMPLIANCE STATUS" in line and ':' in line:
+            compliance_status_target_block = True
+        if compliance_status_target_block:
+            if not line.strip():
+                compliance_status_target_block = False
+        if compliance_status_target_block:
+            compliance_status.append(line)
+
+        if "RECOMMENDATION" in line and ':' in line:
+            recommendation_target_block = True
+        if recommendation_target_block:
+            if not line.strip():
+                recommendation_target_block = False
+        if recommendation_target_block:
+            recommendation.append(line)
+
+    return {
+        "requirements": '\n'.join(requirements),
+        "data_collection": '\n'.join(data_collection),
+        "playbook_analysis": '\n'.join(playbook_analysis),
+        "compliance_status": '\n'.join(compliance_status),
+        "recommendation": '\n'.join(recommendation)
+    }
 
 def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Analyze playbook output against requirements."""
+    print(f"\n{'='*80} analyze_output_node")
     test_success, test_output = test_playbook_on_server(
         state['filename'],
         state['test_host'],
         check_mode=False,
-        verbose=False,
+        verbose=True,
         skip_debug=True  # Skip debug tasks for cleaner output to analyze
     )
     
@@ -216,40 +331,120 @@ def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationSta
             requirements=state['requirements'],
             playbook_objective=state['playbook_objective'],
             test_output=state['test_output'],
-            audit_procedure=state.get('audit_procedure')
+            audit_procedure=state.get('audit_procedure'),
+            playbook_content=state.get('playbook_content')  # Pass playbook content for analysis
+        )
+
+        # Check for PLAYBOOK ANALYSIS: FAIL status
+        has_issues, extracted_advice = extract_playbook_issues_from_analysis(analysis_message)
+        
+        # Verify status alignment between playbook output and AI analysis
+        from deepseek_generate_playbook import verify_status_alignment, extract_analysis_statuses
+        status_aligned, alignment_message = verify_status_alignment(state['test_output'], analysis_message)
+        
+        # Extract all required statuses from analysis
+        analysis_statuses = extract_analysis_statuses(analysis_message)
+        
+        # Proceed to target execution only when ALL criteria are met:
+        # 1. DATA COLLECTION: PASS
+        # 2. PLAYBOOK ANALYSIS: PASS
+        # 3. COMPLIANCE STATUS: COMPLIANT
+        # 4. All requirement statuses align (PASS/FAIL = COMPLIANT/NON-COMPLIANT)
+        # 5. Overall status aligns
+        data_collection_pass = analysis_statuses.get('data_collection') == 'PASS'
+        playbook_analysis_pass = analysis_statuses.get('playbook_analysis') == 'PASS'
+        compliance_status_compliant = analysis_statuses.get('compliance_status') == 'COMPLIANT'
+        
+        # Check if all main sections pass
+        all_main_sections_pass = (
+            data_collection_pass and
+            playbook_analysis_pass and
+            compliance_status_compliant
         )
         
-        state['analysis_passed'] = analysis_passed
+        state['analysis_passed'] = all_main_sections_pass
         state['analysis_message'] = analysis_message
         
-        if not analysis_passed:
+        if not all_main_sections_pass:
+            # Check which criteria failed
+            failed_criteria = []
+            if not data_collection_pass:
+                failed_criteria.append("DATA COLLECTION: not PASS")
+            if not playbook_analysis_pass:
+                failed_criteria.append("PLAYBOOK ANALYSIS: not PASS")
+            if not compliance_status_compliant:
+                failed_criteria.append("COMPLIANCE STATUS: not COMPLIANT")
+            if has_issues:
+                failed_criteria.append("PLAYBOOK ANALYSIS: FAIL (has issues)")
+            
+            print(f"\n⚠️  AI COMPLIANCE ANALYSIS criteria not met - will enhance playbook")
+            print(f"   Failed criteria: {', '.join(failed_criteria)}")
             state['error_message'] = analysis_message
-            # Don't set should_retry here - let conditional edge decide
             
             if state['attempt'] < state['max_retries']:
-                print(f"\n⚠️  Analysis failed on attempt {state['attempt']}/{state['max_retries']}")
-                print("🔄 Regenerating playbook with analysis feedback...")
+                print(f"\n⚠️  Analysis issues detected on attempt {state['attempt']}/{state['max_retries']}")
+                print("🔄 Enhancing playbook with analysis feedback...")
+                
+                # Prepare feedback message
+                if extracted_advice:
+                    # Use extracted advice if available
+                    feedback_text = extracted_advice
+                else:
+                    # Extract the PLAYBOOK ANALYSIS section and recommendations
+                    lines = analysis_message.split('\n')
+                    feedback_lines = []
+                    in_playbook_analysis = False
+                    for i, line in enumerate(lines):
+                        if "PLAYBOOK ANALYSIS" in line.upper():
+                            in_playbook_analysis = True
+                            feedback_lines.append(line)
+                            # Get next few lines for context
+                            for j in range(i+1, min(i+20, len(lines))):
+                                if lines[j].strip().startswith('- **') and 'PLAYBOOK' not in lines[j].upper():
+                                    break
+                                feedback_lines.append(lines[j])
+                            break
+                    # Also look for RECOMMENDATION or PLAYBOOK LOGIC ISSUE sections
+                    for i, line in enumerate(lines):
+                        if any(kw in line.upper() for kw in ["PLAYBOOK LOGIC ISSUE", "RECOMMENDATION", "ADVICE"]):
+                            if line not in feedback_lines:
+                                feedback_lines.append(line)
+                            # Get next 10-15 lines
+                            for j in range(i+1, min(i+15, len(lines))):
+                                if lines[j].strip().startswith('##') or (lines[j].strip().startswith('- **') and 'RECOMMENDATION' not in lines[j].upper()):
+                                    break
+                                if lines[j] not in feedback_lines:
+                                    feedback_lines.append(lines[j])
+
+
+                    feedback_text = '\n'.join(feedback_lines).strip() or analysis_message[:1000]
+
+                feedback_header = "CRITICAL FIX REQUIRED: PLAYBOOK ANALYSIS: FAIL - The playbook has logic issues that need to be fixed."
                 
                 # Add analysis feedback to requirements
-                analysis_escaped = analysis_message[:500].replace('{', '{{').replace('}', '}}')
-                state['requirements'].append(f"""CRITICAL FIX REQUIRED: Output analysis shows the playbook does not correctly fulfill requirements.
-    
+                analysis_escaped = feedback_text.replace('{', '{{').replace('}', '}}')
+                state['requirements'].append(f"""{feedback_header}
+
 Analysis Result:
 {analysis_escaped}
 
 INSTRUCTIONS TO FIX:
-1. Review the analysis feedback carefully
-2. Fix the logic errors in compliance checking
-3. Ensure ALL requirements are properly verified
-4. Make sure compliance determinations match actual task results""")
+1. Review the PLAYBOOK ANALYSIS feedback carefully
+2. Fix the playbook logic issues identified in the analysis
+3. If analysis recommends conditional execution (e.g., "when: data_1 | length > 0"), implement it
+4. If analysis identifies design flaws or logic issues, fix them according to the recommendations
+5. Ensure the playbook follows CIS procedures correctly (e.g., skip subsequent requirements when first requirement returns nothing)
+6. Update overall compliance logic to match CIS exactly
+7. Make sure all requirements are executed in the correct order and conditions""")
         else:
-            print("\n✅ Playbook output verified! Requirements correctly fulfilled.")
+            print("\n✅ PLAYBOOK ANALYSIS: PASS - Playbook logic is correct!")
     
     return state
 
 
 def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Execute playbook on target host."""
+    print(f"\n{'='*80} execute_on_target_host_node")
     if state['test_host'] == state['target_host']:
         # Same host, already executed
         state['final_success'] = True
@@ -269,7 +464,8 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
             requirements=state['requirements'],
             playbook_objective=state['playbook_objective'],
             test_output=state['test_output'],
-            audit_procedure=state.get('audit_procedure')
+            audit_procedure=state.get('audit_procedure'),
+            playbook_content=state.get('playbook_content')  # Pass playbook content for analysis
         )
         print(analysis_message)
         print("=" * 80)
@@ -348,6 +544,7 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
 
 def should_continue_after_syntax(state: PlaybookGenerationState) -> Literal["test_on_test_host", "retry", "end"]:
     """Conditional edge: Decide what to do after syntax check."""
+    print(f"\n{'='*80} should_continue_after_syntax")
     if not state['syntax_valid']:
         if state['attempt'] < state['max_retries']:
             return "retry"
@@ -358,6 +555,11 @@ def should_continue_after_syntax(state: PlaybookGenerationState) -> Literal["tes
 
 def should_continue_after_test(state: PlaybookGenerationState) -> Literal["analyze_output", "retry", "end"]:
     """Conditional edge: Decide what to do after test execution."""
+    print(f"\n{'='*80} should_continue_after_test")
+    # Check for connection errors - don't retry, just end
+    if state.get('connection_error', False):
+        return "end"  # Connection error - cannot validate, exit with warning
+    
     if not state['test_success']:
         if state['attempt'] < state['max_retries']:
             return "retry"
@@ -368,16 +570,20 @@ def should_continue_after_test(state: PlaybookGenerationState) -> Literal["analy
 
 def should_continue_after_analysis(state: PlaybookGenerationState) -> Literal["execute_on_target", "retry", "end"]:
     """Conditional edge: Decide what to do after output analysis."""
+    print(f"\n{'='*80} should_continue_after_analysis")
+    # Only regenerate if PLAYBOOK ANALYSIS: FAIL
+    # The state['analysis_passed'] is already set based on PLAYBOOK ANALYSIS status
     if not state['analysis_passed']:
         if state['attempt'] < state['max_retries']:
             return "retry"
         else:
             return "end"
-    return "execute_on_target"  # Analysis passed, proceed to target
+    return "execute_on_target"  # PLAYBOOK ANALYSIS: PASS, proceed to target
 
 
 def should_continue_after_final(state: PlaybookGenerationState) -> Literal["end"]:
     """Conditional edge: After final execution, always end."""
+    print(f"\n{'='*80} should_continue_after_final")
     return "end"
 
 
@@ -442,41 +648,6 @@ def create_playbook_workflow() -> StateGraph:
     )
     
     return workflow.compile()
-
-
-# Keep the same interface as the original script
-def generate_playbook(
-    playbook_objective: str,
-    target_host: str = "master-1",
-    become_user: str = "root",
-    requirements: list = None,
-    example_output: str = "",
-    audit_procedure: str = None
-):
-    """
-    Generate Ansible playbook based on custom requirements.
-    This function maintains the same interface as the original.
-    
-    Args:
-        playbook_objective: Description of what the playbook should achieve
-        target_host: Default target host for the playbook
-        become_user: User to become (usually root)
-        requirements: List of requirement strings describing what the playbook should do
-        example_output: Example command output to provide context
-        audit_procedure: CIS Benchmark audit procedure (script/commands)
-    
-    Returns:
-        str: Generated playbook content
-    """
-    # Use the original function for simple generation
-    return _original_generate_playbook(
-        playbook_objective=playbook_objective,
-        target_host=target_host,
-        become_user=become_user,
-        requirements=requirements,
-        example_output=example_output,
-        audit_procedure=audit_procedure
-    )
 
 
 def generate_playbook_workflow(
@@ -567,6 +738,7 @@ def generate_playbook_workflow(
         "error_message": "",
         "test_output": "",
         "final_output": "",
+        "connection_error": False,
         "should_retry": False,
         "workflow_complete": False,
     }
@@ -585,6 +757,19 @@ def generate_playbook_workflow(
         )
         
         # Check results
+        # Handle connection errors separately
+        if final_state.get('connection_error', False):
+            if verbose:
+                print("\n" + "="*80)
+                print("⚠️  WORKFLOW TERMINATED: Connection Error")
+                print("="*80)
+                print(f"   The playbook syntax is valid but cannot be validated on the host.")
+                print(f"   Playbook file: {final_state['filename']}")
+                print("="*80)
+            # Return state but mark as incomplete due to connection error
+            final_state['workflow_complete'] = False
+            return final_state
+        
         if final_state['workflow_complete'] and final_state['test_success']:
             if verbose:
                 print("\n" + "="*80)

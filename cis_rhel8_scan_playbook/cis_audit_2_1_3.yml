@@ -1,0 +1,167 @@
+---
+- name: Data Collection for CIS checkpoint 2.1.3
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.3"
+    req_1: "Verify the cockpit-ws package is NOT installed"
+    req_2: "If cockpit-ws is installed, verify cockpit.socket and cockpit.service units are NOT enabled"
+    req_3: "If cockpit-ws is installed, verify cockpit.socket and cockpit.service units are NOT active"
+    req_4: "OVERALL Verify: Ensure cockpit web services are not in use"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_2_name: "Not executed"
+        task_3_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_2_cmd: "N/A"
+        task_3_cmd: "N/A"
+        task_1_rc: -1
+        task_2_rc: -1
+        task_3_rc: -1
+
+    # Requirement 1: Verify the cockpit-ws package is NOT installed
+    - name: Req 1 - Check cockpit-ws package installation
+      shell: |
+        rpm -q cockpit-ws
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check cockpit-ws package installation"
+        task_1_cmd: "rpm -q cockpit-ws"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package cockpit-ws is not installed') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'package cockpit-ws is not installed', FAIL if a package version is returned"
+
+    # Requirement 2: If cockpit-ws is installed, verify units are NOT enabled
+    - name: Req 2 - Check if cockpit units are enabled
+      shell: |
+        systemctl is-enabled cockpit.socket cockpit.service 2>/dev/null | grep 'enabled'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: data_1 | trim != 'package cockpit-ws is not installed'
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check if cockpit units are enabled"
+        task_2_cmd: "systemctl is-enabled cockpit.socket cockpit.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when no output is returned (i.e., the grep finds no matches), FAIL if 'enabled' is found in the output"
+      when: data_1 | trim != 'package cockpit-ws is not installed'
+
+    - name: Set requirement 2 as NA when cockpit-ws not installed
+      set_fact:
+        task_2_name: "Check if cockpit units are enabled"
+        task_2_cmd: "systemctl is-enabled cockpit.socket cockpit.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: -1
+        data_2: "N/A - cockpit-ws not installed"
+        status_2: "NA"
+        rationale_2: "Did not execute the related task because cockpit-ws is not installed"
+      when: data_1 | trim == 'package cockpit-ws is not installed'
+
+    # Requirement 3: If cockpit-ws is installed, verify units are NOT active
+    - name: Req 3 - Check if cockpit units are active
+      shell: |
+        systemctl is-active cockpit.socket cockpit.service 2>/dev/null | grep '^active'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: data_1 | trim != 'package cockpit-ws is not installed'
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check if cockpit units are active"
+        task_3_cmd: "systemctl is-active cockpit.socket cockpit.service 2>/dev/null | grep '^active'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_3: "PASS when no output is returned (i.e., the grep finds no matches), FAIL if 'active' is found at the start of a line"
+      when: data_1 | trim != 'package cockpit-ws is not installed'
+
+    - name: Set requirement 3 as NA when cockpit-ws not installed
+      set_fact:
+        task_3_name: "Check if cockpit units are active"
+        task_3_cmd: "systemctl is-active cockpit.socket cockpit.service 2>/dev/null | grep '^active'"
+        task_3_rc: -1
+        data_3: "N/A - cockpit-ws not installed"
+        status_3: "NA"
+        rationale_3: "Did not execute the related task because cockpit-ws is not installed"
+      when: data_1 | trim == 'package cockpit-ws is not installed'
+
+    # Requirement 4: OVERALL Verify
+    - name: Store requirement 4 details and determine overall status
+      set_fact:
+        status_4: >
+          {{ (
+            'PASS' if
+            (status_1 | trim == 'PASS') or
+            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
+        rationale_4: "PASS when req_1=PASS OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.1.3"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "========================================================"

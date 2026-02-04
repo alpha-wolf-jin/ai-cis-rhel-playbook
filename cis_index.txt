@@ -1,0 +1,4 @@
+Checkpoint: 1.7.2 Ensure /etc/issue is configured (Automated)
+Checkpoint: 1.7.3 Ensure /etc/issue.net is configured (Automated)
+Checkpoint: 1.8.1 Ensure GDM login banner is configured (Automated)
+Checkpoint: 1.8.4 Ensure GDM automount is configured (Automated)

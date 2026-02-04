@@ -1,0 +1,118 @@
+---
+- name: Data Collection for CIS 1.3.1.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.3.1.2"
+    req_1: "Verify that neither the selinux=0 nor enforcing=0 parameters are set in the bootloader configuration"
+    req_2: "Verify that the selinux=0 and enforcing=0 parameters were not configured via deprecated grub2-mkconfig"
+    req_3: "OVERALL Verify: Ensure SELinux is not disabled in bootloader configuration"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify that neither the selinux=0 nor enforcing=0 parameters are set in the bootloader configuration
+    - name: "Req 1 - Check bootloader parameters via grubby"
+      shell: >
+        grubby --info=ALL | grep -Po '(selinux|enforcing)=0\b'
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check bootloader parameters via grubby"
+        task_1_cmd: |
+          grubby --info=ALL | grep -Po '(selinux|enforcing)=0\b'
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when command returns no output, FAIL when any output is returned' if (result_1.stdout | default('') | trim == '') else 'FAIL when command returns output, PASS when no output returned') | trim }}"
+
+    # Requirement 2: Verify that the selinux=0 and enforcing=0 parameters were not configured via deprecated grub2-mkconfig
+    - name: "Req 2 - Check deprecated grub2-mkconfig configuration"
+      shell: >
+        grep -Prs -- '^\h*([^#\n\r]+\h+)?kernelopts=([^#\n\r]+\h+)?(selinux|enforcing)=0\b' /boot/grub2 /boot/efi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check deprecated grub2-mkconfig configuration"
+        task_2_cmd: |
+          grep -Prs -- '^\h*([^#\n\r]+\h+)?kernelopts=([^#\n\r]+\h+)?(selinux|enforcing)=0\b' /boot/grub2 /boot/efi
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when command returns no output, FAIL when any output is returned' if (result_2.stdout | default('') | trim == '') else 'FAIL when command returns output, PASS when no output returned') | trim }}"
+
+    # Requirement 3: OVERALL Verify: Ensure SELinux is not disabled in bootloader configuration
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "OVERALL Verify: Ensure SELinux is not disabled in bootloader configuration"
+        task_3_cmd: "N/A - Combined check of requirements 1 and 2"
+        task_3_rc: 0
+        data_3: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL when req_1=FAIL OR req_2=FAIL, PASS otherwise') | trim }}"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.3.1.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.3.1.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

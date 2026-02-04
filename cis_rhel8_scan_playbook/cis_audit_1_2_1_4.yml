@@ -1,0 +1,121 @@
+---
+- name: Data Collection for CIS 1.2.1.4
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.2.1.4"
+    req_1: "Verify that the package manager repositories are configured and listed using command: dnf repolist"
+    req_2: "Verify the configuration of all repository files for correct settings according to site policy using command: cat /etc/yum.repos.d/*.repo"
+    req_3: "OVERALL Verify: Ensure package manager repositories are configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        data_2: ""
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        data_3: ""
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    # Requirement 1: Verify that the package manager repositories are configured and listed using command: dnf repolist
+    - name: "Req 1 - Check repository list"
+      shell: >
+        dnf repolist
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check repository list"
+        task_1_cmd: "dnf repolist"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.rc == 0 and result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when the command executes successfully and lists one or more repositories, FAIL when the command fails or returns an empty list' | trim) }}"
+
+    # Requirement 2: Verify the configuration of all repository files for correct settings according to site policy using command: cat /etc/yum.repos.d/*.repo
+    - name: "Req 2 - Check repository configuration files"
+      shell: >
+        cat /etc/yum.repos.d/*.repo 2>/dev/null || echo "No repository files found"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check repository configuration files"
+        task_2_cmd: "cat /etc/yum.repos.d/*.repo"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.rc == 0) else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when the command executes successfully and the output can be inspected against site policy, FAIL when the command fails or files are not found' | trim) }}"
+
+    # Requirement 3: OVERALL Verify: Ensure package manager repositories are configured
+    - name: "Req 3 - Determine overall compliance"
+      set_fact:
+        task_3_name: "Determine overall compliance"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' | trim) }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.2.1.4"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

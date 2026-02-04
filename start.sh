@@ -49,3 +49,11 @@ python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --no-interactive
 
 
 ./cis_checkpoint_to_playbook.py --checkpoint "1.1.1.4" --test-host 192.168.122.16 --target-host 192.168.122.17
+
+./auto_rhel9_cis_playbook.py --test-host 192.168.122.16 --target-host 192.168.122.17  --output-dir ./cis_rhel9_scan_playbook
+
+./single_cis_checkpoint_to_playbook.py --checkpoint "1.8.3 Ensure GDM screen lock is configured" --test-host 192.168.122.16 --target-host 192.168.122.17  --output-dir ./cis_rhel9_scan_playbook
+
+
+./single_cis_checkpoint_to_playbook.py --checkpoint '1.6.2 Ensure system wide crypto policy disables sha1 hash and signature support' --test-host 192.168.122.16 --target-host 192.168.122.17  --output-dir ./playbooks
+

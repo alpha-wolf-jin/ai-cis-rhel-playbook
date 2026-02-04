@@ -1,0 +1,187 @@
+---
+- name: Data Collection for CIS 1.5.4
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.5.4"
+    req_1: "Verify fs.suid_dumpable is set to 0 in the running configuration using command: sysctl fs.suid_dumpable"
+    req_2: "Run script to verify fs.suid_dumpable = 0 is set in a file being used by systemd sysctl"
+    req_3: "OVERALL Verify: Ensure fs.suid_dumpable is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        data_2: ""
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        data_3: ""
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    # Requirement 1: Verify fs.suid_dumpable is set to 0 in the running configuration
+    - name: "Req 1 - Check running sysctl configuration"
+      shell: sysctl fs.suid_dumpable
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check running sysctl configuration"
+        task_1_cmd: "sysctl fs.suid_dumpable"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'fs.suid_dumpable = 0') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'fs.suid_dumpable = 0', FAIL otherwise"
+
+    # Requirement 2: Run script to verify fs.suid_dumpable = 0 is set in configuration files
+    # Only execute if Requirement 1 passed (fs.suid_dumpable is set to 0 in running config)
+    - name: "Req 2 - Create temporary audit script"
+      copy:
+        dest: "/tmp/cis_audit_script_2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_parameter_name="fs.suid_dumpable"  
+             l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
+             l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
+             || readlink -e /usr/lib/systemd/systemd-sysctl 2>/dev/null)"
+             l_ufw_file="$([ -f /etc/default/ufw ] && \
+             awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
+             [ -f "$(readlink -e "$l_ufw_file" 2>/dev/null)" ] && \
+             a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
+             if [ -n "$l_systemdsysctl" ] && [ -x "$l_systemdsysctl" ]; then
+               while IFS= read -r l_fname; do
+                  l_file="$(readlink -e "${l_fname//# /}" 2>/dev/null)"
+                  [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
+                  <<< "${a_files[*]}" && a_files+=("$l_file")
+               done < <("$l_systemdsysctl" --cat-config 2>/dev/null | tac | \
+               grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b' 2>/dev/null)
+             fi
+             for l_file in "${a_files[@]}"; do
+                if [ -f "$l_file" ]; then
+                  l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" 2>/dev/null | tail -n 1)"
+                  l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs 2>/dev/null)"
+                  [ -n "$l_option_value" ] && \
+                  a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
+                  "    \"$l_file\"")
+                fi
+             done
+             [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
+          }
+          {% endraw %}
+      register: script_created_2
+      when: status_1 == 'PASS'
+
+    - name: "Req 2 - Execute audit script"
+      shell: "/tmp/cis_audit_script_2.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 == 'PASS'
+
+    - name: "Req 2 - Remove temporary audit script"
+      file:
+        path: "/tmp/cis_audit_script_2.sh"
+        state: absent
+      ignore_errors: true
+      when: status_1 == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check configuration files for fs.suid_dumpable setting"
+        task_2_cmd: "CIS audit script (see script content above)"
+        task_2_rc: "{{ result_2.rc | default(-1) if status_1 == 'PASS' else -1 }}"
+        data_2: "{{ (result_2.stdout | default('') | trim) if status_1 == 'PASS' else 'Requirement 1 failed, skipping' }}"
+        status_2: >-
+          {% if status_1 != 'PASS' %}
+            NA
+          {% elif result_2.stdout is defined and 'fs.suid_dumpable = 0' in result_2.stdout %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 != 'PASS' %}
+            Requirement 1 failed, skipping
+          {% elif result_2.stdout is defined and 'fs.suid_dumpable = 0' in result_2.stdout %}
+            PASS when the script outputs a line confirming 'fs.suid_dumpable = 0' is set in a configuration file
+          {% else %}
+            FAIL if no such line is found or if a different value is reported
+          {% endif %}
+
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - Combined check"
+        task_3_rc: 0
+        data_3: "Combined result of requirements 1 and 2"
+        status_3: >-
+          {% if status_1 == 'PASS' and (status_2 == 'PASS' or status_2 == 'NA') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when req_1=PASS AND (req_2=PASS or req_2=NA), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.5.4"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

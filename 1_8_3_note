@@ -1,0 +1,2 @@
+Verify if the GNOME is installed. Rationale: Compliance when it is not installed and ignore all the others checking. If it is installed, execute the rest checkings to decide if it is Compliance or no-Compliance.
+

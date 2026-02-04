@@ -1,0 +1,131 @@
+---
+- name: Data Collection for CIS 1.6.6
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.6.6"
+    req_1: "Verify that CVE-2023-48795 (Terrapin SSH Attack) has NOT been addressed"
+    req_2: "Verify that the system-wide crypto policy disables EtM for SSH by checking that 'ssh_etm' is set to '0'"
+    req_3: "OVERALL Verify: Ensure system wide crypto policy disables EtM for ssh"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify that CVE-2023-48795 (Terrapin SSH Attack) has NOT been addressed
+    - name: "Req 1 - Check if CVE-2023-48795 has been addressed"
+      shell: |
+        # Check if SSH version indicates Terrapin fix
+        ssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K[0-9\.]+' | head -1)
+        if [[ -z "$ssh_version" ]]; then
+          echo "ERROR: Could not determine SSH version"
+          exit 1
+        fi
+        
+        # Check if version is >= 9.6 (where Terrapin is fixed by default)
+        IFS='.' read -r major minor patch <<< "$ssh_version"
+        if [[ $major -gt 9 ]] || [[ $major -eq 9 && $minor -ge 6 ]]; then
+          echo "CVE_ADDRESSED: SSH version $ssh_version >= 9.6 (Terrapin fixed)"
+          exit 0
+        else
+          echo "CVE_NOT_ADDRESSED: SSH version $ssh_version < 9.6"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if CVE-2023-48795 has been addressed"
+        task_1_cmd: "Check SSH version and compare against 9.6"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('FAIL' if (result_1.rc | default(-1) == 0) else 'PASS') | trim }}"
+        rationale_1: "{{ 'PASS when the CVE has NOT been addressed (making this recommendation applicable), FAIL when the CVE has been addressed (making this recommendation not applicable)' | trim }}"
+
+    # Requirement 2: Verify that the system-wide crypto policy disables EtM for SSH
+    - name: "Req 2 - Check ssh_etm setting in crypto policy"
+      shell: >
+        grep -Psi -- '^\h*ssh_etm\h*=\h*\d+\b' /etc/crypto-policies/state/CURRENT.pol
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check ssh_etm setting in crypto policy"
+        task_2_cmd: |
+          grep -Psi -- '^\h*ssh_etm\h*=\h*\d+\b' /etc/crypto-policies/state/CURRENT.pol
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'ssh_etm = 0') else 'FAIL') | trim }}"
+        rationale_2: "{{ 'PASS when the command output is exactly ssh_etm = 0, FAIL otherwise' | trim }}"
+
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "OVERALL Verify"
+        task_3_cmd: "N/A - Combined check"
+        task_3_rc: 0
+        data_3: "Combined result of requirements 1 and 2"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ 'PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.6.6"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"
