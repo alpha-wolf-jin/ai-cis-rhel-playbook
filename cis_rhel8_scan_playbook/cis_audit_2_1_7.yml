@@ -1,13 +1,13 @@
 ---
-- name: Data Collection for CIS checkpoint 2.1.7
+- name: Data Collection for CIS 2.1.7 - Ensure ftp server services are not in use
   hosts: all
   become: yes
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.7"
-    req_1: "Verify the vsftpd package is not installed"
-    req_2: "Verify the vsftpd service is not enabled"
-    req_3: "Verify the vsftpd service is not active"
+    req_1: "Verify the vsftpd package is NOT installed"
+    req_2: "If vsftpd package is installed, verify the vsftpd service is NOT enabled"
+    req_3: "If vsftpd package is installed, verify the vsftpd service is NOT active"
     req_4: "OVERALL Verify: Ensure ftp server services are not in use"
 
   tasks:
@@ -26,9 +26,10 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify the vsftpd package is not installed
+    # Requirement 1: Verify the vsftpd package is NOT installed
     - name: Req 1 - Check if vsftpd package is installed
-      shell: rpm -q vsftpd
+      shell: >
+        rpm -q vsftpd
       args:
         executable: /bin/bash
       register: result_1
@@ -43,12 +44,12 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package vsftpd is not installed') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'package vsftpd is not installed', FAIL when the package is installed"
+        rationale_1: "PASS when output is 'package vsftpd is not installed', FAIL otherwise"
 
-    # Requirement 2: Verify the vsftpd service is not enabled
-    # Only execute if package is installed (req_1 FAILED)
+    # Requirement 2: If vsftpd package is installed, verify the vsftpd service is NOT enabled
     - name: Req 2 - Check if vsftpd service is enabled
-      shell: systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'
+      shell: >
+        systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
@@ -64,13 +65,13 @@
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when no output is returned (service not enabled), FAIL when output is returned (service enabled)"
+        rationale_2: "PASS when command returns no output (empty), FAIL when 'enabled' is found in output"
       when: status_1 | trim == 'FAIL'
 
-    # Requirement 3: Verify the vsftpd service is not active
-    # Only execute if package is installed (req_1 FAILED)
+    # Requirement 3: If vsftpd package is installed, verify the vsftpd service is NOT active
     - name: Req 3 - Check if vsftpd service is active
-      shell: systemctl is-active vsftpd.service 2>/dev/null | grep '^active'
+      shell: >
+        systemctl is-active vsftpd.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
@@ -86,33 +87,39 @@
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when no output is returned (service not active), FAIL when output is returned (service active)"
+        rationale_3: "PASS when command returns no output (empty), FAIL when 'active' is found in output"
       when: status_1 | trim == 'FAIL'
 
-    # Set NA status for requirements 2 and 3 when package is not installed
-    - name: Set NA status for requirements 2 and 3 when package not installed
+    # Set default values for requirements 2 and 3 when requirement 1 passes
+    - name: Set NA status for requirements 2 and 3 when requirement 1 passes
       set_fact:
         task_2_name: "Check if vsftpd service is enabled"
         task_2_cmd: "systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'"
         task_2_rc: -1
-        data_2: "Requirement not applicable - vsftpd package not installed"
+        data_2: "N/A - Skipped because vsftpd package is not installed"
         status_2: "NA"
-        rationale_2: "Package not installed, service check not required"
+        rationale_2: "Skipped because vsftpd package is not installed (req_1=PASS)"
         task_3_name: "Check if vsftpd service is active"
         task_3_cmd: "systemctl is-active vsftpd.service 2>/dev/null | grep '^active'"
         task_3_rc: -1
-        data_3: "Requirement not applicable - vsftpd package not installed"
+        data_3: "N/A - Skipped because vsftpd package is not installed"
         status_3: "NA"
-        rationale_3: "Package not installed, service check not required"
+        rationale_3: "Skipped because vsftpd package is not installed (req_1=PASS)"
       when: status_1 | trim == 'PASS'
 
-    # Requirement 4: OVERALL Verify
-    - name: Store requirement 4 details and determine overall status
+    # Requirement 4: OVERALL Verify: Ensure ftp server services are not in use
+    - name: Determine overall compliance status
       set_fact:
-        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim != 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
+        status_4: >
+          {{ (
+            'PASS' if
+            (status_1 | trim == 'PASS') or
+            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
         rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
 
-    # Final compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:

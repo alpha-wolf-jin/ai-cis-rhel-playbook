@@ -1,0 +1,169 @@
+---
+- name: Data Collection for CIS 2.1.12
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.12"
+    req_1: "Verify the rpcbind package is not installed"
+    req_2: "If rpcbind package is installed, verify rpcbind.socket and rpcbind.service are not enabled"
+    req_3: "If rpcbind package is installed, verify rpcbind.socket and rpcbind.service are not active"
+    req_4: "OVERALL Verify: Ensure rpcbind services are not in use"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_4: "N/A"
+        task_4_name: "Overall compliance determination"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
+
+    # Requirement 1: Verify the rpcbind package is not installed
+    - name: Req 1 - Check if rpcbind package is installed
+      shell: |
+        rpm -q rpcbind
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check if rpcbind package is installed"
+        task_1_cmd: "rpm -q rpcbind"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package rpcbind is not installed') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'package rpcbind is not installed', FAIL otherwise"
+
+    # Requirement 2: If rpcbind package is installed, verify rpcbind.socket and rpcbind.service are not enabled
+    - name: Req 2 - Check if rpcbind services are enabled
+      shell: |
+        systemctl is-enabled rpcbind.socket rpcbind.service 2>/dev/null | grep 'enabled'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check if rpcbind services are enabled"
+        task_2_cmd: "systemctl is-enabled rpcbind.socket rpcbind.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when no output is returned, FAIL otherwise"
+      when: status_1 | trim == 'FAIL'
+
+    - name: Set requirement 2 as NA when rpcbind not installed
+      set_fact:
+        task_2_name: "Check if rpcbind services are enabled"
+        task_2_cmd: "systemctl is-enabled rpcbind.socket rpcbind.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: -1
+        data_2: "N/A - rpcbind package not installed"
+        status_2: "NA"
+        rationale_2: "Skipped because rpcbind package is not installed (req_1=PASS)"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 3: If rpcbind package is installed, verify rpcbind.socket and rpcbind.service are not active
+    - name: Req 3 - Check if rpcbind services are active
+      shell: |
+        systemctl is-active rpcbind.socket rpcbind.service 2>/dev/null | grep '^active'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check if rpcbind services are active"
+        task_3_cmd: "systemctl is-active rpcbind.socket rpcbind.service 2>/dev/null | grep '^active'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_3: "PASS when no output is returned, FAIL otherwise"
+      when: status_1 | trim == 'FAIL'
+
+    - name: Set requirement 3 as NA when rpcbind not installed
+      set_fact:
+        task_3_name: "Check if rpcbind services are active"
+        task_3_cmd: "systemctl is-active rpcbind.socket rpcbind.service 2>/dev/null | grep '^active'"
+        task_3_rc: -1
+        data_3: "N/A - rpcbind package not installed"
+        status_3: "NA"
+        rationale_3: "Skipped because rpcbind package is not installed (req_1=PASS)"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 4: OVERALL Verify: Ensure rpcbind services are not in use
+    - name: Store requirement 4 details and determine overall status
+      set_fact:
+        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.1.12"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | trim }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Rationale: {{ rationale_1 | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | trim }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | trim }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | trim }}"
+          - "  Status: {{ status_4 | trim }}"
+          - "  Rationale: {{ rationale_4 | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | trim }}"
+          - "  Rationale: {{ rationale_4 | trim }}"
+          - "========================================================"

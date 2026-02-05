@@ -25,14 +25,14 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        data_4: "N/A"
-        task_4_name: "Overall compliance determination"
-        task_4_cmd: "N/A"
-        task_4_rc: 0
+        status_2: "NA"
+        rationale_2: "Requirement 2 not executed - packages are not installed"
+        status_3: "NA"
+        rationale_3: "Requirement 3 not executed - packages are not installed"
 
     # Requirement 1: Verify the dovecot and cyrus-imapd packages are NOT installed
-    - name: "Req 1 - Check if dovecot and cyrus-imapd packages are installed"
-      shell: |
+    - name: "Req 1 - Check if packages are installed"
+      shell: >
         rpm -q dovecot cyrus-imapd
       args:
         executable: /bin/bash
@@ -43,17 +43,27 @@
 
     - name: Store requirement 1 details and determine status
       set_fact:
-        task_1_name: "Check if dovecot and cyrus-imapd packages are installed"
+        task_1_name: "Check if packages are installed"
         task_1_cmd: "rpm -q dovecot cyrus-imapd"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: |
-          {{ ('PASS' if (result_1.stdout | default('') | trim == 'package dovecot is not installed\npackage cyrus-imapd is not installed' or result_1.stdout | default('') | trim == 'package dovecot is not installed\npackage cyrus-imapd is not installed\n') else 'FAIL') | trim }}
+        status_1: >
+          {{ (
+            'PASS' if
+            'package dovecot is not installed' in result_1.stdout | default('') and
+            'package cyrus-imapd is not installed' in result_1.stdout | default('')
+            else 'FAIL'
+          ) | trim }}
         rationale_1: "PASS when output for each package is 'package <name> is not installed', FAIL if any package is installed"
+        packages_installed: >
+          {{ (
+            'package dovecot is not installed' not in result_1.stdout | default('') or
+            'package cyrus-imapd is not installed' not in result_1.stdout | default('')
+          ) }}
 
     # Requirement 2: If a required package is installed, verify services are NOT enabled
-    - name: "Req 2 - Check if dovecot/cyrus-imapd services are enabled"
-      shell: |
+    - name: "Req 2 - Check if services are enabled"
+      shell: >
         systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
@@ -61,21 +71,25 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: packages_installed | bool
 
     - name: Store requirement 2 details and determine status
       set_fact:
-        task_2_name: "Check if dovecot/cyrus-imapd services are enabled"
+        task_2_name: "Check if services are enabled"
         task_2_cmd: "systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns no output (empty), FAIL if any service/socket is reported as enabled"
-      when: status_1 | trim == 'FAIL'
+        status_2: >
+          {{ (
+            'PASS' if result_2.stdout | default('') | trim == ''
+            else 'FAIL'
+          ) | trim }}
+        rationale_2: "PASS when the command returns no output (nothing is returned), FAIL if any service/socket is listed as enabled"
+      when: packages_installed | bool
 
     # Requirement 3: If a required package is installed, verify services are NOT active
-    - name: "Req 3 - Check if dovecot/cyrus-imapd services are active"
-      shell: |
+    - name: "Req 3 - Check if services are active"
+      shell: >
         systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
@@ -83,25 +97,35 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: packages_installed | bool
 
     - name: Store requirement 3 details and determine status
       set_fact:
-        task_3_name: "Check if dovecot/cyrus-imapd services are active"
+        task_3_name: "Check if services are active"
         task_3_cmd: "systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when the command returns no output (empty), FAIL if any service/socket is reported as active"
-      when: status_1 | trim == 'FAIL'
+        status_3: >
+          {{ (
+            'PASS' if result_3.stdout | default('') | trim == ''
+            else 'FAIL'
+          ) | trim }}
+        rationale_3: "PASS when the command returns no output (nothing is returned), FAIL if any service/socket is listed as active"
+      when: packages_installed | bool
 
-    # Requirement 4: OVERALL Verify - Determine overall compliance
+    # Requirement 4: OVERALL Verify
     - name: Store requirement 4 details and determine overall status
       set_fact:
-        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL due to dependency AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        status_4: >
+          {{ (
+            'PASS' if
+            status_1 | trim == 'PASS' or
+            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
+        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL due to installed package AND req_2=PASS AND req_3=PASS), FAIL otherwise"
 
-    # Final compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -120,26 +144,22 @@
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not executed (conditional)') }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Task not executed - req_1 was PASS') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not executed (conditional)') }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Task not executed - req_1 was PASS') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

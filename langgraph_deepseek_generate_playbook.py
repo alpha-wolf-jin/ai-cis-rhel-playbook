@@ -15,13 +15,14 @@ from langgraph.graph import StateGraph, END
 
 # Import all functions from the original module
 from deepseek_generate_playbook import (
-    generate_playbook as _original_generate_playbook,
+    generate_playbook,
     save_playbook,
     check_playbook_syntax,
     test_playbook_on_server,
-    analyze_playbook_output,  # New analysis function
-    extract_playbook_issues_from_analysis,  # Helper to detect issues/advice
-    # Keep argparse and main separate for now
+    analyze_playbook_output,
+    extract_playbook_issues_from_analysis,
+    verify_status_alignment,
+    extract_analysis_statuses,
 )
 
 # Load environment variables
@@ -57,11 +58,123 @@ class PlaybookGenerationState(TypedDict):
     # Control flow
     should_retry: bool
     workflow_complete: bool
+    enhance: bool  # If True, check for existing playbook and skip generation if found
+    skip_execution: bool  # If True, skip execution on target host (only test on test hosts)
+    skip_test: bool  # If True, skip all test-related tasks and execute directly on target host
+    test_hosts: list[str]  # List of test hosts to iterate through
+    current_test_host_index: int  # Current index in test_hosts list
+
+
+def check_existing_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Check if playbook file exists and load it if enhance=True."""
+    print(f"\n{'='*80} check_existing_playbook_node")
+    
+    from pathlib import Path
+    
+    # If skip_test is True, we need to validate the playbook exists
+    if state.get('skip_test', False):
+        filename = state.get('filename', '')
+        if not filename:
+            error_msg = "❌ ERROR: --skip-test requires a playbook filename, but none was specified"
+            print(error_msg)
+            state['error_message'] = error_msg
+            state['workflow_complete'] = False
+            return state
+        
+        file_path = Path(filename)
+        if not file_path.exists():
+            error_msg = f"❌ ERROR: Playbook file not found: {filename}\n   Cannot skip tests - playbook must exist when using --skip-test"
+            print(error_msg)
+            state['error_message'] = error_msg
+            state['workflow_complete'] = False
+            return state
+        
+        print(f"✅ Playbook file found: {filename}")
+        print("📖 Loading playbook content for direct execution...")
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                existing_content = f.read()
+            state['playbook_content'] = existing_content
+            print(f"✅ Loaded playbook ({len(existing_content)} characters)")
+            print("⏭️  Skipping all test-related tasks, proceeding directly to target execution")
+            # Mark syntax as valid since we're skipping syntax check
+            state['syntax_valid'] = True
+            # Don't set workflow_complete here - let execute_on_target and analyze_output set it
+            # But ensure workflow_complete is not False (which would cause routing to "end")
+            # Actually, we should leave it as is (default False) and let should_continue_after_check_existing handle it
+            return state
+        except Exception as e:
+            error_msg = f"❌ ERROR: Cannot read playbook file {filename}: {e}"
+            print(error_msg)
+            state['error_message'] = error_msg
+            state['workflow_complete'] = False
+            return state
+    
+    # Only check if enhance=True
+    if not state.get('enhance', True):
+        print("⚠️  enhance=False: Will generate new playbook (skipping existing file check)")
+        return state
+    
+    filename = state.get('filename', '')
+    if not filename:
+        print("⚠️  No filename specified, proceeding with generation")
+        return state
+    
+    file_path = Path(filename)
+    if file_path.exists():
+        print(f"✅ Existing playbook found: {filename}")
+        print("📖 Loading existing playbook content...")
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                existing_content = f.read()
+            state['playbook_content'] = existing_content
+            print(f"✅ Loaded existing playbook ({len(existing_content)} characters)")
+            print("⏭️  Skipping generation, proceeding directly to execution")
+        except Exception as e:
+            print(f"⚠️  Error reading existing playbook: {e}")
+            print("🔄 Will generate new playbook instead")
+            state['playbook_content'] = ""
+    else:
+        print(f"📝 Playbook file not found: {filename}")
+        print("🔄 Will generate new playbook")
+        state['playbook_content'] = ""
+    
+    return state
 
 
 def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Generate or enhance playbook using LLM."""
+    # Check if we need to enhance (have analysis_message with issues)
+    has_analysis_with_issues = False
+    if state.get('analysis_message'):
+        analysis_msg = state['analysis_message']
+        has_issues, _ = extract_playbook_issues_from_analysis(analysis_msg)
+        if has_issues:
+            has_analysis_with_issues = True
+    
+    # Determine if this is an enhancement scenario
     is_enhancement = state.get('playbook_content') and state.get('analysis_message')
+    
+    # Only skip generation if:
+    # 1. We have playbook_content (from existing file)
+    # 2. enhance=True (check for existing files)
+    # 3. AND we're NOT in an enhancement scenario (no analysis issues to fix)
+    # 4. AND this is the first attempt (not a retry - retries always need regeneration)
+    # 5. AND we don't have an error_message (no previous errors to fix)
+    current_attempt = state.get('attempt', 1)
+    has_error = bool(state.get('error_message', ''))
+    should_skip = (
+        state.get('playbook_content') and 
+        state.get('enhance', True) and 
+        not has_analysis_with_issues and
+        current_attempt == 1 and
+        not has_error
+    )
+    
+    if should_skip:
+        print(f"\n{'='*80} generate_playbook_node")
+        print("⏭️  Skipping generation - using existing playbook")
+        return state
     
     print(f"\n{'='*80} generate_playbook_node")
     if is_enhancement:
@@ -85,7 +198,6 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
         if state.get('analysis_message'):
             # Extract the PLAYBOOK ANALYSIS section and recommendations
             analysis_msg = state['analysis_message']
-            from deepseek_generate_playbook import extract_playbook_issues_from_analysis
             has_issues, extracted_advice = extract_playbook_issues_from_analysis(analysis_msg)
             if has_issues and extracted_advice:
                 feedback_content = extracted_advice
@@ -104,8 +216,8 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
                         break
                 feedback_content = '\n'.join(feedback_lines).strip()
         
-        # Use the original generate_playbook function
-        playbook = _original_generate_playbook(
+        # Generate or enhance the playbook
+        playbook = generate_playbook(
             playbook_objective=state['playbook_objective'],
             target_host=state['test_host'],
             become_user=state['become_user'],
@@ -147,7 +259,21 @@ def increment_attempt_node(state: PlaybookGenerationState) -> PlaybookGeneration
 def save_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Save playbook to file."""
     print(f"\n{'='*80} save_playbook_node")
+    # Only save if we have new content (not loaded from existing file)
+    # If playbook was loaded from file, it's already saved, so skip saving again
     if state['playbook_content']:
+        from pathlib import Path
+        file_path = Path(state['filename'])
+        # Check if file exists and content matches (to avoid unnecessary writes)
+        if file_path.exists():
+            try:
+                with open(state['filename'], 'r', encoding='utf-8') as f:
+                    existing_content = f.read()
+                if existing_content == state['playbook_content']:
+                    print(f"⏭️  Playbook already saved (content unchanged): {state['filename']}")
+                    return state
+            except Exception:
+                pass  # If read fails, proceed with save
         save_playbook(state['playbook_content'], state['filename'])
     return state
 
@@ -182,9 +308,15 @@ def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState
 
 def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Test playbook on test host."""
+    test_hosts = state.get('test_hosts', [])
+    current_index = state.get('current_test_host_index', 0)
+    
     print("\n" + "=" * 80)
     print(f"\n{'='*80} test_on_test_host_node")
-    print(f"✅ Syntax Valid! Now testing on test host: {state['test_host']}...")
+    if len(test_hosts) > 1:
+        print(f"✅ Syntax Valid! Now testing on test host {current_index + 1}/{len(test_hosts)}: {state['test_host']}...")
+    else:
+        print(f"✅ Syntax Valid! Now testing on test host: {state['test_host']}...")
     print("=" * 80)
     
     # Execute on test host with debug tasks skipped for cleaner analysis
@@ -247,119 +379,64 @@ def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGeneration
     
     return state
 
-def parse_compliance_report(text):
-    """Parse compliance report into structured sections."""
-    requirements = []
-    data_collection = []
-    playbook_analysis = []
-    compliance_status = []
-    recommendation = []
-    
-    requirements_target_block = False
-    data_collection_target_block = False
-    playbook_analysis_target_block = False
-    compliance_status_target_block = False
-    recommendation_target_block = False
-    
-    lines = text.split('\n')
-
-    for line in lines:
-        if "Based on the collected data" in line:
-            requirements_target_block = True
-            continue
-        if requirements_target_block and "OVERALL ASSESSMENT" in line:
-            requirements_target_block = False
-        if requirements_target_block:
-            requirements.append(line)
-            
-        if "DATA COLLECTION" in line and ':' in line:
-            data_collection_target_block = True
-        if data_collection_target_block:
-            if not line.strip():
-                data_collection_target_block = False
-        if data_collection_target_block:
-            data_collection.append(line)
-
-        if "PLAYBOOK ANALYSIS" in line and ':' in line:
-            playbook_analysis_target_block = True
-        if playbook_analysis_target_block:
-            if not line.strip():
-                playbook_analysis_target_block = False
-        if playbook_analysis_target_block:
-            playbook_analysis.append(line)
-
-        if "COMPLIANCE STATUS" in line and ':' in line:
-            compliance_status_target_block = True
-        if compliance_status_target_block:
-            if not line.strip():
-                compliance_status_target_block = False
-        if compliance_status_target_block:
-            compliance_status.append(line)
-
-        if "RECOMMENDATION" in line and ':' in line:
-            recommendation_target_block = True
-        if recommendation_target_block:
-            if not line.strip():
-                recommendation_target_block = False
-        if recommendation_target_block:
-            recommendation.append(line)
-
-    return {
-        "requirements": '\n'.join(requirements),
-        "data_collection": '\n'.join(data_collection),
-        "playbook_analysis": '\n'.join(playbook_analysis),
-        "compliance_status": '\n'.join(compliance_status),
-        "recommendation": '\n'.join(recommendation)
-    }
-
 def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Analyze playbook output against requirements."""
     print(f"\n{'='*80} analyze_output_node")
-    test_success, test_output = test_playbook_on_server(
-        state['filename'],
-        state['test_host'],
-        check_mode=False,
-        verbose=True,
-        skip_debug=True  # Skip debug tasks for cleaner output to analyze
-    )
     
-    state['test_success'] = test_success
-    state['test_output'] = test_output
+    # When skip_test is True, use final_output from execute_on_target_host_node
+    # Otherwise, use test_output from test_on_test_host_node
+    if state.get('skip_test', False):
+        output_to_analyze = state.get('final_output', '')
+        output_success = state.get('final_success', False)
+        output_source = "target host execution"
+    else:
+        output_to_analyze = state.get('test_output', '')
+        output_success = state.get('test_success', False)
+        output_source = "test host execution"
     
-    if test_success:
+    if output_success and output_to_analyze:
+        # When skip_test is True, suppress the header since we're analyzing final execution output
+        suppress_header = state.get('skip_test', False)
         analysis_passed, analysis_message = analyze_playbook_output(
             requirements=state['requirements'],
             playbook_objective=state['playbook_objective'],
-            test_output=state['test_output'],
+            test_output=output_to_analyze,  # Use the appropriate output source
             audit_procedure=state.get('audit_procedure'),
-            playbook_content=state.get('playbook_content')  # Pass playbook content for analysis
+            playbook_content=state.get('playbook_content'),  # Pass playbook content for analysis
+            suppress_header=suppress_header
         )
 
         # Check for PLAYBOOK ANALYSIS: FAIL status
         has_issues, extracted_advice = extract_playbook_issues_from_analysis(analysis_message)
         
         # Verify status alignment between playbook output and AI analysis
-        from deepseek_generate_playbook import verify_status_alignment, extract_analysis_statuses
-        status_aligned, alignment_message = verify_status_alignment(state['test_output'], analysis_message)
-        
-        # Extract all required statuses from analysis
+        status_aligned, alignment_message = verify_status_alignment(output_to_analyze, analysis_message)
         analysis_statuses = extract_analysis_statuses(analysis_message)
+        
+        # When skip_test is True, we're analyzing final execution output, so we're done
+        if state.get('skip_test', False):
+            print(f"\n✅ Analysis complete for {output_source}")
+            state['analysis_passed'] = analysis_passed
+            state['analysis_message'] = analysis_message
+            state['workflow_complete'] = True
+            state['final_success'] = output_success
+            return state
         
         # Proceed to target execution only when ALL criteria are met:
         # 1. DATA COLLECTION: PASS
         # 2. PLAYBOOK ANALYSIS: PASS
-        # 3. COMPLIANCE STATUS: COMPLIANT
+        # 3. COMPLIANCE ANALYSIS: PASS (not COMPLIANCE STATUS: COMPLIANT)
         # 4. All requirement statuses align (PASS/FAIL = COMPLIANT/NON-COMPLIANT)
         # 5. Overall status aligns
         data_collection_pass = analysis_statuses.get('data_collection') == 'PASS'
         playbook_analysis_pass = analysis_statuses.get('playbook_analysis') == 'PASS'
-        compliance_status_compliant = analysis_statuses.get('compliance_status') == 'COMPLIANT'
+        compliance_analysis_pass = analysis_statuses.get('compliance_analysis') == 'PASS'
         
         # Check if all main sections pass
         all_main_sections_pass = (
             data_collection_pass and
             playbook_analysis_pass and
-            compliance_status_compliant
+            compliance_analysis_pass
         )
         
         state['analysis_passed'] = all_main_sections_pass
@@ -372,8 +449,8 @@ def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationSta
                 failed_criteria.append("DATA COLLECTION: not PASS")
             if not playbook_analysis_pass:
                 failed_criteria.append("PLAYBOOK ANALYSIS: not PASS")
-            if not compliance_status_compliant:
-                failed_criteria.append("COMPLIANCE STATUS: not COMPLIANT")
+            if not compliance_analysis_pass:
+                failed_criteria.append("COMPLIANCE ANALYSIS: not PASS")
             if has_issues:
                 failed_criteria.append("PLAYBOOK ANALYSIS: FAIL (has issues)")
             
@@ -438,6 +515,15 @@ INSTRUCTIONS TO FIX:
 7. Make sure all requirements are executed in the correct order and conditions""")
         else:
             print("\n✅ PLAYBOOK ANALYSIS: PASS - Playbook logic is correct!")
+    else:
+        if state.get('skip_test', False):
+            print(f"\n⚠️  Cannot analyze output - target execution was not successful or output is missing")
+            state['error_message'] = "Target execution failed or output unavailable"
+        else:
+            print(f"\n⚠️  Cannot analyze output - test was not successful or output is missing")
+        state['analysis_passed'] = False
+        state['analysis_message'] = "Analysis skipped - execution failed or output unavailable"
+        state['workflow_complete'] = False
     
     return state
 
@@ -445,8 +531,31 @@ INSTRUCTIONS TO FIX:
 def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Execute playbook on target host."""
     print(f"\n{'='*80} execute_on_target_host_node")
-    if state['test_host'] == state['target_host']:
-        # Same host, already executed
+    
+    # Check if execution should be skipped
+    if state.get('skip_execution', False):
+        print("\n" + "=" * 80)
+        print("⏭️  SKIPPING EXECUTION (--skip-execution flag)")
+        print("=" * 80)
+        print(f"✅ Playbook generation and testing completed successfully!")
+        print(f"📋 Test host(s): {', '.join(state.get('test_hosts', [state.get('test_host', 'N/A')]))}")
+        print(f"🎯 Target host: {state['target_host']} (execution skipped)")
+        print(f"📄 Playbook file: {state['filename']}")
+        print("\n✅ Workflow complete - execution was skipped as requested.")
+        print("=" * 80)
+        
+        # Mark workflow as complete and successful
+        state['final_success'] = True
+        state['final_output'] = state.get('test_output', '')
+        state['workflow_complete'] = True
+        state['test_success'] = True  # Test was successful on test hosts
+        return state
+    
+    # When skip_test is True, we skip the test_host == target_host check
+    # because test_output doesn't exist (tests were skipped)
+    # We'll execute directly on target and let analyze_output_node handle analysis
+    if not state.get('skip_test', False) and state['test_host'] == state['target_host']:
+        # Same host, already executed (normal flow, not skip_test)
         state['final_success'] = True
         state['final_output'] = state['test_output']
         state['workflow_complete'] = True
@@ -489,6 +598,9 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
     state['final_success'] = final_success
     state['final_output'] = final_output
     state['workflow_complete'] = True
+    # When skip_test is True, we execute directly on target, so final_success indicates test success
+    if state.get('skip_test', False):
+        state['test_success'] = final_success
     
     if final_success:
         print("\n" + "=" * 80)
@@ -568,9 +680,72 @@ def should_continue_after_test(state: PlaybookGenerationState) -> Literal["analy
     return "analyze_output"  # Test passed, now analyze output
 
 
-def should_continue_after_analysis(state: PlaybookGenerationState) -> Literal["execute_on_target", "retry", "end"]:
+def move_to_next_test_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Move to next test host in the list."""
+    print(f"\n{'='*80} move_to_next_test_host_node")
+    
+    test_hosts = state.get('test_hosts', [])
+    current_index = state.get('current_test_host_index', 0)
+    previous_host = state.get('test_host', '')
+    
+    if current_index + 1 < len(test_hosts):
+        next_index = current_index + 1
+        next_host = test_hosts[next_index]
+        state['current_test_host_index'] = next_index
+        state['test_host'] = next_host
+        state['attempt'] = 1  # Reset attempt counter for new host
+        state['analysis_passed'] = False  # Reset analysis status
+        state['analysis_message'] = ""  # Clear previous analysis
+        state['test_success'] = False  # Reset test status
+        state['test_output'] = ""  # Clear previous test output
+        state['error_message'] = ""  # Clear previous errors
+        state['syntax_valid'] = False  # Reset syntax check (will re-check)
+        
+        print(f"✅ Test host {current_index + 1}/{len(test_hosts)} ({previous_host}) passed all analysis!")
+        print(f"🔄 Moving to next test host: {next_host} (host {next_index + 1}/{len(test_hosts)})")
+        print(f"🔄 Reset attempt counter to 1 for new host")
+        print(f"📋 Using enhanced playbook from previous host")
+    else:
+        print(f"⚠️  No more test hosts to process")
+    
+    return state
+
+
+def should_continue_after_check_existing(state: PlaybookGenerationState) -> Literal["generate", "execute_on_target", "end"]:
+    """Conditional edge: Decide what to do after checking existing playbook."""
+    print(f"\n{'='*80} should_continue_after_check_existing")
+    
+    # If skip_test is True, go directly to execute_on_target
+    if state.get('skip_test', False):
+        # Check if there was an error (e.g., playbook not found)
+        # Only return "end" if there's an explicit error_message
+        # workflow_complete may be False initially (default), which is OK - we'll set it later
+        if state.get('error_message'):
+            print("❌ Error detected - cannot proceed with skip_test")
+            return "end"
+        print("⏭️  Skipping all test tasks, proceeding directly to target execution")
+        return "execute_on_target"
+    
+    # Normal flow: proceed to generate
+    return "generate"
+
+
+def should_continue_after_analysis(state: PlaybookGenerationState) -> Literal["execute_on_target", "retry", "next_test_host", "end"]:
     """Conditional edge: Decide what to do after output analysis."""
     print(f"\n{'='*80} should_continue_after_analysis")
+    
+    # When skip_test is True, analysis is done and workflow is complete
+    if state.get('skip_test', False):
+        if state.get('workflow_complete', False):
+            return "end"
+        else:
+            # Analysis failed, but we can't retry when skip_test is True
+            return "end"
+    
+    # Check if we have multiple test hosts
+    test_hosts = state.get('test_hosts', [])
+    current_index = state.get('current_test_host_index', 0)
+    
     # Only regenerate if PLAYBOOK ANALYSIS: FAIL
     # The state['analysis_passed'] is already set based on PLAYBOOK ANALYSIS status
     if not state['analysis_passed']:
@@ -578,12 +753,26 @@ def should_continue_after_analysis(state: PlaybookGenerationState) -> Literal["e
             return "retry"
         else:
             return "end"
-    return "execute_on_target"  # PLAYBOOK ANALYSIS: PASS, proceed to target
+    
+    # Analysis passed - check if we have more test hosts
+    if len(test_hosts) > 1 and current_index + 1 < len(test_hosts):
+        # Move to next test host
+        return "next_test_host"
+    
+    # All test hosts passed, proceed to target
+    # Note: execute_on_target_host_node() will check skip_execution and handle it appropriately
+    return "execute_on_target"
 
 
-def should_continue_after_final(state: PlaybookGenerationState) -> Literal["end"]:
-    """Conditional edge: After final execution, always end."""
+def should_continue_after_final(state: PlaybookGenerationState) -> Literal["analyze_output", "end"]:
+    """Conditional edge: After final execution, analyze if skip_test, else end."""
     print(f"\n{'='*80} should_continue_after_final")
+    
+    # If skip_test is True, we need to analyze the output from target execution
+    if state.get('skip_test', False):
+        print("⏭️  skip_test=True: End")
+        return "end"
+    
     return "end"
 
 
@@ -594,6 +783,7 @@ def create_playbook_workflow() -> StateGraph:
     workflow = StateGraph(PlaybookGenerationState)
     
     # Add nodes
+    workflow.add_node("check_existing_playbook", check_existing_playbook_node)
     workflow.add_node("generate", generate_playbook_node)
     workflow.add_node("save", save_playbook_node)
     workflow.add_node("check_syntax", check_syntax_node)
@@ -601,9 +791,20 @@ def create_playbook_workflow() -> StateGraph:
     workflow.add_node("analyze_output", analyze_output_node)  # New analysis node
     workflow.add_node("execute_on_target", execute_on_target_host_node)
     workflow.add_node("increment_attempt", increment_attempt_node)  # Increment counter before retry
+    workflow.add_node("move_to_next_test_host", move_to_next_test_host_node)  # Move to next test host
     
     # Define edges
-    workflow.set_entry_point("generate")
+    workflow.set_entry_point("check_existing_playbook")
+    # Conditional edge from check_existing_playbook: route to generate or execute_on_target
+    workflow.add_conditional_edges(
+        "check_existing_playbook",
+        should_continue_after_check_existing,
+        {
+            "generate": "generate",
+            "execute_on_target": "execute_on_target",
+            "end": END
+        }
+    )
     workflow.add_edge("generate", "save")
     workflow.add_edge("save", "check_syntax")
     workflow.add_edge("increment_attempt", "generate")  # After incrementing, regenerate
@@ -633,19 +834,30 @@ def create_playbook_workflow() -> StateGraph:
         "analyze_output",
         should_continue_after_analysis,
         {
-            "execute_on_target": "execute_on_target",  # Analysis passed -> Execute
+            "execute_on_target": "execute_on_target",  # Analysis passed -> Execute on target
+            "next_test_host": "move_to_next_test_host",  # Analysis passed -> Move to next test host
             "retry": "increment_attempt",  # Go to increment node first
             "end": END
         }
     )
     
+    # After moving to next test host, go back to syntax check (playbook is already saved)
+    workflow.add_edge("move_to_next_test_host", "check_syntax")
+    
     workflow.add_conditional_edges(
         "execute_on_target",
         should_continue_after_final,
         {
+            "analyze_output": "analyze_output",  # When skip_test, analyze target output
             "end": END
         }
     )
+    
+    # When skip_test is True, after execute_on_target, analyze the output
+    # Add conditional edge: if skip_test, route to analyze_output, else end
+    # Actually, we'll handle this in should_continue_after_final
+    # But we need to route execute_on_target -> analyze_output when skip_test is True
+    # Let's create a new conditional function for this
     
     return workflow.compile()
 
@@ -660,7 +872,10 @@ def generate_playbook_workflow(
     example_output: str = "",
     audit_procedure: str = None,
     max_retries: int = None,
-    verbose: bool = True
+    verbose: bool = True,
+    enhance: bool = True,
+    skip_execution: bool = False,
+    skip_test: bool = False
 ) -> dict:
     """
     Generate and execute an Ansible playbook using LangGraph workflow.
@@ -678,6 +893,7 @@ def generate_playbook_workflow(
         audit_procedure: CIS Benchmark audit procedure (optional)
         max_retries: Maximum retry attempts (auto-calculated if None)
         verbose: Print progress information
+        enhance: If True, check for existing playbook and skip generation if found (default: True)
         
     Returns:
         dict: Final workflow state with results
@@ -687,9 +903,17 @@ def generate_playbook_workflow(
     """
     import sys
     
-    # Set defaults
+    # Parse comma-separated test hosts
     if test_host is None:
         test_host = target_host
+    
+    # Split test_host by comma to support multiple hosts
+    test_hosts = [h.strip() for h in test_host.split(',') if h.strip()]
+    if not test_hosts:
+        test_hosts = [target_host]
+    
+    # Use first test host as the initial test_host
+    initial_test_host = test_hosts[0]
     
     if max_retries is None:
         max_retries = max(len(requirements), 3)
@@ -701,9 +925,21 @@ def generate_playbook_workflow(
         print("\n" + "=" * 80)
         print("🎯 CONFIGURATION (LangGraph Workflow)")
         print("=" * 80)
-        print(f"Test Host:      {test_host}")
-        if test_host != target_host:
+        if len(test_hosts) > 1:
+            print(f"Test Hosts:     {', '.join(test_hosts)} ({len(test_hosts)} hosts)")
             print(f"Target Host:    {target_host}")
+            print("\n📋 Execution Strategy:")
+            for idx, host in enumerate(test_hosts, 1):
+                print(f"   {idx}. Test on: {host} (validate and enhance until pass)")
+            print(f"   {len(test_hosts) + 1}. Execute on: {target_host} (after all test hosts pass)")
+        else:
+            print(f"Test Host:      {initial_test_host}")
+            if initial_test_host != target_host:
+                print(f"Target Host:    {target_host}")
+            print("\n📋 Execution Strategy:")
+            print(f"   1. Test on: {initial_test_host} (validation)")
+            if initial_test_host != target_host:
+                print(f"   2. Execute on: {target_host} (if test succeeds)")
         print(f"Become User:    {become_user}")
         print(f"Max Retries:    {max_retries}")
         print(f"Objective:      {objective[:60]}{'...' if len(objective) > 60 else ''}")
@@ -711,17 +947,18 @@ def generate_playbook_workflow(
         if audit_procedure:
             print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure provided)")
         print(f"Filename:       {filename}")
-        if test_host != target_host:
-            print("\n📋 Execution Strategy:")
-            print(f"   1. Test on: {test_host} (validation)")
-            print(f"   2. Execute on: {target_host} (if test succeeds)")
+        print(f"Enhance:        {enhance} (check for existing playbook)")
+        if skip_execution:
+            print(f"Skip Execution: {skip_execution} (will NOT execute on target host)")
+        if skip_test:
+            print(f"Skip Test:      {skip_test} (will skip all test tasks, execute directly on target)")
         print("=" * 80)
     
     # Initialize state
     initial_state: PlaybookGenerationState = {
         "playbook_objective": objective,
         "target_host": target_host,
-        "test_host": test_host,
+        "test_host": initial_test_host,  # First test host
         "become_user": become_user,
         "requirements": requirements.copy(),
         "example_output": example_output,
@@ -741,6 +978,11 @@ def generate_playbook_workflow(
         "connection_error": False,
         "should_retry": False,
         "workflow_complete": False,
+        "enhance": enhance,
+        "skip_execution": skip_execution,  # Skip execution on target host if True
+        "skip_test": skip_test,  # Skip all test-related tasks if True
+        "test_hosts": test_hosts,  # List of all test hosts
+        "current_test_host_index": 0,  # Start with first host
     }
     
     # Create and run workflow
@@ -770,7 +1012,20 @@ def generate_playbook_workflow(
             final_state['workflow_complete'] = False
             return final_state
         
-        if final_state['workflow_complete'] and final_state['test_success']:
+        # Check for success: workflow_complete AND (test_success OR skip_execution OR skip_test)
+        # When skip_execution is True, we still need test_success from test hosts
+        # When skip_test is True, we execute directly on target, so final_success indicates success
+        is_success = (
+            final_state['workflow_complete'] and 
+            (
+                final_state['test_success'] or 
+                final_state.get('skip_execution', False) or 
+                final_state.get('skip_test', False) or
+                final_state.get('final_success', False)
+            )
+        )
+        
+        if is_success:
             if verbose:
                 print("\n" + "="*80)
                 print("📊 EXECUTION SUMMARY (LangGraph)")
@@ -778,6 +1033,10 @@ def generate_playbook_workflow(
                 print(f"✅ Workflow completed successfully!")
                 print(f"   Total attempts: {final_state['attempt']}")
                 print(f"   Playbook file: {final_state['filename']}")
+                if final_state.get('skip_execution', False):
+                    print(f"   ⏭️  Execution on target host was skipped (--skip-execution flag)")
+                if final_state.get('skip_test', False):
+                    print(f"   ⏭️  Test tasks were skipped (--skip-test flag) - executed directly on target")
                 print("="*80)
             return final_state
         else:
@@ -787,9 +1046,26 @@ def generate_playbook_workflow(
                 print("="*80)
                 print(f"❌ Workflow failed")
                 print(f"   Total attempts: {final_state['attempt']}/{max_retries}")
-                print(f"   Last error: {final_state['error_message'][:200]}")
+                print(f"   workflow_complete: {final_state.get('workflow_complete', False)}")
+                print(f"   test_success: {final_state.get('test_success', False)}")
+                print(f"   final_success: {final_state.get('final_success', False)}")
+                print(f"   skip_execution: {final_state.get('skip_execution', False)}")
+                print(f"   skip_test: {final_state.get('skip_test', False)}")
+                print(f"   Last error: {final_state['error_message'][:200] if final_state.get('error_message') else 'No error message'}")
                 print("="*80)
-            raise Exception(f"Workflow failed: {final_state['error_message']}")
+            error_msg = final_state.get('error_message', '')
+            if not error_msg:
+                # Build a more descriptive error message
+                if not final_state.get('workflow_complete', False):
+                    error_msg = "Workflow did not complete successfully"
+                elif not (final_state.get('test_success', False) or 
+                         final_state.get('skip_execution', False) or 
+                         final_state.get('skip_test', False) or
+                         final_state.get('final_success', False)):
+                    error_msg = "Workflow completed but success criteria not met"
+                else:
+                    error_msg = "Unknown workflow failure"
+            raise Exception(f"Workflow failed: {error_msg}")
             
     except Exception as e:
         if verbose:
@@ -820,13 +1096,18 @@ Examples:
   python3 langgraph_deepseek_generate_playbook.py \\
     --test-host 192.168.122.16 \\
     --target-host 192.168.122.17
+  
+  # Multiple test hosts (comma-separated)
+  python3 langgraph_deepseek_generate_playbook.py \\
+    --test-host 192.168.122.16,192.168.122.17 \\
+    --target-host 192.168.122.18
 """
     )
     
     parser.add_argument('--target-host', '-t', type=str, default='master-1',
                         help='Target host to execute the playbook on')
     parser.add_argument('--test-host', type=str, default=None,
-                        help='Test host for validation before target execution')
+                        help='Test host(s) for validation before target execution (comma-separated for multiple hosts)')
     parser.add_argument('--become-user', '-u', type=str, default='root',
                         help='User to become when executing tasks')
     parser.add_argument('--max-retries', '-r', type=int, default=None,
@@ -852,8 +1133,24 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
                         help='Output filename for the generated playbook')
     parser.add_argument('--audit-procedure', type=str, default=None,
                         help='CIS Benchmark audit procedure (shell script or commands)')
+    parser.add_argument('--no-enhance', dest='enhance', action='store_false',
+                        help='Disable enhance mode (always generate new playbook). Default: enhance=True (check for existing playbook)')
+    parser.add_argument('--generate', action='store_true',
+                        help='Force playbook generation regardless of whether playbook exists (equivalent to --no-enhance)')
+    parser.add_argument('--skip-execution', dest='skip_execution', action='store_true',
+                        help='Skip execution on target host (only test on test hosts)')
+    parser.add_argument('--skip-test', dest='skip_test', action='store_true',
+                        help='Skip all test-related tasks and execute directly on target host (playbook must exist)')
     
     args = parser.parse_args()
+    
+    # If --generate is specified, set enhance=False
+    if args.generate:
+        args.enhance = False
+    
+    # Set default enhance=True if not explicitly set via --no-enhance or --generate
+    if not hasattr(args, 'enhance') or args.enhance is None:
+        args.enhance = True
     
     # Prepare parameters
     target_host = args.target_host
@@ -881,13 +1178,31 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     else:
         max_retries = args.max_retries
     
+    # Parse comma-separated test hosts
+    test_hosts = [h.strip() for h in test_host.split(',') if h.strip()]
+    if not test_hosts:
+        test_hosts = [target_host]
+    initial_test_host = test_hosts[0]
+    
     # Display configuration
     print("\n" + "=" * 80)
     print("🎯 CONFIGURATION (LangGraph Workflow)")
     print("=" * 80)
-    print(f"Test Host:      {test_host}")
-    if test_host != target_host:
+    if len(test_hosts) > 1:
+        print(f"Test Hosts:     {', '.join(test_hosts)} ({len(test_hosts)} hosts)")
         print(f"Target Host:    {target_host}")
+        print("\n📋 Execution Strategy:")
+        for idx, host in enumerate(test_hosts, 1):
+            print(f"   {idx}. Test on: {host} (validate and enhance until pass)")
+        print(f"   {len(test_hosts) + 1}. Execute on: {target_host} (after all test hosts pass)")
+    else:
+        print(f"Test Host:      {initial_test_host}")
+        if initial_test_host != target_host:
+            print(f"Target Host:    {target_host}")
+        print("\n📋 Execution Strategy:")
+        print(f"   1. Test on: {initial_test_host} (validation)")
+        if initial_test_host != target_host:
+            print(f"   2. Execute on: {target_host} (if test succeeds)")
     print(f"Become User:    {become_user}")
     print(f"Max Retries:    {max_retries}")
     print(f"Objective:      {playbook_objective[:60]}{'...' if len(playbook_objective) > 60 else ''}")
@@ -895,17 +1210,18 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
     if audit_procedure:
         print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure provided)")
     print(f"Filename:       {filename}")
-    if test_host != target_host:
-        print("\n📋 Execution Strategy:")
-        print(f"   1. Test on: {test_host} (validation)")
-        print(f"   2. Execute on: {target_host} (if test succeeds)")
+    print(f"Enhance:        {args.enhance} (check for existing playbook)")
+    if getattr(args, 'skip_execution', False):
+        print(f"Skip Execution: {args.skip_execution} (will NOT execute on target host)")
+    if getattr(args, 'skip_test', False):
+        print(f"Skip Test:      {args.skip_test} (will skip all test tasks, execute directly on target)")
     print("=" * 80)
     
     # Initialize state
     initial_state: PlaybookGenerationState = {
         "playbook_objective": playbook_objective,
         "target_host": target_host,
-        "test_host": test_host,
+        "test_host": initial_test_host,
         "become_user": become_user,
         "requirements": requirements.copy(),
         "example_output": example_output,
@@ -924,6 +1240,11 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
         "final_output": "",
         "should_retry": False,
         "workflow_complete": False,
+        "enhance": args.enhance,
+        "skip_execution": getattr(args, 'skip_execution', False),  # Skip execution if flag is set
+        "skip_test": getattr(args, 'skip_test', False),  # Skip test if flag is set
+        "test_hosts": test_hosts,  # List of all test hosts
+        "current_test_host_index": 0,  # Start with first host
     }
     
     # Create and run workflow
@@ -940,13 +1261,28 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
         )
         
         # Check results
-        if final_state['workflow_complete'] and final_state['test_success']:
+        # Check for success: workflow_complete AND (test_success OR skip_execution OR skip_test OR final_success)
+        is_success = (
+            final_state['workflow_complete'] and 
+            (
+                final_state['test_success'] or 
+                final_state.get('skip_execution', False) or 
+                final_state.get('skip_test', False) or
+                final_state.get('final_success', False)
+            )
+        )
+        
+        if is_success:
             print("\n" + "="*80)
             print("📊 EXECUTION SUMMARY (LangGraph)")
             print("="*80)
             print(f"✅ Workflow completed successfully!")
             print(f"   Total attempts: {final_state['attempt']}")
             print(f"   Playbook file: {final_state['filename']}")
+            if final_state.get('skip_execution', False):
+                print(f"   ⏭️  Execution on target host was skipped (--skip-execution flag)")
+            if final_state.get('skip_test', False):
+                print(f"   ⏭️  Test tasks were skipped (--skip-test flag) - executed directly on target")
             print("="*80)
         else:
             print("\n" + "="*80)
@@ -954,7 +1290,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
             print("="*80)
             print(f"❌ Workflow failed")
             print(f"   Total attempts: {final_state['attempt']}/{max_retries}")
-            print(f"   Last error: {final_state['error_message'][:200]}")
+            error_msg = final_state.get('error_message', 'Unknown error')
+            print(f"   Last error: {error_msg[:200] if error_msg else 'Unknown error'}")
             print("="*80)
             sys.exit(1)
             

@@ -6,8 +6,8 @@
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.1"
     req_1: "Verify the autofs package is NOT installed"
-    req_2: "IF the autofs package is installed, verify the autofs.service is NOT enabled"
-    req_3: "IF the autofs package is installed, verify the autofs.service is NOT active"
+    req_2: "Verify the autofs.service is NOT enabled"
+    req_3: "Verify the autofs.service is NOT active"
     req_4: "OVERALL Verify: Ensure autofs services are not in use"
 
   tasks:
@@ -25,15 +25,10 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        data_4: "Not collected yet"
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
 
     # Requirement 1: Verify the autofs package is NOT installed
-    - name: "Req 1 - Check if autofs package is installed"
-      shell: >
-        rpm -q autofs
+    - name: Req 1 - Check if autofs package is installed
+      shell: rpm -q autofs
       args:
         executable: /bin/bash
       register: result_1
@@ -50,17 +45,17 @@
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package autofs is not installed') else 'FAIL') | trim }}"
         rationale_1: "PASS when output is 'package autofs is not installed', FAIL when the package is installed"
 
-    # Requirement 2: IF the autofs package is installed, verify the autofs.service is NOT enabled
-    - name: "Req 2 - Check if autofs.service is enabled"
-      shell: >
-        systemctl is-enabled autofs.service 2>/dev/null | grep 'enabled'
+    # Requirement 2: Verify the autofs.service is NOT enabled
+    # Only execute if Requirement 1 indicates package IS installed
+    - name: Req 2 - Check if autofs.service is enabled
+      shell: systemctl is-enabled autofs.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: result_1.stdout | default('') | trim != 'package autofs is not installed'
 
     - name: Store requirement 2 details and determine status
       set_fact:
@@ -68,25 +63,21 @@
         task_2_cmd: "systemctl is-enabled autofs.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{
-            ('PASS' if (status_1 | trim == 'PASS')
-            else ('PASS' if (result_2.stdout | default('') | trim == '')
-            else 'FAIL')) | trim
-          }}
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
         rationale_2: "PASS when no output is returned, FAIL when 'enabled' is returned"
+      when: result_1.stdout | default('') | trim != 'package autofs is not installed'
 
-    # Requirement 3: IF the autofs package is installed, verify the autofs.service is NOT active
-    - name: "Req 3 - Check if autofs.service is active"
-      shell: >
-        systemctl is-active autofs.service 2>/dev/null | grep '^active'
+    # Requirement 3: Verify the autofs.service is NOT active
+    # Only execute if Requirement 1 indicates package IS installed
+    - name: Req 3 - Check if autofs.service is active
+      shell: systemctl is-active autofs.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: result_1.stdout | default('') | trim != 'package autofs is not installed'
 
     - name: Store requirement 3 details and determine status
       set_fact:
@@ -94,27 +85,37 @@
         task_3_cmd: "systemctl is-active autofs.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{
-            ('PASS' if (status_1 | trim == 'PASS')
-            else ('PASS' if (result_3.stdout | default('') | trim == '')
-            else 'FAIL')) | trim
-          }}
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
         rationale_3: "PASS when no output is returned, FAIL when 'active' is returned"
+      when: result_1.stdout | default('') | trim != 'package autofs is not installed'
 
-    # Requirement 4: OVERALL Verify: Ensure autofs services are not in use
+    # Set NA status for Requirements 2 and 3 if they were not executed
+    - name: Set NA status for Requirements 2 and 3 when not executed
+      set_fact:
+        task_2_name: "Check if autofs.service is enabled"
+        task_2_cmd: "systemctl is-enabled autofs.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: -1
+        data_2: "Requirement not executed - autofs package not installed"
+        status_2: "NA"
+        rationale_2: "Requirement not executed because autofs package is not installed (Req 1 = PASS)"
+        task_3_name: "Check if autofs.service is active"
+        task_3_cmd: "systemctl is-active autofs.service 2>/dev/null | grep '^active'"
+        task_3_rc: -1
+        data_3: "Requirement not executed - autofs package not installed"
+        status_3: "NA"
+        rationale_3: "Requirement not executed because autofs package is not installed (Req 1 = PASS)"
+      when: result_1.stdout | default('') | trim == 'package autofs is not installed'
+
+    # Requirement 4: OVERALL Verify - Ensure autofs services are not in use
     - name: Store requirement 4 details and determine overall status
       set_fact:
-        task_4_name: "Overall verification - Ensure autofs services are not in use"
-        task_4_cmd: "N/A - Overall assessment"
-        task_4_rc: 0
-        data_4: "Package check: {{ status_1 }}, Service enabled: {{ status_2 }}, Service active: {{ status_3 }}"
         status_4: >
-          {{
-            ('PASS' if (status_1 | trim == 'PASS')
-            else ('PASS' if (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            else 'FAIL')) | trim
-          }}
+          {{ (
+            'PASS' if 
+            (status_1 | trim == 'PASS') or 
+            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
         rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
 
     # Final report
@@ -152,10 +153,6 @@
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

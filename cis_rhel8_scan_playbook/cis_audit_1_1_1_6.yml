@@ -1,50 +1,36 @@
 ---
-- name: Data Collection for CIS 1.1.1.6
+- name: Data Collection for CIS checkpoint 1.1.1.6
   hosts: all
   become: yes
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.6"
-    req_1: "Run script to verify overlay kernel module is NOT available in the filesystem"
-    req_2: "Verify the overlay kernel module is NOT loaded"
-    req_3: "Verify the overlay kernel module is blacklisted and configured to fail or succeed without loading"
+    req_1: "Run the following script to verify the overlay kernel module is NOT available in the filesystem"
+    req_2: "Verify the overlay kernel module is NOT loaded using command: lsmod | grep 'overlay'"
+    req_3: |
+      Verify the overlay kernel module is blacklisted using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+overlay\b'
     req_4: "OVERALL Verify: Ensure overlay kernel module is not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
+        data_1: "Not collected yet"
+        data_2: "Not collected yet"
+        data_3: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        
-        data_2: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        
-        data_3: ""
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
-        
-        data_4: ""
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        status_4: "UNKNOWN"
-        rationale_4: "Not evaluated"
 
-    # Requirement 1: Run script to verify overlay kernel module is NOT available in the filesystem
+    # Requirement 1: Check if overlay module exists in filesystem
     - name: "Req 1 - Create temporary audit script for overlay module check"
       copy:
-        dest: "/tmp/cis_audit_overlay_filesystem.sh"
+        dest: "/tmp/cis_audit_1.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -61,11 +47,9 @@
           }
           {% endraw %}
       register: script_created_1
-      ignore_errors: true
-      changed_when: false
 
-    - name: "Req 1 - Execute overlay module filesystem check script"
-      shell: "/tmp/cis_audit_overlay_filesystem.sh"
+    - name: "Req 1 - Execute audit script for overlay module check"
+      shell: "/tmp/cis_audit_1.sh"
       args:
         executable: /bin/bash
       register: result_1
@@ -75,23 +59,22 @@
 
     - name: "Req 1 - Remove temporary audit script"
       file:
-        path: "/tmp/cis_audit_overlay_filesystem.sh"
+        path: "/tmp/cis_audit_1.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details
+    - name: Store requirement 1 details and determine status
       set_fact:
-        task_1_name: "Check if overlay module exists in filesystem"
-        task_1_cmd: "Execute CIS audit script for overlay module filesystem check"
+        task_1_name: "Check if overlay kernel module exists in filesystem"
+        task_1_cmd: "Execute CIS audit script for overlay module availability"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script returns NO output (module not found in filesystem), FAIL when any output is returned (module exists in filesystem)"
+        rationale_1: "PASS when the script returns NO output (module not found in /usr/lib/modules or /lib/modules), FAIL when any output is returned"
 
-    # Requirement 2: Verify the overlay kernel module is NOT loaded
-    # Only execute if Requirement 1 returned output (module exists in filesystem)
+    # Requirement 2: Check if overlay module is loaded (only if req_1 returned output)
     - name: "Req 2 - Check if overlay module is loaded"
-      shell: |
+      shell: >
         lsmod | grep 'overlay'
       args:
         executable: /bin/bash
@@ -101,28 +84,29 @@
       changed_when: false
       when: data_1 | trim | length > 0
 
-    - name: Store requirement 2 details
+    - name: Store requirement 2 details and determine status
       set_fact:
-        task_2_name: "Check if overlay module is loaded"
+        task_2_name: "Check if overlay kernel module is loaded"
         task_2_cmd: "lsmod | grep 'overlay'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {{ (
-            ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') 
-            if (data_1 | trim | length > 0) else 'NA'
-          ) | trim }}
-        rationale_2: >-
-          {{ (
-            'PASS when the command returns NO output (module not loaded), FAIL when any output is returned (module is loaded)'
-            if (data_1 | trim | length > 0) else 'Not required - overlay module not found in filesystem'
-          ) | trim }}
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when the command returns NO output (module not loaded), FAIL when output is returned"
       when: data_1 | trim | length > 0
 
-    # Requirement 3: Verify the overlay kernel module is blacklisted and configured
-    # Only execute if Requirement 1 returned output (module exists in filesystem)
-    - name: "Req 3 - Check overlay module blacklist and install configuration"
-      shell: |
+    - name: Set requirement 2 as NA when not executed
+      set_fact:
+        task_2_name: "Check if overlay kernel module is loaded"
+        task_2_cmd: "lsmod | grep 'overlay'"
+        task_2_rc: -1
+        data_2: "Not executed - overlay module not found in filesystem"
+        status_2: "NA"
+        rationale_2: "Did not execute the related task - overlay module not found in filesystem (req_1 returned no output)"
+      when: data_1 | trim | length == 0
+
+    # Requirement 3: Check if overlay module is blacklisted (only if req_1 returned output)
+    - name: "Req 3 - Check if overlay module is blacklisted"
+      shell: >
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+overlay\b'
       args:
         executable: /bin/bash
@@ -132,42 +116,46 @@
       changed_when: false
       when: data_1 | trim | length > 0
 
-    - name: Store requirement 3 details
+    - name: Store requirement 3 details and determine status
       set_fact:
-        task_3_name: "Check overlay module blacklist and install configuration"
+        task_3_name: "Check if overlay kernel module is blacklisted"
         task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\\b(install|blacklist)\\h+overlay\\b'
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+overlay\b'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >-
+        status_3: >
           {{ (
-            (('PASS' if ('blacklist overlay' in result_3.stdout and 
-                        ('install overlay /bin/false' in result_3.stdout or 
-                         'install overlay /bin/true' in result_3.stdout)) 
-              else 'FAIL') if result_3.rc == 0 else 'FAIL')
-            if (data_1 | trim | length > 0) else 'NA'
+            'PASS' if (
+              result_3.stdout | default('') | trim | length > 0 and
+              'blacklist overlay' in result_3.stdout and
+              ('install overlay /bin/false' in result_3.stdout or 'install overlay /bin/true' in result_3.stdout)
+            ) else 'FAIL'
           ) | trim }}
-        rationale_3: >-
-          {{ (
-            'PASS when the output contains BOTH "blacklist overlay" AND ( "install overlay /bin/false" OR "install overlay /bin/true" ), FAIL otherwise'
-            if (data_1 | trim | length > 0) else 'Not required - overlay module not found in filesystem'
-          ) | trim }}
+        rationale_3: "PASS when the output includes 'blacklist overlay' AND ( 'install overlay /bin/false' OR 'install overlay /bin/true' ), FAIL otherwise"
       when: data_1 | trim | length > 0
 
-    # Requirement 4: OVERALL Verify
-    - name: Store requirement 4 details
+    - name: Set requirement 3 as NA when not executed
       set_fact:
-        task_4_name: "OVERALL Verify: Ensure overlay kernel module is not available"
-        task_4_cmd: "N/A - Calculated from previous requirements"
-        task_4_rc: 0
-        data_4: "Req1: {{ status_1 }}, Req2: {{ status_2 }}, Req3: {{ status_3 }}"
-        status_4: >-
+        task_3_name: "Check if overlay kernel module is blacklisted"
+        task_3_cmd: |
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+overlay\b'
+        task_3_rc: -1
+        data_3: "Not executed - overlay module not found in filesystem"
+        status_3: "NA"
+        rationale_3: "Did not execute the related task - overlay module not found in filesystem (req_1 returned no output)"
+      when: data_1 | trim | length == 0
+
+    # Requirement 4: Overall compliance determination
+    - name: Store requirement 4 details and determine overall status
+      set_fact:
+        status_4: >
           {{ (
-            'PASS' if (status_1 == 'PASS' or 
-                      (status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS')) 
+            'PASS' if
+            (result_1.stdout | default('') | trim == '') or
+            (result_1.stdout | default('') | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
             else 'FAIL'
           ) | trim }}
-        rationale_4: "PASS when (req_1=PASS OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)), FAIL otherwise"
+        rationale_4: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
 
     # Final report
     - name: Generate compliance report
@@ -183,36 +171,32 @@
           - "  Task: {{ task_1_name }}"
           - "  Command: {{ task_1_cmd }}"
           - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
           - "  Task: {{ task_2_name }}"
           - "  Command: {{ task_2_cmd }}"
           - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name }}"
           - "  Command: {{ task_3_cmd }}"
           - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - "========================================================"

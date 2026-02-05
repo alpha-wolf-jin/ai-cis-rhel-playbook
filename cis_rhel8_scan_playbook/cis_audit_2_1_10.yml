@@ -5,31 +5,30 @@
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.10"
-    req_1: "Verify the ypserv package is not installed"
-    req_2: "If ypserv package is installed but required as a dependency, verify ypserv.service is not enabled"
-    req_3: "If ypserv package is installed but required as a dependency, verify ypserv.service is not active"
+    req_1: "Verify ypserv package is NOT installed"
+    req_2: "Verify ypserv.service is NOT enabled"
+    req_3: "Verify ypserv.service is NOT active"
     req_4: "OVERALL Verify: Ensure nis server services are not in use"
 
   tasks:
     - name: Initialize data variables
       set_fact:
         data_1: "Not collected yet"
+        data_2: "Not collected yet"
+        data_3: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify the ypserv package is not installed
-    - name: "Req 1 - Check if ypserv package is installed"
-      shell: |
-        rpm -q ypserv
+    # Requirement 1: Verify ypserv package is NOT installed
+    - name: Req 1 - Check if ypserv package is installed
+      shell: rpm -q ypserv
       args:
         executable: /bin/bash
       register: result_1
@@ -46,10 +45,10 @@
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package ypserv is not installed') else 'FAIL') | trim }}"
         rationale_1: "PASS when output is 'package ypserv is not installed', FAIL if the package is installed"
 
-    # Requirement 2: If ypserv package is installed, check if service is enabled
-    - name: "Req 2 - Check if ypserv.service is enabled"
-      shell: |
-        systemctl is-enabled ypserv.service 2>/dev/null | grep 'enabled'
+    # Requirement 2: Verify ypserv.service is NOT enabled
+    # Only execute if Requirement 1 FAILED (package IS installed)
+    - name: Req 2 - Check if ypserv.service is enabled
+      shell: systemctl is-enabled ypserv.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
@@ -64,14 +63,18 @@
         task_2_cmd: "systemctl is-enabled ypserv.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when no output is returned (service is not enabled), FAIL if 'enabled' is returned"
-      when: status_1 | trim == 'FAIL'
+        status_2: >
+          {{ (
+            'PASS' if (result_2.stdout | default('') | trim == '') 
+            else 'FAIL' if (result_2.stdout is defined and result_2.stdout != '')
+            else 'NA'
+          ) | trim }}
+        rationale_2: "PASS when command returns no output (empty), FAIL if 'enabled' is returned, NA when package not installed"
 
-    # Requirement 3: If ypserv package is installed, check if service is active
-    - name: "Req 3 - Check if ypserv.service is active"
-      shell: |
-        systemctl is-active ypserv.service 2>/dev/null | grep '^active'
+    # Requirement 3: Verify ypserv.service is NOT active
+    # Only execute if Requirement 1 FAILED (package IS installed)
+    - name: Req 3 - Check if ypserv.service is active
+      shell: systemctl is-active ypserv.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
@@ -86,15 +89,25 @@
         task_3_cmd: "systemctl is-active ypserv.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when no output is returned (service is not active), FAIL if 'active' is returned"
-      when: status_1 | trim == 'FAIL'
+        status_3: >
+          {{ (
+            'PASS' if (result_3.stdout | default('') | trim == '') 
+            else 'FAIL' if (result_3.stdout is defined and result_3.stdout != '')
+            else 'NA'
+          ) | trim }}
+        rationale_3: "PASS when command returns no output (empty), FAIL if 'active' is returned, NA when package not installed"
 
-    # Requirement 4: Overall verification
-    - name: Determine overall compliance status
+    # Requirement 4: OVERALL Verify
+    - name: Store requirement 4 details and determine overall status
       set_fact:
-        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        status_4: >
+          {{ (
+            'PASS' if
+            (status_1 | trim == 'PASS') or
+            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
+        rationale_4: "PASS when (req_1=PASS) OR (req_2=PASS AND req_3=PASS), FAIL otherwise"
 
     # Final report
     - name: Generate compliance report
@@ -107,34 +120,30 @@
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not executed (conditional)') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Task not executed - ypserv not installed') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not executed (conditional)') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Task not executed - ypserv not installed') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: Determine overall compliance status"
-          - "  Command: N/A (calculated)"
-          - "  Exit code: N/A"
-          - "  Data: N/A"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

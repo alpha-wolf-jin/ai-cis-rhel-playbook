@@ -1,5 +1,5 @@
 ---
-- name: Data Collection for CIS 2.1.5
+- name: Data Collection for CIS 2.1.5 - Ensure DNS server services are not in use
   hosts: all
   become: yes
   gather_facts: yes
@@ -25,9 +25,13 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_4: "N/A"
+        task_4_name: "Overall compliance determination"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
 
     # Requirement 1: Verify the bind package is not installed
-    - name: Req 1 - Check if bind package is installed
+    - name: "Req 1 - Check if bind package is installed"
       shell: rpm -q bind
       args:
         executable: /bin/bash
@@ -43,10 +47,10 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package bind is not installed') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'package bind is not installed', FAIL when the package is found"
+        rationale_1: "PASS when output is 'package bind is not installed', FAIL when the package is installed"
 
     # Requirement 2: If bind is installed, verify named.service is not enabled
-    - name: Req 2 - Check if named.service is enabled
+    - name: "Req 2 - Check if named.service is enabled"
       shell: systemctl is-enabled named.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
@@ -63,11 +67,11 @@
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when no output is returned (service not enabled), FAIL when output shows 'enabled'"
+        rationale_2: "PASS when no output is returned, FAIL when output is returned"
       when: status_1 | trim == 'FAIL'
 
     # Requirement 3: If bind is installed, verify named.service is not active
-    - name: Req 3 - Check if named.service is active
+    - name: "Req 3 - Check if named.service is active"
       shell: systemctl is-active named.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
@@ -84,11 +88,11 @@
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when no output is returned (service not active), FAIL when output shows 'active'"
+        rationale_3: "PASS when no output is returned, FAIL when output is returned"
       when: status_1 | trim == 'FAIL'
 
     # Requirement 4: OVERALL Verify - Ensure dns server services are not in use
-    - name: Determine overall compliance status
+    - name: Store requirement 4 details and determine overall status
       set_fact:
         status_4: >
           {{ (
@@ -123,7 +127,7 @@
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Task not executed - bind package not installed') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Task skipped - bind package not installed') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name | default('Task not executed (bind not installed)') }}"
@@ -131,9 +135,13 @@
           - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Task not executed - bind package not installed') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Task skipped - bind package not installed') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

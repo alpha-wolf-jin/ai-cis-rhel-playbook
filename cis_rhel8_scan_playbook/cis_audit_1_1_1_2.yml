@@ -1,14 +1,14 @@
 ---
-- name: Data Collection for CIS 1.1.1.2
+- name: Data Collection for CIS checkpoint 1.1.1.2
   hosts: all
   become: yes
   gather_facts: yes
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.2"
-    req_1: "Run the following script to verify the freevxfs kernel module is not available in the filesystem"
-    req_2: "Verify the freevxfs kernel module is not loaded using command: lsmod | grep 'freevxfs'"
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0, checkpoint 1.1.1.2"
+    req_1: "Run the following script to verify the freevxfs kernel module is NOT available in the filesystem"
+    req_2: "Verify the freevxfs kernel module is NOT loaded using command: lsmod | grep 'freevxfs'"
     req_3: |
-      Verify the freevxfs kernel module is blacklisted and configured to fail or be ignored on load using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+freevxfs\b'
+      Verify the freevxfs kernel module is blacklisted and configured to fail/true on load attempt using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+freevxfs\b'
     req_4: "OVERALL Verify: Ensure freevxfs kernel module is not available"
 
   tasks:
@@ -31,8 +31,8 @@
         task_4_cmd: "N/A"
         task_4_rc: -1
 
-    # Requirement 1: Run the following script to verify the freevxfs kernel module is not available in the filesystem
-    - name: "Req 1 - Create temporary audit script"
+    # Requirement 1: Run the following script to verify the freevxfs kernel module is NOT available in the filesystem
+    - name: "Req 1 - Create temporary audit script for module availability check"
       copy:
         dest: "/tmp/cis_audit_script_1.sh"
         mode: '0700'
@@ -51,8 +51,10 @@
           }
           {% endraw %}
       register: script_created_1
+      ignore_errors: true
+      changed_when: false
 
-    - name: "Req 1 - Execute audit script"
+    - name: "Req 1 - Execute audit script for module availability check"
       shell: "/tmp/cis_audit_script_1.sh"
       args:
         executable: /bin/bash
@@ -67,18 +69,18 @@
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details
+    - name: Store requirement 1 details and determine status
       set_fact:
         task_1_name: "Check if freevxfs module exists in filesystem"
-        task_1_cmd: "Audit script from CIS benchmark"
+        task_1_cmd: "Script: /tmp/cis_audit_script_1.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when script returns no output (module not found), FAIL when any output is returned (module found)') | trim }}"
+        rationale_1: "PASS when script output is empty (no module found) OR the module is built into the kernel, FAIL when script returns a path indicating the module exists as a loadable module"
 
-    # Requirement 2: Verify the freevxfs kernel module is not loaded using command: lsmod | grep 'freevxfs'
+    # Requirement 2: Verify the freevxfs kernel module is NOT loaded using command: lsmod | grep 'freevxfs'
     - name: "Req 2 - Check if freevxfs module is loaded"
-      shell: |
+      shell: >
         lsmod | grep 'freevxfs'
       args:
         executable: /bin/bash
@@ -86,31 +88,21 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
+      when: data_1 | trim != ''
 
-    - name: Store requirement 2 details
+    - name: Store requirement 2 details and determine status
       set_fact:
         task_2_name: "Check if freevxfs module is loaded"
         task_2_cmd: "lsmod | grep 'freevxfs'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else ('NA' if (data_1 | trim | length == 0) else 'FAIL')) | trim }}"
-        rationale_2: "{{ ('PASS when command returns no output (module not loaded), FAIL when any output is returned (module loaded), NA when module not found in filesystem (CIS: no further audit steps required)') | trim }}"
-      when: data_1 | trim | length > 0
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when command output is empty, FAIL when output shows the module is loaded"
+      when: data_1 | trim != ''
 
-    - name: Set requirement 2 as NA when module not found
-      set_fact:
-        task_2_name: "Check if freevxfs module is loaded"
-        task_2_cmd: "lsmod | grep 'freevxfs'"
-        task_2_rc: -1
-        data_2: "Module not found in filesystem - CIS procedure states no further audit steps required"
-        status_2: "NA"
-        rationale_2: "Module not found in filesystem - CIS procedure states no further audit steps required"
-      when: data_1 | trim | length == 0
-
-    # Requirement 3: Verify the freevxfs kernel module is blacklisted and configured to fail or be ignored on load
-    - name: "Req 3 - Check if freevxfs is blacklisted and configured to fail"
-      shell: |
+    # Requirement 3: Verify the freevxfs kernel module is blacklisted and configured to fail/true on load attempt
+    - name: "Req 3 - Check if freevxfs is blacklisted and configured to fail/true"
+      shell: >
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+freevxfs\b'
       args:
         executable: /bin/bash
@@ -118,39 +110,41 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
+      when: data_1 | trim != ''
 
-    - name: Store requirement 3 details
+    - name: Store requirement 3 details and determine status
       set_fact:
-        task_3_name: "Check if freevxfs is blacklisted and configured to fail"
+        task_3_name: "Check if freevxfs is blacklisted and configured to fail/true"
         task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\\b(install|blacklist)\\h+freevxfs\\b'
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+freevxfs\b'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if ('blacklist freevxfs' in result_3.stdout and ('install freevxfs /bin/false' in result_3.stdout or 'install freevxfs /bin/true' in result_3.stdout)) else ('NA' if (data_1 | trim | length == 0) else 'FAIL')) | trim }}"
-        rationale_3: "{{ ('PASS when output contains both blacklist freevxfs AND (install freevxfs /bin/false OR install freevxfs /bin/true), FAIL otherwise, NA when module not found in filesystem (CIS: no further audit steps required)') | trim }}"
-      when: data_1 | trim | length > 0
-
-    - name: Set requirement 3 as NA when module not found
-      set_fact:
-        task_3_name: "Check if freevxfs is blacklisted and configured to fail"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\\b(install|blacklist)\\h+freevxfs\\b'
-        task_3_rc: -1
-        data_3: "Module not found in filesystem - CIS procedure states no further audit steps required"
-        status_3: "NA"
-        rationale_3: "Module not found in filesystem - CIS procedure states no further audit steps required"
-      when: data_1 | trim | length == 0
+        status_3: >
+          {{ (
+            'PASS' if (
+              result_3.stdout | default('') | trim | length > 0 and
+              'blacklist freevxfs' in result_3.stdout and
+              ('install freevxfs /bin/false' in result_3.stdout or 'install freevxfs /bin/true' in result_3.stdout)
+            ) else 'FAIL'
+          ) | trim }}
+        rationale_3: "PASS when output contains 'blacklist freevxfs' AND ('install freevxfs /bin/false' OR 'install freevxfs /bin/true'), FAIL otherwise"
+      when: data_1 | trim != ''
 
     # Requirement 4: OVERALL Verify: Ensure freevxfs kernel module is not available
-    - name: Store requirement 4 details
+    - name: Store requirement 4 details and determine overall status
       set_fact:
         task_4_name: "Overall verification"
-        task_4_cmd: "N/A - Calculated from previous results"
+        task_4_cmd: "N/A - Derived from previous checks"
         task_4_rc: 0
-        data_4: "Req1: {{ status_1 }}, Req2: {{ status_2 }}, Req3: {{ status_3 }}"
-        status_4: "{{ ('PASS' if (status_1 == 'PASS' or (status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS')) else 'FAIL') | trim }}"
-        rationale_4: "{{ ('PASS when (req_1=PASS OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)), FAIL otherwise') | trim }}"
+        data_4: "N/A - Derived from previous checks"
+        status_4: >
+          {{ (
+            'PASS' if (
+              (result_1.stdout | default('') | trim == '') or
+              (result_1.stdout | default('') | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            ) else 'FAIL'
+          ) | trim }}
+        rationale_4: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
 
     # Final report
     - name: Generate compliance report
@@ -163,39 +157,39 @@
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - "========================================================"

@@ -731,7 +731,7 @@ Generate the JSON now:"""
         }
 
 
-def run_playbook_generation(objective, requirements, target_host, test_host, become_user, filename, skip_execution=True, audit_procedure=None):
+def run_playbook_generation(objective, requirements, target_host, test_host, become_user, filename, skip_execution=True, audit_procedure=None, enhance=True, skip_test=False):
     """
     Call langgraph_deepseek_generate_playbook to generate and execute the playbook.
     
@@ -744,6 +744,8 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
         filename: Output filename
         skip_execution: If True, skip playbook execution
         audit_procedure: CIS Benchmark audit procedure (script/commands)
+        enhance: If True, check for existing playbook and skip generation if found (default: True)
+        skip_test: If True, skip all test-related tasks and execute directly on target host (default: False)
         
     Returns:
         tuple: (success: bool, message: str)
@@ -764,7 +766,10 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
             filename=filename,
             audit_procedure=audit_procedure,
             max_retries=max_retries,
-            verbose=False  # Set to False for automated mode
+            verbose=False,  # Set to False for automated mode
+            enhance=enhance,
+            skip_execution=skip_execution,
+            skip_test=skip_test
         )
         
         # Check if successful
@@ -785,7 +790,7 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
 
 def process_checkpoint_automated(vector_store, checkpoint: str, output_dir: Path, target_host: str, 
                                   test_host: str, become_user: str, skip_execution: bool, 
-                                  verbose: bool = False) -> dict:
+                                  verbose: bool = False, enhance: bool = True, skip_test: bool = False) -> dict:
     """
     Process a single CIS checkpoint and generate playbook (automated, no user input).
     
@@ -805,33 +810,64 @@ def process_checkpoint_automated(vector_store, checkpoint: str, output_dir: Path
     }
     
     try:
-        # Step 1: Use Agent-based RAG to get checkpoint info
-        if verbose:
-            print(f"\n{'='*100}")
-            print(f"Querying CIS RHEL 8 Benchmark using Agent RAG for: '{checkpoint}'")
-            print(f"{'='*100}")
-        
-        agent_response = get_checkpoint_info_with_agent(vector_store, checkpoint, verbose=verbose)
-        
-        # Step 2: Parse the agent response into structured format
-        checkpoint_info = parse_agent_response_to_checkpoint_info(checkpoint, agent_response)
-        checkpoint_info['raw_agent_response'] = agent_response
-        
-        checkpoint_id = checkpoint_info.get('checkpoint_id', '0.0.0.0')
-        if not checkpoint_id or checkpoint_id in ['None', 'N/A', '']:
-            # Extract from original checkpoint string
-            id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint)
-            checkpoint_id = id_match.group(1) if id_match else 'unknown'
-        
-        # Step 3: Generate playbook requirements
-        playbook_spec = generate_playbook_requirements_from_checkpoint(checkpoint_info)
-        
-        objective = playbook_spec.get('objective', '')
-        requirements = playbook_spec.get('requirements', [])
-        
-        # Add CIS reference to requirements
-        requirements.append(f"Add comment referencing CIS RHEL 8 Benchmark v4.0.0, checkpoint {checkpoint_id}")
-        requirements.append(f"""Create a task named 'Generate compliance report' that displays a debug msg with this EXACT format:
+        # When skip_test is True, we don't need to query CIS benchmark
+        # We just execute the existing playbook directly
+        if skip_test:
+            # Extract checkpoint ID from checkpoint string (e.g., "2.1.6" from "2.1.6 Ensure...")
+            checkpoint_match = re.search(r'^(\d+\.\d+\.\d+)', checkpoint)
+            checkpoint_id = checkpoint_match.group(1) if checkpoint_match else "0.0.0"
+            
+            # Generate playbook filename
+            safe_checkpoint_id = checkpoint_id.replace('.', '_')
+            base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
+            filename = str(output_dir / base_filename)
+            result['filename'] = filename
+            
+            # Use minimal values for objective and requirements since we're just executing existing playbook
+            objective = f"Audit CIS checkpoint {checkpoint_id}: {checkpoint}"
+            requirements = [f"Execute existing playbook for CIS checkpoint {checkpoint_id}"]
+            
+            # Call run_playbook_generation directly without CIS benchmark query
+            success, output = run_playbook_generation(
+                objective=objective,
+                requirements=requirements,
+                target_host=target_host,
+                test_host=test_host if test_host else target_host,
+                become_user=become_user,
+                filename=filename,
+                skip_execution=skip_execution,
+                audit_procedure=None,
+                enhance=enhance,
+                skip_test=skip_test
+            )
+        else:
+            # Step 1: Use Agent-based RAG to get checkpoint info
+            if verbose:
+                print(f"\n{'='*100}")
+                print(f"Querying CIS RHEL 8 Benchmark using Agent RAG for: '{checkpoint}'")
+                print(f"{'='*100}")
+            
+            agent_response = get_checkpoint_info_with_agent(vector_store, checkpoint, verbose=verbose)
+            
+            # Step 2: Parse the agent response into structured format
+            checkpoint_info = parse_agent_response_to_checkpoint_info(checkpoint, agent_response)
+            checkpoint_info['raw_agent_response'] = agent_response
+            
+            checkpoint_id = checkpoint_info.get('checkpoint_id', '0.0.0.0')
+            if not checkpoint_id or checkpoint_id in ['None', 'N/A', '']:
+                # Extract from original checkpoint string
+                id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint)
+                checkpoint_id = id_match.group(1) if id_match else 'unknown'
+            
+            # Step 3: Generate playbook requirements
+            playbook_spec = generate_playbook_requirements_from_checkpoint(checkpoint_info)
+            
+            objective = playbook_spec.get('objective', '')
+            requirements = playbook_spec.get('requirements', [])
+            
+            # Add CIS reference to requirements
+            requirements.append(f"Add comment referencing CIS RHEL 8 Benchmark v4.0.0, checkpoint {checkpoint_id}")
+            requirements.append(f"""Create a task named 'Generate compliance report' that displays a debug msg with this EXACT format:
 ========================================================
         COMPLIANCE REPORT - CIS {checkpoint_id}
 ========================================================
@@ -855,59 +891,61 @@ OVERALL COMPLIANCE:
 ========================================================
 
 Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
-        requirements.append("CRITICAL: Use ignore_errors: true and failed_when: false on all audit tasks so all checks complete and report status")
-        
-        # Print requirements before generating playbook
-        print(f"\n{'='*100}")
-        print(f"📋 Generated Playbook Requirements for {checkpoint_id}")
-        print(f"{'='*100}")
-        print(f"Objective: {objective}")
-        print(f"\nRequirements ({len(requirements)} items):")
-        for idx, req in enumerate(requirements, 1):
-            # Truncate very long requirements for display
-            display_req = req[:200] + '...' if len(req) > 200 else req
-            print(f"  {idx}. {display_req}")
-        print(f"{'='*100}\n")
-        
-        # Step 4: Generate playbook filename
-        safe_checkpoint_id = checkpoint_id.replace('.', '_')
-        base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
-        filename = str(output_dir / base_filename)
-        result['filename'] = filename
-        
-        # Get the audit procedure from checkpoint info
-        audit_procedure = checkpoint_info.get('audit_procedure', '')
-        raw_response = checkpoint_info.get('raw_agent_response', '')
-        
-        # If audit_procedure is empty or generic, try to extract from raw_agent_response
-        if not audit_procedure or audit_procedure in ['Not specified', 'See Full Agent Response above', 'N/A', '']:
-            if raw_response:
-                audit_patterns = [
-                    r'\*\*Audit(?:\s+Procedure)?\*\*[:\s]*\n?(.*?)(?=\*\*(?:Remediation|Impact|Default|References)|\n\n\*\*|$)',
-                    r'(?:Audit|AUDIT)(?:\s+Procedure)?[:\s]*\n(.*?)(?=(?:Remediation|REMEDIATION|Impact|IMPACT|Default|DEFAULT|References|$))',
-                    r'\d+\.\s*(?:Audit|AUDIT)[^\n]*\n(.*?)(?=\d+\.\s*(?:Remediation|Impact)|$)',
-                ]
-                
-                for pattern in audit_patterns:
-                    audit_match = re.search(pattern, raw_response, re.DOTALL | re.IGNORECASE)
-                    if audit_match and len(audit_match.group(1).strip()) > 50:
-                        audit_procedure = audit_match.group(1).strip()
-                        break
-                
-                if not audit_procedure or len(audit_procedure) < 50:
-                    audit_procedure = raw_response
-        
-        # Step 5: Generate and optionally execute playbook
-        success, output = run_playbook_generation(
-            objective=objective,
-            requirements=requirements,
-            target_host=target_host,
-            test_host=test_host if test_host else target_host,
-            become_user=become_user,
-            filename=filename,
-            skip_execution=skip_execution,
-            audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None
-        )
+            requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks so all checks complete and report status")
+            
+            # Print requirements before generating playbook
+            print(f"\n{'='*100}")
+            print(f"📋 Generated Playbook Requirements for {checkpoint_id}")
+            print(f"{'='*100}")
+            print(f"Objective: {objective}")
+            print(f"\nRequirements ({len(requirements)} items):")
+            for idx, req in enumerate(requirements, 1):
+                # Truncate very long requirements for display
+                display_req = req[:200] + '...' if len(req) > 200 else req
+                print(f"  {idx}. {display_req}")
+            print(f"{'='*100}\n")
+            
+            # Step 4: Generate playbook filename
+            safe_checkpoint_id = checkpoint_id.replace('.', '_')
+            base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
+            filename = str(output_dir / base_filename)
+            result['filename'] = filename
+            
+            # Get the audit procedure from checkpoint info
+            audit_procedure = checkpoint_info.get('audit_procedure', '')
+            raw_response = checkpoint_info.get('raw_agent_response', '')
+            
+            # If audit_procedure is empty or generic, try to extract from raw_agent_response
+            if not audit_procedure or audit_procedure in ['Not specified', 'See Full Agent Response above', 'N/A', '']:
+                if raw_response:
+                    audit_patterns = [
+                        r'\*\*Audit(?:\s+Procedure)?\*\*[:\s]*\n?(.*?)(?=\*\*(?:Remediation|Impact|Default|References)|\n\n\*\*|$)',
+                        r'(?:Audit|AUDIT)(?:\s+Procedure)?[:\s]*\n(.*?)(?=(?:Remediation|REMEDIATION|Impact|IMPACT|Default|DEFAULT|References|$))',
+                        r'\d+\.\s*(?:Audit|AUDIT)[^\n]*\n(.*?)(?=\d+\.\s*(?:Remediation|Impact)|$)',
+                    ]
+                    
+                    for pattern in audit_patterns:
+                        audit_match = re.search(pattern, raw_response, re.DOTALL | re.IGNORECASE)
+                        if audit_match and len(audit_match.group(1).strip()) > 50:
+                            audit_procedure = audit_match.group(1).strip()
+                            break
+                    
+                    if not audit_procedure or len(audit_procedure) < 50:
+                        audit_procedure = raw_response
+            
+            # Step 5: Generate and optionally execute playbook
+            success, output = run_playbook_generation(
+                objective=objective,
+                requirements=requirements,
+                target_host=target_host,
+                test_host=test_host if test_host else target_host,
+                become_user=become_user,
+                filename=filename,
+                skip_execution=skip_execution,
+                audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None,
+                enhance=enhance,
+                skip_test=skip_test
+            )
         
         result['success'] = success
         if not success:
@@ -1003,6 +1041,13 @@ Examples:
     )
     
     parser.add_argument(
+        '--skip-test',
+        dest='skip_test',
+        action='store_true',
+        help='Skip all test-related tasks and execute directly on target host (playbook must exist)'
+    )
+    
+    parser.add_argument(
         '--verbose', '-v',
         action='store_true',
         help='Show verbose output including raw search results for debugging'
@@ -1022,7 +1067,29 @@ Examples:
         help='Path to file containing checkpoint indices (one per line). If provided and file exists, reads indices from this file. If file does not exist, falls back to PDF extraction.'
     )
     
+    #parser.add_argument(
+    #    '--no-enhance',
+    #    dest='enhance',
+    #    action='store_false',
+    #    help='Disable enhance mode (always generate new playbook). Default: enhance=True (check for existing playbook)'
+    #)
+    
+    parser.add_argument(
+        '--generate',
+        action='store_true',
+        help='Force playbook generation regardless of whether playbook exists (equivalent to --no-enhance)'
+    )
+    
     args = parser.parse_args()
+    
+    args.enhance = True
+    # If --generate is specified, set enhance=False
+    if args.generate:
+        args.enhance = False
+    
+    ## Set default enhance=True if not explicitly set via --no-enhance or --generate
+    #if not hasattr(args, 'enhance') or args.enhance is None:
+    #    args.enhance = True
     
     try:
         # Get output directory (required user input)
@@ -1047,13 +1114,17 @@ Examples:
         failed_log_file.touch()
         print(f"📝 Failed playbooks will be logged to: {failed_log_file.absolute()}")
         
-        # Load vector store
-        print("\n" + "="*100)
-        print("🔧 Initializing CIS RHEL 8 Benchmark Vector Store")
-        print("="*100)
-        
-        vector_store = load_or_create_vector_store()
-        print("✅ Vector store ready")
+        # When skip_test is True, we don't need to load vector store
+        # We just execute existing playbooks directly
+        vector_store = None
+        if not getattr(args, 'skip_test', False):
+            # Load vector store for normal flow
+            print("\n" + "="*100)
+            print("🔧 Initializing CIS RHEL 8 Benchmark Vector Store")
+            print("="*100)
+            
+            vector_store = load_or_create_vector_store()
+            print("✅ Vector store ready")
         
         # Get checkpoint indices - either from file or extract from PDF
         if args.index_file and os.path.exists(args.index_file):
@@ -1087,6 +1158,8 @@ Examples:
         print(f"Output directory: {output_dir.absolute()}")
         print(f"Target host: {args.target_host}")
         print(f"Skip execution: {args.skip_execution}")
+        if getattr(args, 'skip_test', False):
+            print(f"Skip test: {args.skip_test} (will skip all test tasks, execute directly on target)")
         print("="*100)
         
         results = []
@@ -1106,7 +1179,9 @@ Examples:
                 test_host=args.test_host,
                 become_user=args.become_user,
                 skip_execution=args.skip_execution,
-                verbose=args.verbose
+                verbose=args.verbose,
+                enhance=args.enhance,
+                skip_test=getattr(args, 'skip_test', False)
             )
             
             results.append(result)

@@ -1010,7 +1010,7 @@ OVERALL COMPLIANCE:
 ========================================================
 
 Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
-    requirements.append("CRITICAL: Use ignore_errors: true and failed_when: false on all audit tasks so all checks complete and report status")
+    requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks so all checks complete and report status")
     
     # Step 4: Generate playbook filename
     # Extract only digits and dots from checkpoint_id (e.g., "1.8.3" from "1.8.3" or "1.8.3 Ensure...")

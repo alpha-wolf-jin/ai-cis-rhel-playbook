@@ -1,0 +1,223 @@
+---
+- name: Data Collection for CIS 2.1.17
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.17"
+    req_1: "Verify the tftp-server package is not installed"
+    req_2: "If tftp-server is installed, verify tftp.socket is not enabled"
+    req_3: "If tftp-server is installed, verify tftp.service is not enabled"
+    req_4: "If tftp-server is installed, verify tftp.socket is not active"
+    req_5: "If tftp-server is installed, verify tftp.service is not active"
+    req_6: "OVERALL Verify: Ensure tftp server services are not in use"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        task_1_name: "Not executed"
+        task_2_name: "Not executed"
+        task_3_name: "Not executed"
+        task_4_name: "Not executed"
+        task_5_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_2_cmd: "N/A"
+        task_3_cmd: "N/A"
+        task_4_cmd: "N/A"
+        task_5_cmd: "N/A"
+        task_1_rc: -1
+        task_2_rc: -1
+        task_3_rc: -1
+        task_4_rc: -1
+        task_5_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "NA"
+        status_3: "NA"
+        status_4: "NA"
+        status_5: "NA"
+        status_6: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Task skipped - tftp-server not installed"
+        rationale_3: "Task skipped - tftp-server not installed"
+        rationale_4: "Task skipped - tftp-server not installed"
+        rationale_5: "Task skipped - tftp-server not installed"
+        rationale_6: "Not evaluated"
+
+    # Requirement 1: Verify the tftp-server package is not installed
+    - name: "Req 1 - Check if tftp-server package is installed"
+      shell: rpm -q tftp-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check if tftp-server package is installed"
+        task_1_cmd: "rpm -q tftp-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if result_1.stdout | default('') | trim == 'package tftp-server is not installed' else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'package tftp-server is not installed', FAIL if the package is installed"
+
+    # Requirement 2: If tftp-server is installed, verify tftp.socket is not enabled
+    - name: "Req 2 - Check if tftp.socket is enabled"
+      shell: systemctl is-enabled tftp.socket 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check if tftp.socket is enabled"
+        task_2_cmd: "systemctl is-enabled tftp.socket 2>/dev/null"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if result_2.stdout | default('') | trim == '' else 'FAIL') | trim }}"
+        rationale_2: "PASS when no output is returned (empty), FAIL if 'enabled' is returned"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 3: If tftp-server is installed, verify tftp.service is not enabled
+    - name: "Req 3 - Check if tftp.service is enabled"
+      shell: systemctl is-enabled tftp.service 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check if tftp.service is enabled"
+        task_3_cmd: "systemctl is-enabled tftp.service 2>/dev/null"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if result_3.stdout | default('') | trim == '' else 'FAIL') | trim }}"
+        rationale_3: "PASS when no output is returned (empty), FAIL if 'enabled' is returned"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 4: If tftp-server is installed, verify tftp.socket is not active
+    - name: "Req 4 - Check if tftp.socket is active"
+      shell: systemctl is-active tftp.socket 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 4 details and determine status
+      set_fact:
+        task_4_name: "Check if tftp.socket is active"
+        task_4_cmd: "systemctl is-active tftp.socket 2>/dev/null"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('PASS' if result_4.stdout | default('') | trim != 'active' else 'FAIL') | trim }}"
+        rationale_4: "PASS when no output is returned (empty) or output is not 'active', FAIL if output is 'active'"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 5: If tftp-server is installed, verify tftp.service is not active
+    - name: "Req 5 - Check if tftp.service is active"
+      shell: systemctl is-active tftp.service 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 5 details and determine status
+      set_fact:
+        task_5_name: "Check if tftp.service is active"
+        task_5_cmd: "systemctl is-active tftp.service 2>/dev/null"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: "{{ ('PASS' if result_5.stdout | default('') | trim != 'active' else 'FAIL') | trim }}"
+        rationale_5: "PASS when no output is returned (empty) or output is not 'active', FAIL if output is 'active'"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 6: OVERALL Verify - Determine overall compliance
+    - name: Determine overall compliance status
+      set_fact:
+        status_6: "{{ (
+          'PASS' if
+          (status_1 | trim == 'PASS') or
+          (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' and status_5 | trim == 'PASS')
+          else 'FAIL'
+        ) | trim }}"
+        rationale_6: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS AND req_4=PASS AND req_5=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.1.17"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Rationale: {{ rationale_1 | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | trim }}"
+          - "  Rationale: {{ rationale_4 | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name }}"
+          - "  Command: {{ task_5_cmd }}"
+          - "  Exit code: {{ task_5_rc }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | trim }}"
+          - "  Rationale: {{ rationale_5 | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Status: {{ status_6 | trim }}"
+          - "  Rationale: {{ rationale_6 | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_6 | trim }}"
+          - "  Rationale: {{ rationale_6 | trim }}"
+          - "========================================================"

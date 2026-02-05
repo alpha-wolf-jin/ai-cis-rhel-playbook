@@ -57,3 +57,11 @@ python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --no-interactive
 
 ./single_cis_checkpoint_to_playbook.py --checkpoint '1.6.2 Ensure system wide crypto policy disables sha1 hash and signature support' --test-host 192.168.122.16 --target-host 192.168.122.17  --output-dir ./playbooks
 
+./auto_rhel8_cis_playbook.py --index-file cis_index_2_3_4.txt --test-host 192.168.122.16 --target-host 192.168.122.17  --output-dir ./cis_rhel8_scan_playbook --generate
+
+./auto_rhel8_cis_playbook.py --index-file cis_index_2_3_4.txt --test-host 192.168.122.16 --target-host 192.168.122.17  --output-dir ./cis_rhel8_scan_playbook
+
+./single_cis_checkpoint_to_playbook.py --checkpoint '2.1.6 Ensure dnsmasq services are not in use (Automated)' --test-host 192.168.122.16,192.168.122.17 --skip-execution --no-interactive
+
+./single_cis_checkpoint_to_playbook.py --checkpoint '2.1.6 Ensure dnsmasq services are not in use (Automated)' --target-host 192.168.122.16,192.168.122.17 --skip-test --no-interactive 
+

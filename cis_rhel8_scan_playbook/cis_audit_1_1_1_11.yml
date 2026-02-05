@@ -1,17 +1,16 @@
 ---
-- name: Data Collection for CIS 1.1.1.11
+- name: Data Collection for CIS checkpoint 1.1.1.11
   hosts: all
   become: yes
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.11"
-    req_1: "Verify the list of currently mounted filesystem types using command: findmnt -Dkerno fstype | sort -u"
+    req_1: "Verify currently mounted filesystem types using command: findmnt -Dkerno fstype | sort -u"
     req_2: "Run script to generate list of all filesystem kernel modules installed on the system"
-    req_3: "Verify the list of modules currently loaded into the kernel using command: lsmod"
-    req_4: "Verify that any filesystem kernel module appearing in both installed list and loaded list is needed and approved by local site policy"
-    req_5: |
-      Verify list of modules that are Deny Listed or set to be not loadable using command: modprobe --showconfig | grep -Pi -- '^\h*(blacklist|install)\h+'
-    req_6: "Verify that all filesystem kernel modules from installed list are both Deny Listed AND set to be not loadable in modprobe configuration"
+    req_3: "Verify currently loaded kernel modules using command: lsmod"
+    req_4: "Compare installed filesystem kernel modules with loaded modules"
+    req_5: "Verify modules that are denylisted or set to be not loadable"
+    req_6: "Verify all filesystem kernel modules are both denylisted and set to be not loadable"
     req_7: "OVERALL Verify: Ensure unused filesystems kernel modules are not available"
 
   tasks:
@@ -24,28 +23,25 @@
         data_5: ""
         data_6: ""
         task_1_name: "Not executed"
-        task_2_name: "Not executed"
-        task_3_name: "Not executed"
-        task_4_name: "Not executed"
-        task_5_name: "Not executed"
-        task_6_name: "Not executed"
-        task_7_name: "Not executed"
         task_1_cmd: "N/A"
-        task_2_cmd: "N/A"
-        task_3_cmd: "N/A"
-        task_4_cmd: "N/A"
-        task_5_cmd: "N/A"
-        task_6_cmd: "N/A"
-        task_7_cmd: "N/A"
         task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
         task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
         task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
         task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
         task_6_rc: -1
-        task_7_rc: -1
 
-    # Requirement 1: Mounted filesystem types
+    # Requirement 1: Verify currently mounted filesystem types
     - name: "Req 1 - Get mounted filesystem types"
       shell: |
         findmnt -Dkerno fstype | sort -u
@@ -62,10 +58,10 @@
         task_1_cmd: "findmnt -Dkerno fstype | sort -u"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command executes successfully (exit code 0), FAIL otherwise' if result_1.rc == 0 else 'FAIL - Command failed to execute') | trim }}"
+        status_1: "{{ 'UNKNOWN' | trim }}"
+        rationale_1: "Cannot automatically verify against local site policy - manual review required"
 
-    # Requirement 2: Installed filesystem kernel modules script
+    # Requirement 2: Generate list of installed filesystem kernel modules
     - name: "Req 2 - Create temporary audit script for installed modules"
       copy:
         dest: "/tmp/cis_audit_script_2.sh"
@@ -75,13 +71,12 @@
           #!/usr/bin/env bash
           {
              l_search="$(readlink -e /usr/lib/modules/ || readlink -e /lib/modules/)"
-             a_module=()  
+             a_module=()
              while IFS= read -r -d $'\0' l_module_dir; do
                 if [ ! "$(basename "$l_module_dir")" = "nls" ]; then
                    while IFS= read -r -d $'\0' l_module_file; do
                       l_mname="$(basename "$l_module_file" | cut -d'.' -f1)"
-                      if [ -f "$l_module_file" ] && ! grep -Psiq -- '\b'"$l_mname"'\b' \
-                      <<< "${a_module[*]}"; then
+                      if [ -f "$l_module_file" ] && ! grep -Psiq -- '\b'"$l_mname"'\b' <<< "${a_module[*]}"; then
                          a_module+=("$l_mname")
                       fi
                    done < <(find -L "$l_module_dir" -mindepth 1 -maxdepth 1 -type f -print0)
@@ -91,6 +86,7 @@
           }
           {% endraw %}
       register: script_created_2
+      when: data_1 | trim != ""
 
     - name: "Req 2 - Execute audit script for installed modules"
       shell: "/tmp/cis_audit_script_2.sh"
@@ -100,23 +96,26 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
+      when: data_1 | trim != ""
 
     - name: "Req 2 - Remove temporary audit script"
       file:
         path: "/tmp/cis_audit_script_2.sh"
         state: absent
       ignore_errors: true
+      when: data_1 | trim != ""
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Get installed filesystem kernel modules"
-        task_2_cmd: "Custom bash script (see audit procedure)"
+        task_2_name: "Generate list of installed filesystem kernel modules"
+        task_2_cmd: "Complex bash script (see CIS procedure)"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if result_2.rc == 0 else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when script executes successfully (exit code 0), FAIL otherwise' if result_2.rc == 0 else 'FAIL - Script failed to execute') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.rc | default(-1) == 0) else 'FAIL') | trim }}"
+        rationale_2: "PASS when script executes successfully and outputs list, FAIL if script fails"
+      when: data_1 | trim != ""
 
-    # Requirement 3: Currently loaded modules
+    # Requirement 3: Verify currently loaded kernel modules
     - name: "Req 3 - Get loaded kernel modules"
       shell: |
         lsmod
@@ -126,6 +125,7 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
+      when: data_1 | trim != ""
 
     - name: Store requirement 3 details
       set_fact:
@@ -133,21 +133,24 @@
         task_3_cmd: "lsmod"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if result_3.rc == 0 else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when command executes successfully (exit code 0), FAIL otherwise' if result_3.rc == 0 else 'FAIL - Command failed to execute') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.rc | default(-1) == 0) else 'FAIL') | trim }}"
+        rationale_3: "PASS when command executes successfully and outputs list, FAIL if command fails"
+      when: data_1 | trim != ""
 
-    # Requirement 4: Compare installed vs loaded modules (manual review required)
-    - name: "Req 4 - Compare installed and loaded modules"
+    # Requirement 4: Compare installed vs loaded modules
+    - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Compare installed and loaded modules"
+        task_4_name: "Compare installed vs loaded modules"
         task_4_cmd: "Manual comparison required"
         task_4_rc: 0
-        data_4: "Installed modules: {{ data_2 }} | Loaded modules: {{ result_3.stdout_lines[0] | default('') }}"
-        status_4: "MANUAL REVIEW"
-        rationale_4: "Manual review required: Compare installed modules list with loaded modules list to identify loaded filesystem modules, then verify each is needed and approved by policy"
+        data_4: |
+          Installed modules: {{ data_2 }}\nLoaded modules: {{ data_3 }}
+        status_4: "{{ 'UNKNOWN' | trim }}"
+        rationale_4: "Cannot automatically verify against local site policy - manual review required"
+      when: data_1 | trim != ""
 
-    # Requirement 5: Deny Listed or not loadable modules
-    - name: "Req 5 - Get modprobe blacklist/install configurations"
+    # Requirement 5: Verify denylisted or not loadable modules
+    - name: "Req 5 - Get modprobe configuration"
       shell: |
         modprobe --showconfig | grep -Pi -- '^\h*(blacklist|install)\h+'
       args:
@@ -156,37 +159,38 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
+      when: data_1 | trim != ""
 
     - name: Store requirement 5 details
       set_fact:
-        task_5_name: "Get modprobe blacklist/install configurations"
+        task_5_name: "Get modprobe configuration"
         task_5_cmd: |
           modprobe --showconfig | grep -Pi -- '^\h*(blacklist|install)\h+'
         task_5_rc: "{{ result_5.rc | default(-1) }}"
         data_5: "{{ result_5.stdout | default('') | trim }}"
-        status_5: "{{ ('PASS' if result_5.rc == 0 else 'FAIL') | trim }}"
-        rationale_5: "{{ ('PASS when command executes successfully (exit code 0), FAIL otherwise' if result_5.rc == 0 else 'FAIL - Command failed to execute') | trim }}"
+        status_5: "{{ ('PASS' if (result_5.rc | default(-1) == 0) else 'FAIL') | trim }}"
+        rationale_5: "PASS when command executes successfully and outputs list, FAIL if command fails"
+      when: data_1 | trim != ""
 
-    # Requirement 6: Verify all installed modules are disabled (manual review required)
-    - name: "Req 6 - Check if installed modules are disabled"
+    # Requirement 6: Verify all modules have blacklist and install rules
+    - name: Store requirement 6 details
       set_fact:
-        task_6_name: "Check if installed modules are disabled"
+        task_6_name: "Verify all modules have blacklist and install rules"
         task_6_cmd: "Manual verification required"
         task_6_rc: 0
-        data_6: "Installed modules: {{ data_2 }} | Modprobe config: {{ data_5 }}"
-        status_6: "MANUAL REVIEW"
-        rationale_6: "Manual review required: Verify each installed filesystem module has both a 'blacklist' entry and a disabling 'install' entry (/bin/false or /bin/true) in modprobe configuration"
+        data_6: |
+          Installed modules: {{ data_2 }}\nModprobe config: {{ data_5 }}
+        status_6: "{{ 'UNKNOWN' | trim }}"
+        rationale_6: "Manual review required to verify all installed modules have blacklist and install rules"
+      when: data_1 | trim != ""
 
-    # Requirement 7: Overall verification
-    - name: "Req 7 - Overall verification"
+    # Requirement 7: OVERALL Verify
+    - name: Store requirement 7 details
       set_fact:
-        task_7_name: "Overall verification"
-        task_7_cmd: "Manual verification based on all previous checks"
-        task_7_rc: 0
-        status_7: "MANUAL REVIEW"
-        rationale_7: "Manual review required: System is compliant if all mounted filesystems are approved (req_1), all loaded filesystem modules are approved (req_4), and all installed filesystem modules are properly disabled (req_6)"
+        status_7: "{{ 'UNKNOWN' | trim }}"
+        rationale_7: "Manual checkpoint - cannot automatically determine compliance"
 
-    # Final compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -200,60 +204,52 @@
           - "  Task: {{ task_1_name }}"
           - "  Command: {{ task_1_cmd }}"
           - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
           - "  Task: {{ task_2_name }}"
           - "  Command: {{ task_2_cmd }}"
           - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name }}"
           - "  Command: {{ task_3_cmd }}"
           - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
           - "  Task: {{ task_4_name }}"
           - "  Command: {{ task_4_cmd }}"
           - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 5 - {{ req_5 }}:"
           - "  Task: {{ task_5_name }}"
           - "  Command: {{ task_5_cmd }}"
           - "  Exit code: {{ task_5_rc }}"
-          - "  Data: {{ data_5 }}"
-          - "  Status: {{ status_5 }}"
-          - "  Rationale: {{ rationale_5 }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 6 - {{ req_6 }}:"
           - "  Task: {{ task_6_name }}"
           - "  Command: {{ task_6_cmd }}"
           - "  Exit code: {{ task_6_rc }}"
-          - "  Data: {{ data_6 }}"
-          - "  Status: {{ status_6 }}"
-          - "  Rationale: {{ rationale_6 }}"
-          - ""
-          - "REQUIREMENT 7 - {{ req_7 }}:"
-          - "  Task: {{ task_7_name }}"
-          - "  Command: {{ task_7_cmd }}"
-          - "  Exit code: {{ task_7_rc }}"
-          - "  Data: N/A"
-          - "  Status: {{ status_7 }}"
-          - "  Rationale: {{ rationale_7 }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_6 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_7 }}"
-          - "  Rationale: {{ rationale_7 }}"
+          - "  Result: {{ status_7 | trim }}"
+          - "  Rationale: {{ rationale_7 | trim }}"
           - "========================================================"

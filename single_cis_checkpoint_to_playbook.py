@@ -225,117 +225,6 @@ Search for "{checkpoint}" and related terms to find all the details."""
     return agent_response
 
 
-def search_cis_checkpoint(vector_store, checkpoint: str, verbose: bool = False) -> str:
-    """
-    Search the CIS RHEL 8 Benchmark for checkpoint information.
-    Falls back to direct search if agent approach fails.
-    
-    Args:
-        vector_store: The Chroma vector store
-        checkpoint: The CIS control number or description
-        verbose: If True, print raw search results for debugging
-        
-    Returns:
-        str: Combined content from relevant documents
-    """
-    import re
-    
-    # Extract checkpoint ID if present (e.g., "1.1.1.1" from "1.1.1.1 Ensure cramfs...")
-    checkpoint_id_match = re.match(r'^(\d+\.\d+\.\d+\.?\d*)', checkpoint)
-    checkpoint_id = checkpoint_id_match.group(1) if checkpoint_id_match else checkpoint
-    
-    # Build multiple search queries for better coverage
-    enhanced_queries = []
-    
-    # Primary queries - most specific
-    if checkpoint_id_match:
-        enhanced_queries.extend([
-            f"{checkpoint_id} Ensure",
-            f"checkpoint {checkpoint_id}",
-            f"{checkpoint_id} kernel module",
-            f"{checkpoint_id} freevxfs",  # Common for 1.1.1.x
-            f"{checkpoint_id} Audit",
-            f"{checkpoint_id} Remediation",
-        ])
-    
-    # Add the original query
-    enhanced_queries.append(checkpoint)
-    
-    # Generic CIS-related queries
-    enhanced_queries.extend([
-        f"CIS {checkpoint_id}" if checkpoint_id_match else f"CIS {checkpoint}",
-        f"Profile Applicability {checkpoint_id}" if checkpoint_id_match else checkpoint,
-    ])
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_queries = []
-    for q in enhanced_queries:
-        if q not in seen:
-            seen.add(q)
-            unique_queries.append(q)
-    
-    if verbose:
-        print(f"\n🔍 DEBUG: Checkpoint ID extracted: {checkpoint_id}")
-        print(f"🔍 DEBUG: Search queries to try: {unique_queries}")
-    
-    # Collect results from multiple queries
-    all_results = []
-    seen_content = set()
-    
-    for query in unique_queries:
-        try:
-            results = vector_store.similarity_search(query, k=4)
-            if verbose:
-                print(f"🔍 DEBUG: Query '{query}' returned {len(results)} results")
-            for doc in results:
-                # Deduplicate by content hash (use more of the content for better dedup)
-                content_hash = hash(doc.page_content[:500])
-                if content_hash not in seen_content:
-                    seen_content.add(content_hash)
-                    all_results.append(doc)
-        except Exception as e:
-            if verbose:
-                print(f"🔍 DEBUG: Query '{query}' failed: {e}")
-    
-    # Sort results by relevance to checkpoint_id (if found in content)
-    def relevance_score(doc):
-        content = doc.page_content.lower()
-        score = 0
-        if checkpoint_id.lower() in content:
-            score += 10
-        if "ensure" in content and checkpoint_id.lower() in content:
-            score += 5
-        if "audit" in content:
-            score += 2
-        if "remediation" in content:
-            score += 2
-        return -score  # Negative for descending sort
-    
-    all_results.sort(key=relevance_score)
-    
-    # Limit to top 10 unique results
-    all_results = all_results[:10]
-    
-    combined_content = "\n\n---\n\n".join([doc.page_content for doc in all_results])
-    
-    if verbose:
-        print(f"\n🔍 DEBUG: Total unique document chunks found: {len(all_results)}")
-        print(f"🔍 DEBUG: Combined content length: {len(combined_content)} characters")
-        print("\n" + "-"*50 + " RAW CONTENT PREVIEW " + "-"*50)
-        # Show full content in verbose mode
-        print(combined_content[:5000] if len(combined_content) > 5000 else combined_content)
-        print("-"*120 + "\n")
-    
-    # Always show a warning if no content found
-    if len(combined_content) < 100:
-        print("⚠️  WARNING: Very little content retrieved from vector store!")
-        print("    Make sure CIS_RHEL8_DATA_DEEPSEEK directory has the vector database.")
-        print("    You may need to run cis_rhel8_rag_deepseek.py first to create the vector store.")
-    
-    return combined_content
-
-
 def parse_agent_response_to_checkpoint_info(checkpoint: str, agent_response: str) -> dict:
     """
     Parse the agent's natural language response into a structured dictionary.
@@ -793,7 +682,7 @@ Generate the JSON now:"""
         }
 
 
-def run_playbook_generation(objective, requirements, target_host, test_host, become_user, filename, skip_execution=True, audit_procedure=None):
+def run_playbook_generation(objective, requirements, target_host, test_host, become_user, filename, skip_execution=True, audit_procedure=None, enhance=True, skip_test=False):
     """
     Call langgraph_deepseek_generate_playbook to generate and execute the playbook.
     
@@ -806,6 +695,8 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
         filename: Output filename
         skip_execution: If True, skip playbook execution (NOT USED - kept for compatibility)
         audit_procedure: CIS Benchmark audit procedure (script/commands)
+        enhance: If True, check for existing playbook and skip generation if found (default: True)
+        skip_test: If True, skip all test-related tasks and execute directly on target host (default: False)
         
     Returns:
         tuple: (success: bool, message: str)
@@ -834,7 +725,10 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
             filename=filename,
             audit_procedure=audit_procedure,
             max_retries=max_retries,
-            verbose=True
+            verbose=True,
+            enhance=enhance,
+            skip_execution=skip_execution,
+            skip_test=skip_test
         )
         
         # Check if successful
@@ -1069,7 +963,7 @@ OVERALL COMPLIANCE:
 ========================================================
 
 Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
-    requirements.append("CRITICAL: Use ignore_errors: true and failed_when: false on all audit tasks so all checks complete and report status")
+    requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks so all checks complete and report status")
     
     # Step 4: Generate playbook filename
     # Extract only digits and dots from checkpoint_id (e.g., "1.8.3" from "1.8.3" or "1.8.3 Ensure...")
@@ -1251,6 +1145,9 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
     if args.skip_execution:
         print("⚠️  Execution will be SKIPPED (--skip-execution flag)")
     
+    if getattr(args, 'skip_test', False):
+        print("⚠️  Test tasks will be SKIPPED (--skip-test flag) - will execute directly on target host")
+    
     #print("FileName: ", filename)
     #ok = input("Enter: ")
 
@@ -1263,7 +1160,9 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
         become_user=args.become_user,
         filename=filename,
         skip_execution=args.skip_execution,
-        audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None
+        audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None,
+        enhance=args.enhance,
+        skip_test=getattr(args, 'skip_test', False)
     )
     
     # Summary
@@ -1357,6 +1256,13 @@ Examples:
     )
     
     parser.add_argument(
+        '--skip-test',
+        dest='skip_test',
+        action='store_true',
+        help='Skip all test-related tasks and execute directly on target host (playbook must exist)'
+    )
+    
+    parser.add_argument(
         '--no-interactive',
         action='store_true',
         help='Skip interactive requirement review'
@@ -1368,23 +1274,78 @@ Examples:
         help='Show verbose output including raw search results for debugging'
     )
     
+    parser.add_argument(
+        '--no-enhance',
+        dest='enhance',
+        action='store_false',
+        help='Disable enhance mode (always generate new playbook). Default: enhance=True (check for existing playbook)'
+    )
+    
+    parser.add_argument(
+        '--generate',
+        action='store_true',
+        help='Force playbook generation regardless of whether playbook exists (equivalent to --no-enhance)'
+    )
+    
     args = parser.parse_args()
     
+    args.enhance = True
+    # If --generate is specified, set enhance=False
+    if args.generate:
+        args.enhance = False
+    
+    ## Set default enhance=True if not explicitly set via --no-enhance or --generate
+    #if not hasattr(args, 'enhance') or args.enhance is None:
+    #    args.enhance = True
+    
     try:
-        # Load vector store
-        print("\n" + "="*100)
-        print("🔧 Initializing CIS RHEL 8 Benchmark Vector Store")
-        print("="*100)
-        
-        vector_store = load_or_create_vector_store()
-        print("✅ Vector store ready")
-        
-        if args.checkpoint:
-            # Single checkpoint mode
-            process_checkpoint(vector_store, args.checkpoint, args)
+        # When skip_test is True, we don't need to query CIS benchmark
+        # We just execute the existing playbook directly
+        if getattr(args, 'skip_test', False):
+            if args.checkpoint:
+                # Extract checkpoint ID from checkpoint string (e.g., "2.1.6" from "2.1.6 Ensure...")
+                import re
+                checkpoint_match = re.search(r'^(\d+\.\d+\.\d+)', args.checkpoint)
+                checkpoint_id = checkpoint_match.group(1) if checkpoint_match else "0.0.0"
+                
+                # Generate filename from checkpoint
+                filename = args.filename if args.filename else f"cis_rhel8_scan_playbook/cis_audit_{checkpoint_id.replace('.', '_')}.yml"
+                
+                # Use minimal values for objective and requirements since we're just executing existing playbook
+                objective = f"Audit CIS checkpoint {checkpoint_id}: {args.checkpoint}"
+                requirements = [f"Execute existing playbook for CIS checkpoint {checkpoint_id}"]
+                
+                # Call run_playbook_generation directly without CIS benchmark query
+                run_playbook_generation(
+                    objective=objective,
+                    requirements=requirements,
+                    target_host=args.target_host,
+                    test_host=args.test_host if args.test_host else args.target_host,
+                    become_user=args.become_user,
+                    filename=filename,
+                    skip_execution=args.skip_execution,
+                    audit_procedure=None,
+                    enhance=args.enhance,
+                    skip_test=args.skip_test
+                )
+            else:
+                print("❌ ERROR: --skip-test requires --checkpoint to be specified")
+                sys.exit(1)
         else:
-            # Interactive mode
-            interactive_mode(vector_store, args)
+            # Load vector store for normal flow
+            print("\n" + "="*100)
+            print("🔧 Initializing CIS RHEL 8 Benchmark Vector Store")
+            print("="*100)
+            
+            vector_store = load_or_create_vector_store()
+            print("✅ Vector store ready")
+            
+            if args.checkpoint:
+                # Single checkpoint mode
+                process_checkpoint(vector_store, args.checkpoint, args)
+            else:
+                # Interactive mode
+                interactive_mode(vector_store, args)
             
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrupted by user")

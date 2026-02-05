@@ -5,13 +5,10 @@
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.5"
-    req_1: "Run the following script to verify the jffs2 kernel module is NOT available in the filesystem"
-    req_2: "If the script in req_1 returns output, verify the jffs2 kernel module is NOT loaded using command: lsmod | grep 'jffs2'"
-    req_3: |
-      If the script in req_1 returns output, verify the jffs2 kernel module is blacklisted using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+jffs2\b'
-    req_4: |
-      If the script in req_1 returns output, verify the jffs2 kernel module is configured to install to /bin/false or /bin/true using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+jffs2\b'
-    req_5: "OVERALL Verify: Ensure jffs2 kernel module is not available"
+    req_1: "Run script to verify jffs2 kernel module is not available in the filesystem"
+    req_2: "If script in req_1 returns output, verify jffs2 kernel module is not loaded"
+    req_3: "If script in req_1 returns output, verify jffs2 kernel module is not loadable by checking for blacklist and install directives"
+    req_overall: "Ensure jffs2 kernel module is not available"
 
   tasks:
     - name: Initialize data variables
@@ -20,36 +17,19 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
         data_2: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "NA"
-        rationale_2: "Skipped - requirement 1 passed"
         data_3: ""
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "NA"
-        rationale_3: "Skipped - requirement 1 passed"
-        data_4: ""
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        status_4: "NA"
-        rationale_4: "Skipped - requirement 1 passed"
-        data_5: ""
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
-        status_5: "UNKNOWN"
-        rationale_5: "Not evaluated"
 
-    - name: "Req 1 - Create temporary audit script for jffs2 module availability"
+    # Requirement 1: Check if jffs2 module exists in filesystem
+    - name: "Req 1 - Create temporary audit script for jffs2 module check"
       copy:
-        dest: "/tmp/cis_audit_script_1.sh"
+        dest: "/tmp/cis_audit_1.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -67,8 +47,8 @@
           {% endraw %}
       register: script_created_1
 
-    - name: "Req 1 - Execute audit script for jffs2 module availability"
-      shell: "/tmp/cis_audit_script_1.sh"
+    - name: "Req 1 - Execute audit script for jffs2 module check"
+      shell: "/tmp/cis_audit_1.sh"
       args:
         executable: /bin/bash
       register: result_1
@@ -78,19 +58,20 @@
 
     - name: "Req 1 - Remove temporary audit script"
       file:
-        path: "/tmp/cis_audit_script_1.sh"
+        path: "/tmp/cis_audit_1.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details
+    - name: Store requirement 1 details and determine status
       set_fact:
-        task_1_name: "Check if jffs2 kernel module is available in filesystem"
+        task_1_name: "Check if jffs2 module exists in filesystem"
         task_1_cmd: "CIS audit script for jffs2 module availability"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script returns NO output (module not found), FAIL if any output is returned"
+        rationale_1: "PASS when script returns no output (module not found) OR if module is built into kernel (also returns no output), FAIL when script returns output indicating module exists in filesystem"
 
+    # Requirement 2: Check if jffs2 module is loaded (only if req_1 found module)
     - name: "Req 2 - Check if jffs2 module is loaded"
       shell: |
         lsmod | grep 'jffs2'
@@ -100,19 +81,21 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: status_1 == 'FAIL'
+      when: data_1 | trim != ''
 
-    - name: Store requirement 2 details
+    - name: Store requirement 2 details and determine status
       set_fact:
-        task_2_name: "Check if jffs2 kernel module is loaded"
+        task_2_name: "Check if jffs2 module is loaded"
         task_2_cmd: "lsmod | grep 'jffs2'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns NO output (module not loaded), FAIL if any output is returned"
-      when: status_1 == 'FAIL'
+        rationale_2: "PASS when command returns no output (module not loaded), FAIL when output is returned (module is loaded)"
+      when: data_1 | trim != ''
+      run_once: true
 
-    - name: "Req 3 - Check if jffs2 module is blacklisted"
+    # Requirement 3: Check if jffs2 module is not loadable (only if req_1 found module)
+    - name: "Req 3 - Check for blacklist and install directives for jffs2"
       shell: |
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+jffs2\b'
       args:
@@ -121,50 +104,51 @@
       ignore_errors: true
       failed_when: false
       changed_when: false
-      when: status_1 == 'FAIL'
+      when: data_1 | trim != ''
 
-    - name: Store requirement 3 details
+    - name: Store requirement 3 details and determine status
       set_fact:
-        task_3_name: "Check if jffs2 kernel module is blacklisted"
+        task_3_name: "Check for blacklist and install directives for jffs2"
         task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+jffs2\b'
+          modprobe --showconfig | grep -P -- '\\b(install|blacklist)\\h+jffs2\\b'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if ('blacklist jffs2' in result_3.stdout) else 'FAIL') | trim }}"
-        rationale_3: "PASS when the output contains the line 'blacklist jffs2', FAIL if it does not"
-      when: status_1 == 'FAIL'
+        status_3: >
+          {{ (
+            'PASS' if (
+              result_3.stdout | default('') | trim | length > 0 and
+              'blacklist jffs2' in result_3.stdout and
+              ('install jffs2 /bin/false' in result_3.stdout or 'install jffs2 /bin/true' in result_3.stdout)
+            ) else 'FAIL'
+          ) | trim }}
+        rationale_3: "PASS when output includes 'blacklist jffs2' AND ('install jffs2 /bin/false' OR 'install jffs2 /bin/true'), FAIL otherwise"
+      when: data_1 | trim != ''
+      run_once: true
 
-    - name: "Req 4 - Check if jffs2 module install is configured to /bin/false or /bin/true"
-      shell: |
-        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+jffs2\b'
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: status_1 == 'FAIL'
-
-    - name: Store requirement 4 details
+    # Set default values for req_2 and req_3 when not executed
+    - name: Set default status for requirements 2 and 3 when not executed
       set_fact:
-        task_4_name: "Check if jffs2 kernel module install is configured to /bin/false or /bin/true"
-        task_4_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+jffs2\b'
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if ('install jffs2 /bin/false' in result_4.stdout or 'install jffs2 /bin/true' in result_4.stdout) else 'FAIL') | trim }}"
-        rationale_4: "PASS when the output contains the line 'install jffs2 /bin/false' OR 'install jffs2 /bin/true', FAIL if it does not"
-      when: status_1 == 'FAIL'
+        status_2: "NA"
+        rationale_2: "Did not execute - req_1 returned no output (module not found)"
+        status_3: "NA"
+        rationale_3: "Did not execute - req_1 returned no output (module not found)"
+      when: data_1 | trim == ''
+      run_once: true
 
-    - name: Store requirement 5 details
+    # Overall compliance determination
+    - name: Determine overall compliance status
       set_fact:
-        task_5_name: "Overall verification of jffs2 kernel module"
-        task_5_cmd: "N/A - Calculated based on previous requirements"
-        task_5_rc: 0
-        data_5: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}, Requirement 3: {{ status_3 }}, Requirement 4: {{ status_4 }}"
-        status_5: "{{ ('PASS' if (status_1 == 'PASS' or (status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS')) else 'FAIL') | trim }}"
-        rationale_5: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS AND req_4=PASS), FAIL otherwise"
+        status_overall: >
+          {{ (
+            'PASS' if (
+              result_1.stdout | default('') | trim == '' or
+              (result_1.stdout | default('') | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
+            ) else 'FAIL'
+          ) | trim }}
+        rationale_overall: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+      run_once: true
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -178,44 +162,28 @@
           - "  Task: {{ task_1_name }}"
           - "  Command: {{ task_1_cmd }}"
           - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Not executed') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
-          - ""
-          - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Task: {{ task_5_name }}"
-          - "  Command: {{ task_5_cmd }}"
-          - "  Exit code: {{ task_5_rc }}"
-          - "  Data: {{ data_5 }}"
-          - "  Status: {{ status_5 }}"
-          - "  Rationale: {{ rationale_5 }}"
+          - "  Task: {{ task_3_name | default('Not executed') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 }}"
-          - "  Rationale: {{ rationale_5 }}"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
           - "========================================================"
