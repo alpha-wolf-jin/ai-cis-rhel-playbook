@@ -1,0 +1,146 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0, checkpoint 5.1.4
+- name: Data Collection for CIS 5.1.4
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0, checkpoint 5.1.4"
+    req_1: "Run the following script to verify SSH private host key files are owned by root and have appropriate group ownership and permissions"
+    req_2: "OVERALL Verify: Ensure access to SSH private host key files is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the following script to verify SSH private host key files are owned by root and have appropriate group ownership and permissions
+    - name: Req 1 - Create temporary audit script
+      copy:
+        dest: "/tmp/cis_audit_5.1.4.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             a_output=() a_output2=() l_ssh_group="" l_out="root"
+             grep -Psiq -- '^\h*ID_LIKE="?([^#\n\r]+)?\bfedora\b' /etc/os-release && \
+             l_ssh_group="$(grep -Pso -- '^ssh_keys\b' /etc/group)" && \
+             l_out="$l_ssh_group or $l_out"
+             f_file_chk()
+             {
+                while IFS=: read -r l_fmode l_fowner l_fgroup; do
+                   a_out2=()
+                   [ "$l_fgroup" = "$l_ssh_group" ] && l_pmask="0137" || l_pmask="0177"
+                   l_maxperm="$( printf '%o' $(( 0777 & ~$l_pmask )) )"
+                   if [ $(( $l_fmode & $l_pmask )) -gt 0 ]; then
+                      a_out2+=("    - mode: \"$l_fmode\"" \
+                      "      should be mode: \"$l_maxperm\" or more restrictive")
+                   fi
+                   if [ "$l_fowner" != "root" ]; then
+                      a_out2+=("    - owned by: \"$l_fowner\"" \
+                      "      should be owned by \"root\"")
+                   fi
+                   if [ "$l_fgroup" != "$l_ssh_group" ] && [ "$l_fgroup" != "root" ]; then
+                      a_out2+=("    - group owned by: \"$l_fgroup\"" \
+                      "      should be group owned by: \"$l_out\"")
+                   fi
+                   if [ "${#a_out2[@]}" -gt "0" ]; then
+                      a_output2+=("  - File: \"$l_file\"" "${a_out2[@]}")
+                   else
+                      a_output+=("  - File: \"$l_file\" Correct:" \
+                      "    - mode: \"$l_fmode\"" \
+                      "    - owner: \"$l_fowner\"" "    - group owner: \"$l_fgroup\"")
+                   fi
+                done < <(stat -Lc '%#a:%U:%G' "$l_file")
+             }
+             while IFS= read -r -d $'\0' l_file; do  
+                if ssh-keygen -lf &>/dev/null "$l_file"; then  
+                   file "$l_file" | \
+                   grep -Piq -- '\bopenssh\h+([^#\n\r]+\h+)?private\h+key\b' && f_file_chk
+                fi
+             done < <(find -L /etc/ssh -xdev -type f -print0 2>/dev/null)
+             if [ "${#a_output2[@]}" -le 0 ]; then
+                printf '%s\n' "" "- Audit Result:" "  ** PASS **" "${a_output[@]}" ""
+             else
+                printf '%s\n' "" "- Audit Result:" "  ** FAIL **" \
+                " - Reason(s) for audit failure:" "${a_output2[@]}"
+                [ "${#a_output[@]}" -gt 0 ] && \
+                printf '%s\n' "" "- Correctly set:" "${a_output[@]}" ""
+             fi
+          }
+          {% endraw %}
+      register: script_created_1
+      changed_when: false
+
+    - name: Req 1 - Execute audit script
+      shell: "/tmp/cis_audit_5.1.4.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.4.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Execute CIS audit script for SSH private host key files"
+        task_1_cmd: "/tmp/cis_audit_5.1.4.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+        rationale_1: "PASS when the script output shows '** PASS **' and lists all SSH private host key files with correct ownership and permissions, FAIL when the script output shows '** FAIL **' and lists files with incorrect ownership, group, or permissions"
+
+    # Requirement 2: OVERALL Verify: Ensure access to SSH private host key files is configured
+    - name: Req 2 - Determine overall verification status
+      set_fact:
+        task_2_name: "Determine overall verification status"
+        task_2_cmd: "Derived from requirement 1 status"
+        task_2_rc: 0
+        data_2: "Overall status derived from requirement 1"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "========================================================"

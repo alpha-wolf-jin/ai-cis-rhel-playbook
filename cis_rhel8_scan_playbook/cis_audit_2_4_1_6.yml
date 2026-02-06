@@ -1,0 +1,153 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.6: Ensure access to /etc/cron.monthly is configured
+- name: Data Collection for CIS checkpoint 2.4.1.6
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.6"
+    req_1: "Verify cron is installed on the system"
+    req_2: "Verify the ownership of /etc/cron.monthly/"
+    req_3: "Verify the permissions of /etc/cron.monthly/"
+    req_4: "OVERALL Verify: Ensure access to /etc/cron.monthly is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_4: "Not collected yet"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Verify cron is installed on the system
+    - name: "Req 1 - Check if cron is installed"
+      shell: rpm -q cronie
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check if cron is installed"
+        task_1_cmd: "rpm -q cronie"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | length > 0 and 'is not installed' not in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "PASS when the package is installed (e.g., 'cronie-<version>'), FAIL when package is not installed (e.g., 'package cronie is not installed')"
+
+    # Requirement 2: Verify the ownership of /etc/cron.monthly/
+    - name: "Req 2 - Check ownership of /etc/cron.monthly/"
+      shell: >
+        stat -Lc 'Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.monthly/
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check ownership of /etc/cron.monthly/"
+        task_2_cmd: "stat -Lc 'Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.monthly/"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if ('Uid: ( 0/ root)' in result_2.stdout and 'Gid: ( 0/ root)' in result_2.stdout) else 'FAIL') | trim }}"
+        rationale_2: "PASS when Uid is 0/root AND Gid is 0/root, FAIL otherwise"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 3: Verify the permissions of /etc/cron.monthly/
+    - name: "Req 3 - Check permissions of /etc/cron.monthly/"
+      shell: >
+        stat -Lc 'Access: (%a/%A)' /etc/cron.monthly/
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check permissions of /etc/cron.monthly/"
+        task_3_cmd: "stat -Lc 'Access: (%a/%A)' /etc/cron.monthly/"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if ('Access: (700/drwx------)' in result_3.stdout) else 'FAIL') | trim }}"
+        rationale_3: "PASS when Access is 700/drwx------ (no permissions for group or other), FAIL otherwise"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 4: OVERALL Verify: Ensure access to /etc/cron.monthly is configured
+    - name: Store requirement 4 details and determine overall status
+      set_fact:
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A - Combined check"
+        task_4_rc: 0
+        data_4: "Combined status check"
+        status_4: "{{ ('PASS' if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_4: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.4.1.6"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "========================================================"

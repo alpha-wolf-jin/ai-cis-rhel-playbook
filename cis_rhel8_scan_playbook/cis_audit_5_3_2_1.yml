@@ -1,0 +1,84 @@
+---
+# Audit for CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.1
+- name: Data Collection for CIS 5.3.2.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.1"
+    req_1: "Verify the active authselect profile includes the required PAM modules (pam_pwquality.so, pam_pwhistory.so, pam_faillock.so, pam_unix.so) in both system-auth and password-auth files"
+    req_2: "OVERALL Verify: Ensure active authselect profile includes pam modules"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Verify the active authselect profile includes the required PAM modules (pam_pwquality.so, pam_pwhistory.so, pam_faillock.so, pam_unix.so) in both system-auth and password-auth files
+    - name: "Req 1 - Check PAM modules in authselect profile"
+      shell: |
+        grep -P -- '\b(pam_pwquality\.so|pam_pwhistory\.so|pam_faillock\.so|pam_unix\.so)\b' /etc/authselect/"$(head -1 /etc/authselect/authselect.conf)"/{system,password}-auth
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check PAM modules in authselect profile"
+        task_1_cmd: |
+          grep -P -- '\\b(pam_pwquality\\.so|pam_pwhistory\\.so|pam_faillock\\.so|pam_unix\\.so)\\b' /etc/authselect/\"$(head -1 /etc/authselect/authselect.conf)\"/{system,password}-auth
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | length > 0) else 'FAIL') | trim }}"
+        rationale_1: "PASS when the command returns lines containing the specified PAM modules (with or without feature options like {include if 'with-faillock'}), FAIL when any required module is missing from either file"
+
+    # Requirement 2: OVERALL Verify: Ensure active authselect profile includes pam modules
+    - name: "Req 2 - Determine overall compliance"
+      set_fact:
+        task_2_name: "Determine overall compliance"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: "Overall compliance based on Requirement 1"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg: |
+          ========================================================
+                  COMPLIANCE REPORT - CIS 5.3.2.1
+          ========================================================
+          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.1
+          ========================================================
+
+          REQUIREMENT 1 - {{ req_1 }}:
+            Task: {{ task_1_name | default('Task not recorded') }}
+            Command: {{ task_1_cmd | default('N/A') }}
+            Exit code: {{ task_1_rc | default(-1) }}
+            Data: {{ data_1 | default('') | trim }}
+            Status: {{ status_1 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
+
+          REQUIREMENT 2 - {{ req_2 }}:
+            Task: {{ task_2_name | default('Task not recorded') }}
+            Command: {{ task_2_cmd | default('N/A') }}
+            Exit code: {{ task_2_rc | default(-1) }}
+            Data: {{ data_2 | default('') | trim }}
+            Status: {{ status_2 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
+
+          ========================================================
+          OVERALL COMPLIANCE:
+            Result: {{ status_2 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
+          ========================================================

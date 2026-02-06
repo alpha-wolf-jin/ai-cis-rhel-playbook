@@ -1,0 +1,156 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0, checkpoint 3.3.1.6
+# Ensure net.ipv4.icmp_ignore_bogus_error_responses is configured
+- name: Data Collection for CIS 3.3.1.6
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.6"
+    req_1: "Verify net.ipv4.icmp_ignore_bogus_error_responses is set to 1 in the running configuration using command: sysctl net.ipv4.icmp_ignore_bogus_error_responses"
+    req_2: "Run the following script to verify net.ipv4.icmp_ignore_bogus_error_responses = 1 is set in a file being used by systemd sysctl"
+    req_3: "OVERALL Verify: Ensure net.ipv4.icmp_ignore_bogus_error_responses is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify net.ipv4.icmp_ignore_bogus_error_responses is set to 1 in the running configuration using command: sysctl net.ipv4.icmp_ignore_bogus_error_responses
+    - name: "Req 1 - Check running sysctl configuration"
+      shell: sysctl net.ipv4.icmp_ignore_bogus_error_responses
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check running sysctl configuration"
+        task_1_cmd: "sysctl net.ipv4.icmp_ignore_bogus_error_responses"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv4.icmp_ignore_bogus_error_responses = 1') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'net.ipv4.icmp_ignore_bogus_error_responses = 1', FAIL otherwise"
+
+    # Requirement 2: Run the following script to verify net.ipv4.icmp_ignore_bogus_error_responses = 1 is set in a file being used by systemd sysctl
+    - name: "Req 2 - Create temporary audit script"
+      copy:
+        dest: "/tmp/cis_audit_script_2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_parameter_name="net.ipv4.icmp_ignore_bogus_error_responses"  
+             l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
+             l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
+             || readlink -e /usr/lib/systemd/systemd-sysctl)"
+             l_ufw_file="$([ -f /etc/default/ufw ] && \
+             awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
+             [ -f "$(readlink -e "$l_ufw_file")" ] && \
+             a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
+             while IFS= read -r l_fname; do
+                l_file="$(readlink -e "${l_fname//# /}")"
+                [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
+                <<< "${a_files[*]}" && a_files+=("$l_file")
+             done < <("$l_systemdsysctl" --cat-config | tac | \
+             grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
+             for l_file in "${a_files[@]}"; do
+                l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n 1)"
+                l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
+                [ -n "$l_option_value" ] && \
+                a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
+                "    \"$l_file\"")
+             done
+             [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
+          }
+          {% endraw %}
+      register: script_created_2
+
+    - name: "Req 2 - Execute audit script"
+      shell: "/tmp/cis_audit_script_2.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: "Req 2 - Remove temporary audit script"
+      file:
+        path: "/tmp/cis_audit_script_2.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Execute audit script for configuration files"
+        task_2_cmd: "/tmp/cis_audit_script_2.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | length > 0 and 'net.ipv4.icmp_ignore_bogus_error_responses = 1' in result_2.stdout) else 'FAIL') | trim }}"
+        rationale_2: "PASS when the script outputs at least one line confirming the parameter is set to 1 in a sysctl configuration file, FAIL if no output is generated or if the value is not 1"
+
+    # Requirement 3: OVERALL Verify: Ensure net.ipv4.icmp_ignore_bogus_error_responses is configured
+    - name: Store requirement 3 details and determine overall status
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "N/A"
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 3.3.1.6"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.6"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

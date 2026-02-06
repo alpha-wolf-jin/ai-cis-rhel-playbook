@@ -1,0 +1,144 @@
+---
+- name: Data Collection for CIS 2.4.1.4
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    # CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.4 - Ensure access to /etc/cron.daily is configured
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.4"
+    req_1: "Verify cron is installed on the system"
+    req_2: "Verify the permissions, owner, and group of the /etc/cron.daily directory"
+    req_3: "OVERALL Verify: Ensure access to /etc/cron.daily is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify cron is installed on the system
+    - name: Req 1 - Check if cron is installed
+      shell: >
+        rpm -q cronie
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check if cron is installed"
+        task_1_cmd: "rpm -q cronie"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if 'cronie-' in result_1.stdout else 'FAIL') | trim }}"
+        rationale_1: "PASS when the package is installed (e.g., output is 'cronie-<version>'), FAIL when the package is not installed (e.g., output is 'package cronie is not installed')"
+
+    # Requirement 2: Verify the permissions, owner, and group of the /etc/cron.daily directory
+    - name: Req 2 - Check /etc/cron.daily permissions
+      shell: >
+        stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check /etc/cron.daily permissions"
+        task_2_cmd: "stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >
+          {{
+            (
+              'PASS' if
+              result_2.stdout | default('') | trim == 'Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root)'
+              else 'FAIL'
+            ) | trim
+          }}
+        rationale_2: "PASS when output shows Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root), FAIL otherwise"
+      when: status_1 | trim == 'PASS'
+
+    - name: Set requirement 2 as NA when cron not installed
+      set_fact:
+        task_2_name: "Check /etc/cron.daily permissions"
+        task_2_cmd: "stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/"
+        task_2_rc: -1
+        data_2: "Not applicable - cron not installed"
+        status_2: "NA"
+        rationale_2: "Skipped because cron is not installed on the system"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 3: OVERALL Verify: Ensure access to /etc/cron.daily is configured
+    - name: Store requirement 3 details and determine overall status
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - Combined check"
+        task_3_rc: 0
+        data_3: "Combined status of requirements 1 and 2"
+        status_3: >
+          {{
+            (
+              'PASS' if
+              status_1 | trim == 'PASS' and
+              (status_2 | trim == 'PASS' or status_2 | trim == 'NA')
+              else 'FAIL'
+            ) | trim
+          }}
+        rationale_3: "PASS when req_1=PASS AND (req_2=PASS or req_2=NA), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.4.1.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

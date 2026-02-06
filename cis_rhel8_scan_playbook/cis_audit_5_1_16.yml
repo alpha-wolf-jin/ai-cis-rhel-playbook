@@ -1,0 +1,117 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.16
+- name: Data Collection for CIS 5.1.16 - Ensure sshd LogLevel is configured
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    req_1: "Run the following script to verify the sshd LogLevel is set to VERBOSE or INFO in the global configuration"
+    req_2: "If Match blocks are used, run the following script to verify the sshd LogLevel is set to VERBOSE or INFO for the specified connection parameters (e.g., user=sshuser)"
+    req_3: "OVERALL Verify: Ensure sshd LogLevel is configured"
+    check_match_blocks: false  # Set to true if your environment uses Match blocks
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Verify sshd LogLevel in global configuration
+    - name: "Req 1 - Check sshd LogLevel in global configuration"
+      shell: |
+        source /etc/crypto-policies/back-ends/opensshserver.config
+        source /etc/sysconfig/sshd
+        sshd -T $OPTIONS $CRYPTO_POLICY | grep -i loglevel
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check sshd LogLevel in global configuration"
+        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i loglevel"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'loglevel VERBOSE' or result_1.stdout | default('') | trim == 'loglevel INFO') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'loglevel VERBOSE' or 'loglevel INFO', FAIL otherwise"
+
+    # Requirement 2: Verify sshd LogLevel for Match blocks (conditional)
+    - name: "Req 2 - Check sshd LogLevel for Match blocks"
+      shell: |
+        source /etc/crypto-policies/back-ends/opensshserver.config
+        source /etc/sysconfig/sshd
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i loglevel
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: check_match_blocks
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check sshd LogLevel for Match blocks"
+        task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i loglevel"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'loglevel VERBOSE' or result_2.stdout | default('') | trim == 'loglevel INFO') else 'FAIL') | trim }}"
+        rationale_2: "PASS when output is 'loglevel VERBOSE' or 'loglevel INFO', FAIL otherwise"
+      when: check_match_blocks
+
+    - name: Set NA status for requirement 2 when not checked
+      set_fact:
+        task_2_name: "Check sshd LogLevel for Match blocks"
+        task_2_cmd: "N/A - Match blocks not checked"
+        task_2_rc: -1
+        data_2: "Match blocks not checked in this audit"
+        status_2: "NA"
+        rationale_2: "Match blocks not checked in this audit (check_match_blocks=false)"
+      when: not check_match_blocks
+
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details and determine overall status
+      set_fact:
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and (not check_match_blocks or status_2 | trim == 'PASS')) else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg: |
+          ========================================================
+                  COMPLIANCE REPORT - CIS 5.1.16
+          ========================================================
+          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.16
+          ========================================================
+
+          REQUIREMENT 1 - {{ req_1 }}:
+            Task: {{ task_1_name | default('Task not recorded') }}
+            Command: {{ task_1_cmd | default('N/A') }}
+            Exit code: {{ task_1_rc | default(-1) }}
+            Data: {{ data_1 | default('') | trim }}
+            Status: {{ status_1 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
+
+          REQUIREMENT 2 - {{ req_2 }}:
+            Task: {{ task_2_name | default('Task not recorded') }}
+            Command: {{ task_2_cmd | default('N/A') }}
+            Exit code: {{ task_2_rc | default(-1) }}
+            Data: {{ data_2 | default('') | trim }}
+            Status: {{ status_2 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
+
+          ========================================================
+          OVERALL COMPLIANCE:
+            Result: {{ status_3 | trim }}
+            Rationale: {{ rationale_3 | trim }}
+          ========================================================

@@ -705,7 +705,7 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
     print("🚀 Calling langgraph_deepseek_generate_playbook to generate and execute playbook...")
     print("="*100)
     
-    max_retries = max(len(requirements), 3)
+    max_retries = int(max(len(requirements), 3) * 1.5)
     print(f"Max retries: {max_retries} (based on {len(requirements)} requirements)")
     print()
     

@@ -1,0 +1,150 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.18
+- name: Data Collection for CIS 5.1.18
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.18"
+    req_1: "Verify the global sshd MaxAuthTries configuration is set to 4 or less"
+    req_2: "If Match blocks are used in the sshd configuration, verify the MaxAuthTries configuration for applicable users (e.g., 'sshuser') is set to 4 or less"
+    req_3: "OVERALL Verify: Ensure sshd MaxAuthTries is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Verify the global sshd MaxAuthTries configuration is set to 4 or less
+    - name: Req 1 - Check global MaxAuthTries setting
+      shell: |
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config
+        source /etc/sysconfig/sshd
+        sshd -T $OPTIONS $CRYPTO_POLICY | grep -i maxauthtries
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check global MaxAuthTries setting"
+        task_1_cmd: |
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -i maxauthtries
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >
+          {{ (
+            'PASS' if 
+            result_1.stdout is defined and 
+            'maxauthtries' in result_1.stdout and 
+            result_1.stdout.split()[1]|int <= 4 
+            else 'FAIL'
+          ) | trim }}
+        rationale_1: "PASS when output includes 'maxauthtries' with a value of 4 or less, FAIL otherwise"
+
+    # Requirement 2: If Match blocks are used, verify MaxAuthTries for sshuser
+    - name: Req 2 - Check MaxAuthTries for sshuser in Match blocks
+      shell: |
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config
+        source /etc/sysconfig/sshd
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i maxauthtries
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: data_1 | trim != ''
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check MaxAuthTries for sshuser in Match blocks"
+        task_2_cmd: |
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i maxauthtries
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >
+          {{ (
+            'PASS' if 
+            result_2.stdout is defined and 
+            (
+              result_2.stdout | trim == '' or 
+              (
+                'maxauthtries' in result_2.stdout and 
+                result_2.stdout.split()[1]|int <= 4
+              )
+            )
+            else 'FAIL'
+          ) | trim }}
+        rationale_2: "PASS when output includes 'maxauthtries' with a value of 4 or less, or if no output is returned (indicating the global setting applies), FAIL if output shows a value greater than 4"
+      when: data_1 | trim != ''
+
+    - name: Set default status for requirement 2 when not executed
+      set_fact:
+        status_2: "NA"
+        rationale_2: "Not executed - global MaxAuthTries check returned no data"
+      when: data_1 | trim == ''
+
+    # Requirement 3: OVERALL Verify
+    - name: Determine overall compliance status
+      set_fact:
+        status_3: >
+          {{ (
+            'PASS' if 
+            status_1 | trim == 'PASS' and 
+            (status_2 | trim == 'PASS' or status_2 | trim == 'NA')
+            else 'FAIL'
+          ) | trim }}
+        rationale_3: "PASS when req_1=PASS AND (req_2=PASS OR Match blocks are not used in the environment), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.18"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not executed') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

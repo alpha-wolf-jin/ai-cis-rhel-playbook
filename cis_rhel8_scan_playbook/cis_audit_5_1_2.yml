@@ -1,0 +1,138 @@
+---
+# Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.2
+- name: Data Collection for CIS 5.1.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.2"
+    req_1: "Run the following script to verify the /etc/ssh/sshd_config file and all .conf files in /etc/ssh/sshd_config.d have correct permissions, ownership, and group ownership"
+    req_2: "OVERALL Verify: Ensure access to /etc/ssh/sshd_config is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the following script to verify the /etc/ssh/sshd_config file and all .conf files in /etc/ssh/sshd_config.d have correct permissions, ownership, and group ownership
+    - name: "Req 1 - Create temporary audit script"
+      copy:
+        dest: "/tmp/cis_audit_script_1.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             a_output=(); a_output2=()
+             perm_mask='0177' && maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+             f_sshd_files_chk()
+             {
+                while IFS=: read -r l_mode l_user l_group; do
+                   a_out2=()
+                   [ $(( $l_mode & $perm_mask )) -gt 0 ] && a_out2+=("    Is mode: \"$l_mode\"" \
+                   "    should be mode: \"$maxperm\" or more restrictive")
+                   [ "$l_user" != "root" ] && a_out2+=("    Is owned by \"$l_user\" 
+          should be owned by \"root\"")
+                   [ "$l_group" != "root" ] && a_out2+=("    Is group owned by 
+          \"$l_user\" should be group owned by \"root\"")
+                   if [ "${#a_out2[@]}" -gt "0" ]; then
+                      a_output2+=("  - File: \"$l_file\":" "${a_out2[@]}")
+                   else
+                      a_output+=("  - File: \"$l_file\":" "    Correct: mode ($l_mode), 
+          owner ($l_user)" \
+                      "    and group owner ($l_group) configured")
+                   fi
+                done < <(stat -Lc '%#a:%U:%G' "$l_file")       
+             }
+             [ -e "/etc/ssh/sshd_config" ] && l_file="/etc/ssh/sshd_config" && 
+          f_sshd_files_chk
+             while IFS= read -r -d $'\0' l_file; do
+                [ -e "$l_file" ] && f_sshd_files_chk
+             done < <(find /etc/ssh/sshd_config.d -type f -name '*.conf' \( -perm /077 \
+          -o ! -user root -o ! -group root \) -print0 2>/dev/null)
+             if [ "${#a_output2[@]}" -le 0 ]; then
+                printf '%s\n' "" "- Audit Result:" "  ** PASS **" "${a_output[@]}" ""
+             else
+                printf '%s\n' "" "- Audit Result:" "  ** FAIL **" " - Reason(s) for 
+          audit failure:" "${a_output2[@]}"
+                [ "${#a_output[@]}" -gt 0 ] && printf '%s\n' "" "- Correctly set:" 
+          "${a_output[@]}" ""
+             fi
+          }
+          {% endraw %}
+      register: script_created_1
+      ignore_errors: true
+      failed_when: false
+
+    - name: "Req 1 - Execute audit script"
+      shell: "/tmp/cis_audit_script_1.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: "Req 1 - Remove temporary audit script"
+      file:
+        path: "/tmp/cis_audit_script_1.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Execute CIS audit script for sshd_config files"
+        task_1_cmd: "/tmp/cis_audit_script_1.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+        rationale_1: "PASS when the script outputs '** PASS **' and lists all checked files as 'Correct', FAIL when the script outputs '** FAIL **' and lists files with incorrect permissions (< 600), ownership (not root), or group ownership (not root)"
+
+    # Requirement 2: OVERALL Verify: Ensure access to /etc/ssh/sshd_config is configured
+    - name: "Req 2 - Determine overall compliance"
+      set_fact:
+        task_2_name: "Overall compliance determination"
+        task_2_cmd: "Derived from requirement 1 status"
+        task_2_rc: 0
+        data_2: "Overall status derived from requirement 1"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "========================================================"

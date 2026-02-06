@@ -1,0 +1,119 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.21
+- name: Data Collection for CIS 5.1.21 - Ensure sshd PermitEmptyPasswords is disabled
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.21"
+    req_1: "Verify the global sshd configuration has PermitEmptyPasswords disabled"
+    req_2: "If Match blocks are used, verify PermitEmptyPasswords is disabled for test user 'sshuser'"
+    req_3: "OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        data_2: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    - name: Check if Match blocks are present in sshd configuration
+      shell: |
+        grep -q '^Match' /etc/ssh/sshd_config 2>/dev/null || test $? -eq 1
+      args:
+        executable: /bin/bash
+      register: match_blocks_check
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Set match_blocks_present fact
+      set_fact:
+        match_blocks_present: "{{ match_blocks_check.rc == 0 }}"
+
+    # Requirement 1: Verify the global sshd configuration has PermitEmptyPasswords disabled
+    - name: Req 1 - Check global sshd PermitEmptyPasswords setting
+      shell: |
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
+        source /etc/sysconfig/sshd 2>/dev/null || true
+        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i permitemptypasswords || true
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check global sshd PermitEmptyPasswords setting"
+        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i permitemptypasswords"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'permitemptypasswords no', FAIL otherwise"
+
+    # Requirement 2: If Match blocks are used, verify PermitEmptyPasswords is disabled for test user 'sshuser'
+    - name: Req 2 - Check sshd PermitEmptyPasswords setting for test user (if Match blocks used)
+      shell: |
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
+        source /etc/sysconfig/sshd 2>/dev/null || true
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser 2>/dev/null | grep -i permitemptypasswords || true
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+      when: match_blocks_present
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check sshd PermitEmptyPasswords setting for test user 'sshuser'"
+        task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i permitemptypasswords"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL' if match_blocks_present else 'NA') | trim }}"
+        rationale_2: "{{ ('PASS when output is "permitemptypasswords no", FAIL otherwise' if match_blocks_present else 'NA - Match blocks not used in sshd configuration') | trim }}"
+
+    # Requirement 3: OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled
+    - name: Store requirement 3 details and determine overall status
+      set_fact:
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA')) else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.21"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.21"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

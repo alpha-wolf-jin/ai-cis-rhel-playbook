@@ -20,6 +20,7 @@ from deepseek_generate_playbook import (
     check_playbook_syntax,
     test_playbook_on_server,
     analyze_playbook_output,
+    analyze_playbook,
     extract_playbook_issues_from_analysis,
     verify_status_alignment,
     extract_analysis_statuses,
@@ -45,7 +46,10 @@ class PlaybookGenerationState(TypedDict):
     # Workflow state
     attempt: int
     playbook_content: str
+    playbook_modified: bool  # True if playbook was generated/enhanced, False if loaded from existing file unchanged
     syntax_valid: bool
+    playbook_structure_valid: bool  # New field for playbook structure analysis result
+    playbook_structure_analysis: str  # New field for playbook structure analysis message
     test_success: bool
     analysis_passed: bool  # New field for analysis result
     analysis_message: str  # New field for analysis message
@@ -95,6 +99,7 @@ def check_existing_playbook_node(state: PlaybookGenerationState) -> PlaybookGene
             with open(filename, 'r', encoding='utf-8') as f:
                 existing_content = f.read()
             state['playbook_content'] = existing_content
+            state['playbook_modified'] = False  # Playbook loaded from file, not modified
             print(f"✅ Loaded playbook ({len(existing_content)} characters)")
             print("⏭️  Skipping all test-related tasks, proceeding directly to target execution")
             # Mark syntax as valid since we're skipping syntax check
@@ -128,16 +133,19 @@ def check_existing_playbook_node(state: PlaybookGenerationState) -> PlaybookGene
             with open(filename, 'r', encoding='utf-8') as f:
                 existing_content = f.read()
             state['playbook_content'] = existing_content
+            state['playbook_modified'] = False  # Playbook loaded from file, not modified
             print(f"✅ Loaded existing playbook ({len(existing_content)} characters)")
             print("⏭️  Skipping generation, proceeding directly to execution")
         except Exception as e:
             print(f"⚠️  Error reading existing playbook: {e}")
             print("🔄 Will generate new playbook instead")
             state['playbook_content'] = ""
+            state['playbook_modified'] = True  # Will be generated, so mark as modified
     else:
         print(f"📝 Playbook file not found: {filename}")
         print("🔄 Will generate new playbook")
         state['playbook_content'] = ""
+        state['playbook_modified'] = True  # Will be generated, so mark as modified
     
     return state
 
@@ -174,6 +182,7 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
     if should_skip:
         print(f"\n{'='*80} generate_playbook_node")
         print("⏭️  Skipping generation - using existing playbook")
+        state['playbook_modified'] = False  # Using existing playbook, not modified
         return state
     
     print(f"\n{'='*80} generate_playbook_node")
@@ -238,11 +247,13 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
         print("=" * 80)
         
         state['playbook_content'] = playbook
+        state['playbook_modified'] = True  # Playbook was generated/enhanced, mark as modified
         state['error_message'] = ""
         
     except Exception as e:
         state['error_message'] = str(e)
         state['playbook_content'] = ""
+        state['playbook_modified'] = True  # Error occurred, but we tried to modify
         print(f"❌ Error generating playbook: {e}")
     
     return state
@@ -280,8 +291,15 @@ def save_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationStat
 
 def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Check playbook syntax."""
-    is_valid, error_msg = check_playbook_syntax(state['filename'], state['test_host'])
     print(f"\n{'='*80} check_syntax_node")
+    
+    # Skip syntax check if playbook hasn't been modified
+    if not state.get('playbook_modified', True):
+        print("⏭️  Skipping syntax check - playbook content unchanged")
+        state['syntax_valid'] = True  # Assume valid if unchanged
+        return state
+    
+    is_valid, error_msg = check_playbook_syntax(state['filename'], state['test_host'])
     
     state['syntax_valid'] = is_valid
     if not is_valid:
@@ -306,6 +324,49 @@ def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState
     return state
 
 
+def analyze_playbook_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
+    """LangGraph node: Analyze playbook structure against requirements."""
+    print(f"\n{'='*80} analyze_playbook_node")
+    
+    # Skip if skip_test is True
+    if state.get('skip_test', False):
+        print("⏭️  Skipping playbook structure analysis (--skip-test flag)")
+        state['playbook_structure_valid'] = True  # Assume valid when skipping
+        state['playbook_structure_analysis'] = "Skipped (--skip-test flag)"
+        return state
+    
+    # Skip if playbook hasn't been modified
+    if not state.get('playbook_modified', True):
+        print("⏭️  Skipping playbook structure analysis - playbook content unchanged")
+        state['playbook_structure_valid'] = True  # Assume valid if unchanged
+        state['playbook_structure_analysis'] = "Skipped (playbook content unchanged)"
+        return state
+    
+    # Analyze playbook structure
+    playbook_structure_passed, playbook_structure_analysis = analyze_playbook(
+        requirements=state['requirements'],
+        playbook_objective=state['playbook_objective'],
+        playbook_content=state['playbook_content'],
+        audit_procedure=state.get('audit_procedure', '')
+    )
+    
+    state['playbook_structure_valid'] = playbook_structure_passed
+    state['playbook_structure_analysis'] = playbook_structure_analysis
+    
+    if not playbook_structure_passed:
+        state['error_message'] = playbook_structure_analysis
+        
+        if state['attempt'] < state['max_retries']:
+            print(f"\n⚠️  Playbook structure analysis failed on attempt {state['attempt']}/{state['max_retries']}")
+            print("🔄 Retrying with structure analysis feedback to LLM...")
+            
+            # Add structure analysis feedback to requirements for next attempt
+            analysis_escaped = playbook_structure_analysis.replace('{', '{{').replace('}', '}}')
+            state['requirements'].append(f"CRITICAL FIX REQUIRED: PLAYBOOK STRUCTURE ANALYSIS: FAIL\n\nAnalysis Result:\n{analysis_escaped}\n\nINSTRUCTIONS TO FIX:\n1. Review the PLAYBOOK STRUCTURE ANALYSIS feedback carefully\n2. Ensure all requirements are properly implemented in the playbook content\n3. Fix any structural issues identified in the analysis\n4. Make sure status variables are properly defined (Jinja2 expressions, not string literals)\n5. Ensure conditional execution logic matches the audit procedure")
+    
+    return state
+
+
 def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGenerationState:
     """LangGraph node: Test playbook on test host."""
     test_hosts = state.get('test_hosts', [])
@@ -314,9 +375,9 @@ def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGeneration
     print("\n" + "=" * 80)
     print(f"\n{'='*80} test_on_test_host_node")
     if len(test_hosts) > 1:
-        print(f"✅ Syntax Valid! Now testing on test host {current_index + 1}/{len(test_hosts)}: {state['test_host']}...")
+        print(f"✅ PLAYBOOK STRUCTURE ANALYSIS PASS! Now testing on test host {current_index + 1}/{len(test_hosts)}: {state['test_host']}...")
     else:
-        print(f"✅ Syntax Valid! Now testing on test host: {state['test_host']}...")
+        print(f"✅ PLAYBOOK STRUCTURE ANALYSIS PASS! Now testing on test host: {state['test_host']}...")
     print("=" * 80)
     
     # Execute on test host with debug tasks skipped for cleaner analysis
@@ -654,10 +715,33 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
     return state
 
 
-def should_continue_after_syntax(state: PlaybookGenerationState) -> Literal["test_on_test_host", "retry", "end"]:
+def should_continue_after_syntax(state: PlaybookGenerationState) -> Literal["analyze_playbook", "test_on_test_host", "retry", "end"]:
     """Conditional edge: Decide what to do after syntax check."""
     print(f"\n{'='*80} should_continue_after_syntax")
     if not state['syntax_valid']:
+        if state['attempt'] < state['max_retries']:
+            return "retry"
+        else:
+            return "end"
+    
+    # If skip_test is True, skip analyze_playbook and go directly to test_on_test_host
+    # (Note: when skip_test is True, test_on_test_host will be skipped in the flow)
+    if state.get('skip_test', False):
+        return "test_on_test_host"
+    
+    # If playbook hasn't been modified, skip analyze_playbook and go directly to test_on_test_host
+    if not state.get('playbook_modified', True):
+        print("⏭️  Skipping analyze_playbook - playbook content unchanged")
+        return "test_on_test_host"
+    
+    # Otherwise, analyze playbook structure first
+    return "analyze_playbook"
+
+
+def should_continue_after_analyze_playbook(state: PlaybookGenerationState) -> Literal["test_on_test_host", "retry", "end"]:
+    """Conditional edge: Decide what to do after playbook structure analysis."""
+    print(f"\n{'='*80} should_continue_after_analyze_playbook")
+    if not state.get('playbook_structure_valid', True):
         if state['attempt'] < state['max_retries']:
             return "retry"
         else:
@@ -694,6 +778,9 @@ def move_to_next_test_host_node(state: PlaybookGenerationState) -> PlaybookGener
         state['current_test_host_index'] = next_index
         state['test_host'] = next_host
         state['attempt'] = 1  # Reset attempt counter for new host
+        state['playbook_modified'] = False  # Playbook unchanged when moving to next host
+        state['playbook_structure_valid'] = False  # Reset playbook structure analysis
+        state['playbook_structure_analysis'] = ""  # Clear previous playbook structure analysis
         state['analysis_passed'] = False  # Reset analysis status
         state['analysis_message'] = ""  # Clear previous analysis
         state['test_success'] = False  # Reset test status
@@ -787,6 +874,7 @@ def create_playbook_workflow() -> StateGraph:
     workflow.add_node("generate", generate_playbook_node)
     workflow.add_node("save", save_playbook_node)
     workflow.add_node("check_syntax", check_syntax_node)
+    workflow.add_node("analyze_playbook", analyze_playbook_node)  # New node for playbook structure analysis
     workflow.add_node("test_on_test_host", test_on_test_host_node)
     workflow.add_node("analyze_output", analyze_output_node)  # New analysis node
     workflow.add_node("execute_on_target", execute_on_target_host_node)
@@ -813,6 +901,18 @@ def create_playbook_workflow() -> StateGraph:
     workflow.add_conditional_edges(
         "check_syntax",
         should_continue_after_syntax,
+        {
+            "analyze_playbook": "analyze_playbook",
+            "test_on_test_host": "test_on_test_host",
+            "retry": "increment_attempt",  # Go to increment node first
+            "end": END
+        }
+    )
+    
+    # Conditional edge from analyze_playbook
+    workflow.add_conditional_edges(
+        "analyze_playbook",
+        should_continue_after_analyze_playbook,
         {
             "test_on_test_host": "test_on_test_host",
             "retry": "increment_attempt",  # Go to increment node first
@@ -916,9 +1016,9 @@ def generate_playbook_workflow(
     initial_test_host = test_hosts[0]
     
     if max_retries is None:
-        max_retries = max(len(requirements), 3)
+        max_retries = int(len(requirements) * 1.5)
         if verbose:
-            print(f"\n💡 Auto-calculated max retries: {max_retries} (based on {len(requirements)} requirements)")
+            print(f"\n💡 Auto-calculated max retries: {max_retries} (1.5x {len(requirements)} requirements)")
     
     # Display configuration
     if verbose:
@@ -967,7 +1067,10 @@ def generate_playbook_workflow(
         "audit_procedure": audit_procedure or "",
         "attempt": 1,
         "playbook_content": "",
+        "playbook_modified": True,  # Assume modified initially (will be set correctly by nodes)
         "syntax_valid": False,
+        "playbook_structure_valid": False,  # New field for playbook structure analysis
+        "playbook_structure_analysis": "",  # New field for playbook structure analysis message
         "test_success": False,
         "analysis_passed": False,
         "analysis_message": "",
@@ -1173,8 +1276,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
         ]
     
     if args.max_retries is None:
-        max_retries = max(len(requirements), 3)
-        print(f"\n💡 Auto-calculated max retries: {max_retries} (based on {len(requirements)} requirements)")
+        max_retries = int(len(requirements) * 1.5)
+        print(f"\n💡 Auto-calculated max retries: {max_retries} (1.5x {len(requirements)} requirements)")
     else:
         max_retries = args.max_retries
     
@@ -1230,7 +1333,10 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
         "audit_procedure": audit_procedure or "",  # CIS Benchmark audit procedure
         "attempt": 1,
         "playbook_content": "",
+        "playbook_modified": True,  # Assume modified initially (will be set correctly by nodes)
         "syntax_valid": False,
+        "playbook_structure_valid": False,  # New field for playbook structure analysis
+        "playbook_structure_analysis": "",  # New field for playbook structure analysis message
         "test_success": False,
         "analysis_passed": False,  # New field
         "analysis_message": "",     # New field
@@ -1238,6 +1344,7 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
         "error_message": "",
         "test_output": "",
         "final_output": "",
+        "connection_error": False,
         "should_retry": False,
         "workflow_complete": False,
         "enhance": args.enhance,

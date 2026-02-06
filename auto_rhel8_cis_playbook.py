@@ -750,7 +750,7 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
     Returns:
         tuple: (success: bool, message: str)
     """
-    max_retries = max(len(requirements), 3)
+    max_retries = int(max(len(requirements), 3) * 1.5)
     
     try:
         # Import the workflow function

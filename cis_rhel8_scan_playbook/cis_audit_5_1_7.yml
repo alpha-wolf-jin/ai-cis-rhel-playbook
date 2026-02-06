@@ -1,0 +1,197 @@
+---
+- name: Data Collection for CIS 5.1.7 - Ensure sshd Banner is configured
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.7"
+    req_1: "Verify the sshd Banner directive is configured to a non-empty path"
+    req_2: "If Match blocks are used, verify Banner directive for applicable connections"
+    req_3: "Verify the configured Banner file exists and display its contents"
+    req_4: "Verify the configured Banner file does NOT contain problematic content"
+    req_5: "OVERALL Verify: Ensure sshd Banner is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        data_2: "Not collected yet"
+        data_3: "Not collected yet"
+        data_4: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Verify the sshd Banner directive is configured to a non-empty path
+    - name: Req 1 - Check Banner directive configuration
+      shell: |
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
+        source /etc/sysconfig/sshd 2>/dev/null
+        sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^banner\h+\/\H+'
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check Banner directive configuration"
+        task_1_cmd: |
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
+          source /etc/sysconfig/sshd 2>/dev/null
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^banner\h+\/\H+'
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_1: "PASS when the command returns a line like 'Banner /etc/issue.net', FAIL when no output is returned"
+
+    # Requirement 2: If Match blocks are used, verify Banner directive for applicable connections
+    - name: Req 2 - Check Banner directive for match block (user sshuser)
+      shell: |
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
+        source /etc/sysconfig/sshd 2>/dev/null
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '^banner\h+\/\H+'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check Banner directive for match block (user sshuser)"
+        task_2_cmd: |
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
+          source /etc/sysconfig/sshd 2>/dev/null
+          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '^banner\h+\/\H+'
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when the command returns the expected Banner path for the specified connection parameters, FAIL when it returns a different or no path"
+
+    # Requirement 3: Verify the configured Banner file exists and display its contents
+    - name: Req 3 - Check Banner file exists and display contents
+      shell: |
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
+        source /etc/sysconfig/sshd 2>/dev/null
+        [ -e "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')" ] && cat "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check Banner file exists and display contents"
+        task_3_cmd: |
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
+          source /etc/sysconfig/sshd 2>/dev/null
+          [ -e "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')" ] && cat "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.rc | default(-1) == 0) else 'FAIL') | trim }}"
+        rationale_3: "PASS when the script successfully outputs the file contents, FAIL if the file does not exist or cannot be read"
+
+    # Requirement 4: Verify the configured Banner file does NOT contain problematic content
+    - name: Req 4 - Check Banner file for problematic content
+      shell: |
+        #!/usr/bin/env bash
+        grep -Psi -- "(\\\v|\\\r|\\\m|\\\s|\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')\b)" "$(sshd -T | awk '$1 == "banner" {print $2}')"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 4 details and determine status
+      set_fact:
+        task_4_name: "Check Banner file for problematic content"
+        task_4_cmd: |
+          #!/usr/bin/env bash
+          grep -Psi -- "(\\\v|\\\r|\\\m|\\\s|\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')\b)" "$(sshd -T | awk '$1 == "banner" {print $2}')"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_4: "PASS when the command returns no output (no matches found), FAIL when any output is returned"
+
+    # Requirement 5: OVERALL Verify - Determine overall compliance
+    - name: Determine overall compliance status
+      set_fact:
+        status_5: >
+          {{ (
+            'PASS' if 
+            (status_1 | trim == 'PASS') and 
+            (status_3 | trim == 'PASS') and 
+            (status_4 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
+        rationale_5: "PASS when req_1=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise. (Note: req_2 is a conditional audit for environments using Match blocks.)"
+
+    # Final compliance report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.7"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

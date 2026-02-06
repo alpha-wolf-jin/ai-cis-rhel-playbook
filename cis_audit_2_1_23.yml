@@ -1,0 +1,244 @@
+---
+- name: Data Collection for CIS 2.1.23
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.23"
+    req_1: "Check if SMTP ports (25, 465, 587) are listening only on loopback interfaces"
+    req_2: "If Postfix is installed, verify its network interfaces"
+    req_3: "If Exim is installed, verify its local interfaces"
+    req_4: "If Sendmail is installed, verify its daemon port options"
+    req_5: "OVERALL Verify: Ensure mail transfer agents are configured for local-only mode"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_4: "Not collected yet"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_5: "Not collected yet"
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Req 1 - Check SMTP ports listening on loopback only
+    - name: Req 1 - Check SMTP ports listening configuration
+      shell: |
+        {
+          a_output2=()
+          a_port_list=("25" "465" "587")
+          for l_port_number in "${a_port_list[@]}"; do
+            if ss -plntu | grep -P -- ':'"$l_port_number"'\b' | grep -Pvq -- '\h+(127\.0\.0\.1|\[?::1\]?):'"$l_port_number"'\b'; then
+              echo "Port $l_port_number is listening on a non-loopback network interface"
+            fi
+          done
+        }
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check SMTP ports listening on loopback only"
+        task_1_cmd: "Check ports 25, 465, 587 with ss command"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_1: "PASS when for each port, the listening address is 127.0.0.1 or ::1, FAIL if any port is listening on a non-loopback interface"
+
+    # Req 2 - Check Postfix configuration
+    - name: Req 2 - Check Postfix inet_interfaces
+      shell: |
+        if command -v postconf &> /dev/null; then
+          postconf -n inet_interfaces 2>/dev/null || echo "postconf command failed"
+        else
+          echo "Postfix not installed"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check Postfix network interfaces"
+        task_2_cmd: "postconf -n inet_interfaces"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >
+          {{
+            (
+              'PASS' if 
+              (result_2.stdout | default('') | trim == 'Postfix not installed') or
+              (result_2.stdout | default('') | trim | lower | regex_search('localhost|loopback-only|127\\.0\\.0\\.1|::1'))
+              else 'FAIL'
+            ) | trim
+          }}
+        rationale_2: "PASS when the value is 'localhost', 'loopback-only', or a loopback IP address, FAIL if the value is 'all', '0.0.0.0', or a non-loopback IP"
+
+    # Req 3 - Check Exim configuration
+    - name: Req 3 - Check Exim local_interfaces
+      shell: |
+        if command -v exim &> /dev/null; then
+          exim -bP local_interfaces 2>/dev/null || echo "exim command failed"
+        else
+          echo "Exim not installed"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check Exim local interfaces"
+        task_3_cmd: "exim -bP local_interfaces"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >
+          {{
+            (
+              'PASS' if 
+              (result_3.stdout | default('') | trim == 'Exim not installed') or
+              (result_3.stdout | default('') | trim | regex_search('127\\.0\\.0\\.1|::1'))
+              else 'FAIL'
+            ) | trim
+          }}
+        rationale_3: "PASS when the value is '127.0.0.1' or '::1', FAIL if it includes any non-loopback IP addresses"
+
+    # Req 4 - Check Sendmail configuration
+    - name: Req 4 - Check Sendmail DaemonPortOptions
+      shell: |
+        if command -v sendmail &> /dev/null; then
+          if [ -f /etc/mail/sendmail.cf ]; then
+            grep -i "O DaemonPortOptions=" /etc/mail/sendmail.cf || echo "DaemonPortOptions not found in sendmail.cf"
+          else
+            echo "sendmail.cf not found"
+          fi
+        else
+          echo "Sendmail not installed"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 4 details and determine status
+      set_fact:
+        task_4_name: "Check Sendmail daemon port options"
+        task_4_cmd: "grep -i 'O DaemonPortOptions=' /etc/mail/sendmail.cf"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >
+          {{
+            (
+              'PASS' if 
+              (result_4.stdout | default('') | trim == 'Sendmail not installed') or
+              (result_4.stdout | default('') | trim == 'sendmail.cf not found') or
+              (result_4.stdout | default('') | trim | regex_search('Addr=127\\.0\\.0\\.1'))
+              else 'FAIL'
+            ) | trim
+          }}
+        rationale_4: "PASS when the Addr= parameter is set to '127.0.0.1', FAIL if Addr= is set to a non-loopback IP or is absent"
+
+    # Req 5 - Overall verification
+    - name: Req 5 - Determine overall compliance
+      set_fact:
+        task_5_name: "Overall verification of MTA local-only mode"
+        task_5_cmd: "N/A - Calculated from previous checks"
+        task_5_rc: 0
+        data_5: "Calculated status"
+        status_5: >
+          {{
+            (
+              'PASS' if 
+              (status_1 | trim == 'PASS') and 
+              (
+                (data_2 | trim == 'Postfix not installed' and data_3 | trim == 'Exim not installed' and data_4 | trim == 'Sendmail not installed') or
+                (status_2 | trim == 'PASS') or 
+                (status_3 | trim == 'PASS') or 
+                (status_4 | trim == 'PASS')
+              )
+              else 'FAIL'
+            ) | trim
+          }}
+        rationale_5: "PASS when req_1=PASS AND (MTA not detected OR (req_2=PASS OR req_3=PASS OR req_4=PASS)), FAIL otherwise"
+
+    # Final compliance report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.1.23"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

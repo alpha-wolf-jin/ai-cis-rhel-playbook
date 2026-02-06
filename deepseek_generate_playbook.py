@@ -2217,6 +2217,12 @@ The playbook MUST implement this audit procedure correctly:
 **CRITICAL: This stage ONLY checks if the playbook CONTENT has the correct structure and tasks implementing requirements.**
 **DO NOT check execution output or data collection - that happens in later stages.**
 
+**Status value definitions:**
+- **PASS**: Requirement is definitively met
+- **FAIL**: Requirement is definitively not met
+- **NA**: Skip related task or Did not execute the related task
+- **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+
 **Playbook Objective:**
 {objective}
 {audit_procedure_section}
@@ -2240,6 +2246,9 @@ The playbook MUST implement this audit procedure correctly:
    - **For STRUCTURAL requirements** (requirements about playbook structure, comments, report generation, etc.):
      - Requirement about "Add comment referencing CIS Benchmark": Check if CIS reference comment exists in the PLAYBOOK CONTENT
      - Requirement about "Create a task named 'Generate compliance report'": Check if "Generate compliance report" task exists in the PLAYBOOK CONTENT
+       - **CRITICAL - COMPLIANCE REPORT VERIFICATION**: When verifying the 'Generate compliance report' task, focus on the semantic content of the message. Ignore YAML-specific formatting artifacts such as block scalar indicators (| or >), trailing newlines, or indentation required by YAML syntax. If the resulting string contains the required text elements in the correct order, consider the 'EXACT format' requirement satisfied.
+       - Check that the task generates a compliance report with the required structure (e.g., "COMPLIANCE REPORT" header, requirement statuses, etc.)
+       - Do NOT fail verification due to YAML formatting differences (block scalars, indentation, newlines) as long as the semantic content is correct
      - Verify these structural requirements are implemented in the playbook YAML
    - **If ANY requirement from the input list is missing from the playbook content, mark the result as FAIL**
    - **Report on ALL requirements** in your analysis, not just data collection ones
@@ -2250,10 +2259,10 @@ The playbook MUST implement this audit procedure correctly:
    - Verify status determination logic matches expected outputs and pass/fail criteria from the audit procedure
    - Check if the playbook correctly implements the overall compliance logic from the audit procedure
 
-3. **CRITICAL - STATUS VARIABLE DEFINITIONS**: Check if the playbook content has proper status variable definitions (not Jinja2 expressions as string literals).
+3. **CRITICAL - SET_FACT TASK PARAMETERS**: Verify that `set_fact` module tasks do NOT have `ignore_errors` or `failed_when` parameters.
    - Look for `set_fact` tasks that set `status_N` variables
-   - Verify they use Jinja2 expressions (with {{{{ }}}}) that EVALUATE to 'PASS'/'FAIL'/'NA'/'UNKNOWN', not string literals
-   - **DO NOT check the actual status values in the output** - only verify the playbook content has proper status variable definitions
+   - `set_fact` tasks should NOT have `ignore_errors: true` or `failed_when: false` (or any `ignore_errors`/`failed_when` parameters)
+   - **NOTE: Do NOT validate Jinja2 syntax or expression correctness - that is handled by other functions**
 
 4. **CONDITIONAL EXECUTION VERIFICATION** (if applicable):
    - Check if the playbook has proper `when:` conditions for requirements that should only execute conditionally
@@ -2265,7 +2274,7 @@ The playbook MUST implement this audit procedure correctly:
 ✅ **PASS if:**
 - All requirements have corresponding tasks in the playbook content
 - Tasks implement the requirements correctly (command/script matches requirement)
-- Status variables are properly defined in playbook content (using Jinja2 expressions, not string literals)
+- `set_fact` tasks do NOT have `ignore_errors` or `failed_when` parameters
 - Structural requirements are present in playbook content (comments, report tasks, etc.)
 - Audit procedure compliance is correct (if audit procedure provided)
 - Conditional execution is properly implemented (if applicable)
@@ -2273,7 +2282,7 @@ The playbook MUST implement this audit procedure correctly:
 ❌ **FAIL if:**
 - Any requirement is missing from the playbook content (no task implements it)
 - Tasks don't match the requirements (wrong command/script)
-- Status variables are defined as string literals instead of Jinja2 expressions
+- `set_fact` tasks have `ignore_errors` or `failed_when` parameters (they should NOT have these)
 - Structural requirements are missing (CIS reference, report task, etc.)
 - Audit procedure compliance is incorrect (if audit procedure provided)
 - Conditional execution is missing when required (if audit procedure requires it)
@@ -2283,7 +2292,9 @@ The playbook MUST implement this audit procedure correctly:
 - Whether data was collected (that's verified in a later stage)
 - What the data contains (that's verified in a later stage)
 - Whether output is empty (empty output is valid and verified later)
-- Actual status values in output (only check if playbook content has proper definitions)
+- Actual status values in output (that's verified in a later stage)
+- Jinja2 syntax or expression correctness (that's validated by other functions)
+- YAML syntax correctness (that's validated by syntax check function)
 
 **RESPONSE FORMAT:**
 
@@ -2297,7 +2308,7 @@ PLAYBOOK_STRUCTURE: PASS
 - **Structural Requirements Verified:** [Y] requirements (e.g., "Generate compliance report" task exists in playbook, CIS reference present in playbook)
 
 All requirements are implemented in the playbook content.
-All status variables are properly defined in playbook content (using Jinja2 expressions, not string literals).
+All `set_fact` tasks do NOT have `ignore_errors` or `failed_when` parameters.
 {{If audit procedure provided: Audit procedure compliance is correct.}}
 {{If conditional execution applicable: Conditional execution is properly implemented.}}
 
@@ -2311,9 +2322,8 @@ All status variables are properly defined in playbook content (using Jinja2 expr
 - Requirement 7: [Verified in playbook: [other structural requirement status]]
 ...
 
-**Status Variable Definitions:**
-- All status_N variables are properly defined using Jinja2 expressions (with {{{{ }}}}) in playbook content
-- No status variables are defined as string literals
+**Set_Fact Task Parameters:**
+- All `set_fact` tasks do NOT have `ignore_errors` or `failed_when` parameters
 
 {{If audit procedure provided:}}
 **Audit Procedure Compliance:**
@@ -2343,11 +2353,21 @@ Missing/Not Implemented:
 - Requirement X: [requirement text] - [explanation: no task found in playbook content that implements this requirement]
 - Requirement Y: [requirement text] - [explanation: task exists but doesn't match requirement (wrong command/script)]
 
-{{If status variables are wrong:}}
-**Status Variable Issues:**
-- Status variables are defined as string literals instead of Jinja2 expressions
-- Example WRONG: `status_1: "'PASS' if condition else 'FAIL'"`
-- Example CORRECT: `status_1: "{{{{ ('PASS' if condition else 'FAIL') | trim }}}}"`
+{{If set_fact tasks have ignore_errors or failed_when:}}
+**Set_Fact Task Issues:**
+- `set_fact` tasks should NOT have `ignore_errors` or `failed_when` parameters
+- Example WRONG:
+  ```yaml
+  - set_fact:
+      status_1: "{{{{ 'PASS' }}}}"
+    ignore_errors: true
+    failed_when: false
+  ```
+- Example CORRECT:
+  ```yaml
+  - set_fact:
+      status_1: "{{{{ 'PASS' }}}}"
+  ```
 
 {{If audit procedure compliance is wrong:}}
 **Audit Procedure Compliance Issues:**
@@ -2364,7 +2384,7 @@ ADVICE TO UPDATE PLAYBOOK:
 1. [Specific instruction on what task to add to implement the missing requirement]
 2. [How to structure the task to match the requirement]
 3. [Ensure the task collects the required data]
-4. [Fix status variable definitions if needed]
+4. [Remove `ignore_errors` and `failed_when` from `set_fact` tasks if present]
 5. [Fix audit procedure compliance if needed]
 6. [Add conditional execution if needed]
 ```
@@ -2709,7 +2729,8 @@ DO NOT analyze compliance - just verify data collection ran and reported results
         
         print("\n📊 Data Collection Analysis Result:")
         print("-" * 40)
-        print(result[:1000] + ("..." if len(result) > 1000 else ""))
+        print(result)
+        #print(result[:1000] + ("..." if len(result) > 1000 else ""))
         print("-" * 40)
         
         # Check result - IMPORTANT: Check for FAIL first because "FAIL" might contain "PASS"
@@ -2780,28 +2801,9 @@ def analyze_playbook_output(
         print("🔍 AI COMPLIANCE ANALYSIS (Analyzing Collected Data)")
         print("=" * 80)
     
-    # STAGE 0: Check playbook structure first (if playbook_content is provided)
-    playbook_structure_passed = True
-    playbook_structure_analysis = ""
-    if playbook_content:
-        playbook_structure_passed, playbook_structure_analysis = analyze_playbook(
-            requirements=requirements,
-            playbook_objective=playbook_objective,
-            playbook_content=playbook_content,
-            audit_procedure=audit_procedure
-        )
-        
-        # If playbook structure failed, return early
-        if not playbook_structure_passed:
-            print("\n⚠️  Playbook Structure Issues Detected")
-            print("   The playbook structure does not correctly implement all requirements.")
-            print("   AI provided specific advice to fix the playbook structure.")
-            print("\n" + "=" * 80)
-            print("📋 DETAILED PLAYBOOK STRUCTURE ANALYSIS:")
-            print("=" * 80)
-            print(playbook_structure_analysis)
-            print("=" * 80)
-            return False, playbook_structure_analysis
+    # NOTE: STAGE 0 (Playbook Structure Analysis) is now handled by LangGraph workflow
+    # in langgraph_deepseek_generate_playbook.py before test execution.
+    # This function only handles STAGE 1 (Data Collection) and STAGE 2 (Compliance Analysis).
     
     # STAGE 1: Check data collection
     data_collection_passed, data_collection_analysis = analyze_data_collection(
