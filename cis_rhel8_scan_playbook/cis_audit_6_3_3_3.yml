@@ -1,0 +1,185 @@
+---
+- name: Data Collection for CIS 6.3.3.3
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.3.3.3"
+    req_1: "Check if sudo log file is configured by extracting SUDO_LOG_FILE from /etc/sudoers*"
+    req_2: "Verify on-disk audit rule for sudo log file"
+    req_3: "Verify loaded audit rule for sudo log file"
+    req_4: "OVERALL Verify: Ensure events that modify the sudo log file are collected"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        sudo_log_file_path: ""
+
+    # Requirement 1: Check if sudo log file is configured
+    - name: Req 1 - Extract SUDO_LOG_FILE from sudoers
+      shell: |
+        SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* | sed -e 's/.*logfile=//;s/,?.*//' -e 's/"//g' -e 's|/|\\/|g')
+        [ -n "${SUDO_LOG_FILE}" ] && echo "SUDO_LOG_FILE is set to: ${SUDO_LOG_FILE}" || echo "ERROR: Variable 'SUDO_LOG_FILE' is unset."
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details and extract SUDO_LOG_FILE path
+      set_fact:
+        task_1_name: "Extract SUDO_LOG_FILE from sudoers"
+        task_1_cmd: |
+          SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* | sed -e 's/.*logfile=//;s/,?.*//' -e 's/\"//g' -e 's|/|\\/|g'); [ -n \"${SUDO_LOG_FILE}\" ] && echo \"SUDO_LOG_FILE is set to: ${SUDO_LOG_FILE}\" || echo \"ERROR: Variable 'SUDO_LOG_FILE' is unset.\"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('SUDO_LOG_FILE is set to:') and not output is search('ERROR: Variable') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when SUDO_LOG_FILE variable is set to a non-empty string (e.g., /var/log/sudo.log), FAIL when variable is unset or empty."
+        sudo_log_file_path: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('SUDO_LOG_FILE is set to:') %}
+            {{ output.split('SUDO_LOG_FILE is set to: ')[1] | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+
+    # Requirement 2: Verify on-disk audit rule
+    - name: Req 2 - Check on-disk audit rule for sudo log file
+      shell: |
+        # Use the full CIS procedure script
+        SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* | sed -e 's/.*logfile=//;s/,?.*//' -e 's/"//g' -e 's|/|\\/|g')
+        [ -n "${SUDO_LOG_FILE}" ] && awk "/^ *-w/ &&/"${SUDO_LOG_FILE}"/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules || printf "ERROR: Variable 'SUDO_LOG_FILE' is unset.\n"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check on-disk audit rule for sudo log file"
+        task_2_cmd: |
+          SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* | sed -e 's/.*logfile=//;s/,?.*//' -e 's/\"//g' -e 's|/|\\/|g'); [ -n \"${SUDO_LOG_FILE}\" ] && awk \"/^ *-w/ &&/\"${SUDO_LOG_FILE}\"/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)\" /etc/audit/rules.d/*.rules || printf \"ERROR: Variable 'SUDO_LOG_FILE' is unset.\\n\"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output is search('ERROR: Variable') %}
+            FAIL
+          {% elif output is search('-w ') and output is search('-p wa') and output is search('-k sudo_log_file') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: "PASS when output contains '-w /var/log/sudo.log -p wa -k sudo_log_file' (or the exact path extracted for SUDO_LOG_FILE), FAIL when output does not match or error is printed."
+
+    # Requirement 3: Verify loaded audit rule
+    - name: Req 3 - Check loaded audit rule for sudo log file
+      shell: |
+        # Use the full CIS procedure script
+        SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* | sed -e 's/.*logfile=//;s/,?.*//' -e 's/"//g' -e 's|/|\\/|g')
+        [ -n "${SUDO_LOG_FILE}" ] && auditctl -l | awk "/^ *-w/ &&/"${SUDO_LOG_FILE}"/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" || printf "ERROR: Variable 'SUDO_LOG_FILE' is unset.\n"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check loaded audit rule for sudo log file"
+        task_3_cmd: |
+          SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* | sed -e 's/.*logfile=//;s/,?.*//' -e 's/\"//g' -e 's|/|\\/|g'); [ -n \"${SUDO_LOG_FILE}\" ] && auditctl -l | awk \"/^ *-w/ &&/\"${SUDO_LOG_FILE}\"/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)\" || printf \"ERROR: Variable 'SUDO_LOG_FILE' is unset.\\n\"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output is search('ERROR: Variable') %}
+            FAIL
+          {% elif output is search('-w ') and output is search('-p wa') and output is search('-k sudo_log_file') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when output contains '-w /var/log/sudo.log -p wa -k sudo_log_file' (or the exact path extracted for SUDO_LOG_FILE), FAIL when output does not match or error is printed."
+
+    # Requirement 4: Overall verification
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A - Calculated from previous results"
+        task_4_rc: 0
+        data_4: "N/A"
+        status_4: >-
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS, FAIL otherwise."
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.3.3"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | trim }}"
+          - "  Rationale: {{ rationale_4 | trim }}"
+          - "========================================================"

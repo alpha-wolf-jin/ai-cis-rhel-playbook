@@ -1,54 +1,65 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0, checkpoint 3.3.1.11
 - name: Data Collection for CIS 3.3.1.11
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.11"
-    req_1: "Verify net.ipv4.conf.default.secure_redirects in the running configuration using command: sysctl net.ipv4.conf.default.secure_redirects"
-    req_2: "Run the following script to verify net.ipv4.conf.default.secure_redirects is persistently configured to 0 in sysctl configuration files"
-    req_3: "OVERALL Verify: Ensure net.ipv4.conf.default.secure_redirects is configured"
+    req_1: "Verify net.ipv4.conf.default.secure_redirects is set to 0 in the running configuration using command: `sysctl net.ipv4.conf.default.secure_redirects`. Rationale: PASS when output is exactly 'net.ipv4.conf.default.secure_redirects = 0', FAIL otherwise"
+    req_2: |
+      Verify net.ipv4.conf.default.secure_redirects = 0 is set in a persistent configuration file using script. Rationale: PASS when script output contains a line matching the pattern ' - \"net.ipv4.conf.default.secure_redirects = 0\" is set in:', FAIL otherwise
+    req_3: "OVERALL Verify: Ensure net.ipv4.conf.default.secure_redirects is configured. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
 
   tasks:
+    - name: Check OS compatibility
+      set_fact:
+        os_mismatch: true
+      when: ansible_distribution != "RedHat" or ansible_distribution_major_version != "8"
+      ignore_errors: true
+
     - name: Initialize data variables
       set_fact:
-        data_1: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: ""
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated - audit tasks not executed"
+        rationale_2: "Not evaluated - audit tasks not executed"
+        rationale_3: "Not evaluated - audit tasks not executed"
 
-    # Requirement 1: Verify net.ipv4.conf.default.secure_redirects in the running configuration using command: sysctl net.ipv4.conf.default.secure_redirects
-    - name: Req 1 - Check running sysctl value
+    # Requirement 1: Verify net.ipv4.conf.default.secure_redirects is set to 0 in the running configuration
+    - name: "Req 1 - Check running sysctl configuration"
       shell: sysctl net.ipv4.conf.default.secure_redirects
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: not os_mismatch|default(false)
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl value"
+        task_1_name: "Check running sysctl configuration"
         task_1_cmd: "sysctl net.ipv4.conf.default.secure_redirects"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv4.conf.default.secure_redirects = 0') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'net.ipv4.conf.default.secure_redirects = 0', FAIL otherwise"
+        rationale_1: |
+          {{ ('PASS when output is exactly \'net.ipv4.conf.default.secure_redirects = 0\', FAIL otherwise' if (result_1.stdout | default('') | trim == 'net.ipv4.conf.default.secure_redirects = 0') else 'FAIL when output is not exactly \'net.ipv4.conf.default.secure_redirects = 0\'') | trim }}
+      when: not os_mismatch|default(false)
 
-    # Requirement 2: Run the following script to verify net.ipv4.conf.default.secure_redirects is persistently configured to 0 in sysctl configuration files
-    - name: Req 2 - Create temporary audit script
+    # Requirement 2: Verify net.ipv4.conf.default.secure_redirects = 0 is set in a persistent configuration file
+    - name: "Req 2 - Create temporary audit script"
       copy:
-        dest: "/tmp/cis_audit_script.sh"
+        dest: "/tmp/cis_audit_script_2.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -78,86 +89,96 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
-      when: data_1 | length > 0
+      when: not os_mismatch|default(false)
 
-    - name: Req 2 - Execute audit script
-      shell: "/tmp/cis_audit_script.sh"
+    - name: "Req 2 - Execute audit script"
+      shell: "/tmp/cis_audit_script_2.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | length > 0
+      when: not os_mismatch|default(false)
 
-    - name: Req 2 - Remove temporary audit script
+    - name: "Req 2 - Remove temporary audit script"
       file:
-        path: "/tmp/cis_audit_script.sh"
+        path: "/tmp/cis_audit_script_2.sh"
         state: absent
-      ignore_errors: true
-      when: data_1 | length > 0
+      when: not os_mismatch|default(false)
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Execute audit script for persistent configuration"
-        task_2_cmd: "/tmp/cis_audit_script.sh"
+        task_2_name: "Check persistent sysctl configuration"
+        task_2_cmd: "Execute CIS audit script for persistent configuration"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{ (
-            'PASS' if (result_2.stdout | default('') | trim | length > 0 and 'net.ipv4.conf.default.secure_redirects = 0' in result_2.stdout)
-            else ('NA' if data_1 | trim == '' else 'FAIL')
-          ) | trim }}
-        rationale_2: "PASS when the script output shows 'net.ipv4.conf.default.secure_redirects = 0' is set in at least one configuration file, FAIL if the script finds a different value or finds no setting, NA if requirement 1 had no output"
-      when: data_1 | length > 0
+        status_2: |
+          {{ ('PASS' if (result_2.stdout | default('') | regex_search(' - \\\"net\\.ipv4\\.conf\\.default\\.secure_redirects = 0\\\" is set in:')) else 'FAIL') | trim }}
+        rationale_2: |
+          {{ ('PASS when script output contains a line matching the pattern \' - \"net.ipv4.conf.default.secure_redirects = 0\" is set in:\', FAIL otherwise' if (result_2.stdout | default('') | regex_search(' - \\\"net\\.ipv4\\.conf\\.default\\.secure_redirects = 0\\\" is set in:')) else 'FAIL when script output does not contain the required pattern') | trim }}
+      when: not os_mismatch|default(false)
 
-    # Requirement 3: OVERALL Verify: Ensure net.ipv4.conf.default.secure_redirects is configured
-    - name: Store requirement 3 details and determine overall status
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "N/A - Derived from requirements 1 and 2"
         task_3_rc: 0
-        data_3: "Combined result of req_1 and req_2"
-        status_3: >
-          {{ (
-            'PASS' if (status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA'))
-            else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when req_1=PASS AND (req_2=PASS or req_2=NA), FAIL otherwise"
-      when: data_1 | length > 0
+        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL when either req_1 or req_2 is not PASS') | trim }}"
+      when: not os_mismatch|default(false)
 
+    # Set UNKNOWN status for OS mismatch scenarios
+    - name: Set UNKNOWN status for OS mismatch
+      set_fact:
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        data_1: "Not collected due to OS version mismatch"
+        data_2: "Not collected due to OS version mismatch"
+        data_3: "Not collected due to OS version mismatch"
+        rationale_1: "OS version mismatch - playbook designed for RHEL 8"
+        rationale_2: "OS version mismatch - playbook designed for RHEL 8"
+        rationale_3: "OS version mismatch - playbook designed for RHEL 8"
+      when: os_mismatch|default(false)
+
+    # Final report - Always runs regardless of OS mismatch
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.1.11"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.11"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
+          - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

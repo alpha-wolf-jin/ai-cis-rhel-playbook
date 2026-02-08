@@ -1,0 +1,224 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.1.2
+- name: Data Collection for CIS 6.1.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.1.2"
+    req_1: "Verify a cron job for AIDE filesystem integrity check exists and is configured per site policy"
+    req_2: "Verify the aidecheck.service systemd unit is enabled"
+    req_3: "Verify the aidecheck.timer systemd unit is enabled"
+    req_4: "Verify the aidecheck.timer systemd unit is active"
+    req_5: "OVERALL Verify: Ensure filesystem integrity is regularly checked (Automated)"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        data_2: "Not collected yet"
+        data_3: "Not collected yet"
+        data_4: "Not collected yet"
+        task_1_name: "Not executed"
+        task_2_name: "Not executed"
+        task_3_name: "Not executed"
+        task_4_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_2_cmd: "N/A"
+        task_3_cmd: "N/A"
+        task_4_cmd: "N/A"
+        task_1_rc: -1
+        task_2_rc: -1
+        task_3_rc: -1
+        task_4_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        status_4: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        rationale_4: "Not evaluated"
+
+    # Requirement 1: Verify a cron job for AIDE filesystem integrity check exists and is configured per site policy
+    - name: Req 1 - Check for AIDE cron job
+      shell: >
+        grep -Ers '^([^#]+\s+)?(\/usr\/s?bin\/|^\s*)aide(\.wrapper)?\s(--?\S+\s)*((--check|update)|\$AIDEARGS)\b' /etc/cron.* /etc/crontab /var/spool/cron/
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check for AIDE cron job"
+        task_1_cmd: |
+          grep -Ers '^([^#]+\s+)?(\/usr\/s?bin\/|^\s*)aide(\.wrapper)?\s(--?\S+\s)*((--check|update)|\$AIDEARGS)\b' /etc/cron.* /etc/crontab /var/spool/cron/
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | length > 0) else 'FAIL') | trim }}"
+        rationale_1: "PASS when a cron job entry is returned, FAIL when no cron job is found"
+
+    # Requirement 2: Verify the aidecheck.service systemd unit is enabled
+    - name: Req 2 - Check aidecheck.service enabled status
+      shell: >
+        systemctl is-enabled aidecheck.service
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length == 0  # Only check systemd if cron check failed
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check aidecheck.service enabled status"
+        task_2_cmd: "systemctl is-enabled aidecheck.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if data_1 | length > 0 %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == 'enabled' or output == 'static' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if data_1 | length > 0 %}
+            NA - Cron job found, systemd check not required
+          {% else %}
+            PASS when output is 'enabled' or 'static', FAIL when output is 'disabled' or 'masked'
+          {% endif %}
+
+    # Requirement 3: Verify the aidecheck.timer systemd unit is enabled
+    - name: Req 3 - Check aidecheck.timer enabled status
+      shell: >
+        systemctl is-enabled aidecheck.timer
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length == 0  # Only check systemd if cron check failed
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check aidecheck.timer enabled status"
+        task_3_cmd: "systemctl is-enabled aidecheck.timer"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if data_1 | length > 0 %}
+            NA
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output == 'enabled' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if data_1 | length > 0 %}
+            NA - Cron job found, systemd check not required
+          {% else %}
+            PASS when output is 'enabled', FAIL when output is 'disabled' or 'masked'
+          {% endif %}
+
+    # Requirement 4: Verify the aidecheck.timer systemd unit is active
+    - name: Req 4 - Check aidecheck.timer active status
+      shell: >
+        systemctl status aidecheck.timer
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length == 0  # Only check systemd if cron check failed
+
+    - name: Store requirement 4 details and determine status
+      set_fact:
+        task_4_name: "Check aidecheck.timer active status"
+        task_4_cmd: "systemctl status aidecheck.timer"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if data_1 | length > 0 %}
+            NA
+          {% else %}
+            {% set output = result_4.stdout | default('') | trim %}
+            {% if output | length > 0 and 'Loaded: loaded' in output and 'Active: active' in output %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_4: >-
+          {% if data_1 | length > 0 %}
+            NA - Cron job found, systemd check not required
+          {% else %}
+            PASS when the output shows the timer unit is loaded and active (e.g., 'Loaded: loaded' and 'Active: active (waiting)'), FAIL otherwise
+          {% endif %}
+
+    # Requirement 5: OVERALL Verify: Ensure filesystem integrity is regularly checked (Automated)
+    - name: Determine overall compliance status
+      set_fact:
+        status_5: >-
+          {% if status_1 == 'PASS' or (status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_5: "PASS when (req_1=PASS) OR (req_2=PASS AND req_3=PASS AND req_4=PASS), FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg: |
+          ========================================================
+                  COMPLIANCE REPORT - CIS 6.1.2
+          ========================================================
+          Reference: {{ cis_reference }}
+          ========================================================
+
+          REQUIREMENT 1 - {{ req_1 }}:
+            Task: {{ task_1_name | default('Task not recorded') }}
+            Command: {{ task_1_cmd | default('N/A') }}
+            Exit code: {{ task_1_rc | default(-1) }}
+            Data: {{ data_1 | default('') | trim }}
+            Status: {{ status_1 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
+
+          REQUIREMENT 2 - {{ req_2 }}:
+            Task: {{ task_2_name | default('Task not recorded') }}
+            Command: {{ task_2_cmd | default('N/A') }}
+            Exit code: {{ task_2_rc | default(-1) }}
+            Data: {{ data_2 | default('') | trim }}
+            Status: {{ status_2 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
+
+          REQUIREMENT 3 - {{ req_3 }}:
+            Task: {{ task_3_name | default('Task not recorded') }}
+            Command: {{ task_3_cmd | default('N/A') }}
+            Exit code: {{ task_3_rc | default(-1) }}
+            Data: {{ data_3 | default('') | trim }}
+            Status: {{ status_3 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
+
+          REQUIREMENT 4 - {{ req_4 }}:
+            Task: {{ task_4_name | default('Task not recorded') }}
+            Command: {{ task_4_cmd | default('N/A') }}
+            Exit code: {{ task_4_rc | default(-1) }}
+            Data: {{ data_4 | default('') | trim }}
+            Status: {{ status_4 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_4 | default('Not evaluated') | trim }}
+
+          ========================================================
+          OVERALL COMPLIANCE:
+            Result: {{ status_5 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_5 | default('Not evaluated') | trim }}
+          ========================================================

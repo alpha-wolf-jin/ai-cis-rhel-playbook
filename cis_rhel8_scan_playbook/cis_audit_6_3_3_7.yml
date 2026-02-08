@@ -1,0 +1,195 @@
+---
+- name: Data Collection for CIS 6.3.3.7
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.3.3.7"
+    req_1: "Check on-disk audit rules for unsuccessful file access attempts"
+    req_2: "Check running audit configuration for unsuccessful file access attempts"
+    req_3: "OVERALL Verify: Ensure unsuccessful file access attempts are collected"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Get UID_MIN value for use in status determination
+    - name: Get UID_MIN value from /etc/login.defs
+      shell: awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
+      args:
+        executable: /bin/bash
+      register: uid_min_result
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store UID_MIN value
+      set_fact:
+        uid_min: "{{ uid_min_result.stdout | default('') | trim }}"
+
+    # Requirement 1: Check on-disk audit rules
+    - name: Req 1 - Check on-disk audit rules for unsuccessful file access attempts
+      shell: |
+        UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+        [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
+        &&/ -F *arch=b(32|64)/ \
+        &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+        &&/ -F *auid>=${UID_MIN}/ \
+        &&(/ -F *exit=-EACCES/||/ -F *exit=-EPERM/) \
+        &&/ -S/ \
+        &&/creat/ \
+        &&/open/ \
+        &&/truncate/ \
+        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
+        || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check on-disk audit rules for unsuccessful file access attempts"
+        task_1_cmd: "Script to extract audit rules from /etc/audit/rules.d/*.rules"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'ERROR: Variable' in output %}
+            FAIL
+          {% elif output == '' %}
+            FAIL
+          {% else %}
+            {% set lines = output.split('\n') | select('match', '^-a') | list %}
+            {% set required_patterns = [
+              '^-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=',
+              '^-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=',
+              '^-a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=',
+              '^-a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>='
+            ] %}
+            {% set found_count = 0 %}
+            {% for line in lines %}
+              {% for pattern in required_patterns %}
+                {% if line is match(pattern + uid_min) and 'auid!=unset' in line and '-k access' in line %}
+                  {% if 'creat,open,openat,truncate,ftruncate' in line %}
+                    {% set found_count = found_count + 1 %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {% if found_count >= 4 %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_1: "PASS when the script output includes all four required rules (for b64/EACCES, b64/EPERM, b32/EACCES, b32/EPERM) with correct syscalls (creat,open,openat,truncate,ftruncate), auid>=UID_MIN, auid!=unset, and key='access', AND UID_MIN is set, FAIL otherwise."
+
+    # Requirement 2: Check running audit configuration
+    - name: Req 2 - Check running audit configuration for unsuccessful file access attempts
+      shell: auditctl -l
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check running audit configuration for unsuccessful file access attempts"
+        task_2_cmd: "auditctl -l"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if uid_min == '' %}
+            FAIL
+          {% else %}
+            {% set lines = output.split('\n') | select('match', '^-a') | list %}
+            {% set required_patterns = [
+              '^-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=',
+              '^-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=',
+              '^-a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=',
+              '^-a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>='
+            ] %}
+            {% set found_count = 0 %}
+            {% for line in lines %}
+              {% for pattern in required_patterns %}
+                {% if line is match(pattern + uid_min) and 'auid!=unset' in line and '-k access' in line %}
+                  {% if 'creat,open,openat,truncate,ftruncate' in line %}
+                    {% set found_count = found_count + 1 %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+            {% if found_count >= 4 %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: "PASS when the command output includes all four required rules (for b64/EACCES, b64/EPERM, b32/EACCES, b32/EPERM) with correct syscalls (creat,open,openat,truncate,ftruncate), auid>=UID_MIN, auid!=unset, and key='access', FAIL otherwise."
+
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "OVERALL Verify: Ensure unsuccessful file access attempts are collected"
+        task_3_cmd: "N/A - Combined check"
+        task_3_rc: 0
+        data_3: "Combined result of requirements 1 and 2"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise."
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.3.7"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('FAIL') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('FAIL when requirement 1 or 2 fails') | trim }}"
+          - "========================================================"

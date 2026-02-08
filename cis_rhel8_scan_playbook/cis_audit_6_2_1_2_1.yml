@@ -1,0 +1,149 @@
+---
+- name: Data Collection for CIS 6.2.1.2.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.2.1.2.1"
+    req_1: "Check if journald will be used for logging on the system"
+    req_2: "Verify systemd-journal-remote is installed using command: rpm -q systemd-journal-remote"
+    req_3: "OVERALL Verify: Ensure systemd-journal-remote is installed"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if journald will be used for logging on the system
+    # Simplified check: Determine if journald is the active logging service
+    - name: Req 1 - Check if journald is the active logging service
+      shell: |
+        # Check if systemd-journald service is active or enabled
+        if systemctl is-active systemd-journald >/dev/null 2>&1; then
+          echo "journald_active"
+        elif systemctl is-enabled systemd-journald >/dev/null 2>&1; then
+          echo "journald_enabled"
+        else
+          echo "journald_not_active_or_enabled"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if journald is the active logging service"
+        task_1_cmd: "Check systemd-journald service status"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output in ['journald_active', 'journald_enabled'] %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when journald is the configured logging service, FAIL otherwise"
+
+    # Requirement 2: Verify systemd-journal-remote is installed
+    # Only execute if journald is used (Requirement 1 = PASS)
+    - name: Req 2 - Check systemd-journal-remote package
+      shell: |
+        rpm -q systemd-journal-remote
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check systemd-journal-remote package"
+        task_2_cmd: "rpm -q systemd-journal-remote"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set journald_used = (status_1 | trim == 'PASS') %}
+          {% if journald_used %}
+            {% if output is regex('^systemd-journal-remote-') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: "PASS when the output matches the pattern systemd-journal-remote-<version>, FAIL when the output indicates the package is not installed"
+
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "Req1: {{ status_1 | trim }}, Req2: {{ status_2 | trim }}"
+        status_3: >-
+          {% set req1_status = status_1 | trim %}
+          {% set req2_status = status_2 | trim %}
+          {% if req1_status == 'PASS' and req2_status == 'PASS' %}
+            PASS
+          {% elif req1_status == 'PASS' and req2_status == 'FAIL' %}
+            FAIL
+          {% elif req1_status == 'FAIL' %}
+            NA
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL when req_1=PASS AND req_2=FAIL. If req_1=FAIL, the overall result is N/A"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.2.1.2.1"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

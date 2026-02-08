@@ -1,0 +1,195 @@
+---
+- name: Data Collection for CIS 6.3.3.6
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.3.3.6"
+    req_1: "Check on-disk audit rules for all privileged commands (setuid/setgid) on mounted filesystems without noexec/nosuid"
+    req_2: "Check running audit configuration for all privileged commands (setuid/setgid) on mounted filesystems without noexec/nosuid"
+    req_3: "OVERALL Verify: Ensure use of privileged commands are collected"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check on-disk audit rules
+    - name: Req 1 - Check on-disk audit rules for privileged commands
+      shell: |
+        {
+           for PARTITION in $(findmnt -n -l -k -it $(awk '/nodev/ { print $2 }' /proc/filesystems | paste -sd,) | grep -Pv "noexec|nosuid" | awk '{print $1}'); do
+              for PRIVILEGED in $(find "${PARTITION}" -xdev -perm /6000 -type f); do
+                 grep -qr "${PRIVILEGED}" /etc/audit/rules.d && printf "OK: '${PRIVILEGED}' found in auditing rules.\n" || printf "Warning: '${PRIVILEGED}' not found in on disk configuration.\n"
+              done
+           done
+        }
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check on-disk audit rules for privileged commands"
+        task_1_cmd: "bash script from CIS audit procedure"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) != 0 %}
+            UNKNOWN
+          {% elif output == '' %}
+            PASS
+          {% elif 'Warning:' in output %}
+            FAIL
+          {% elif 'OK:' in output and 'Warning:' not in output %}
+            PASS
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) != 0 %}
+            Script execution failed (exit code {{ result_1.rc | default(-1) }})
+          {% elif output == '' %}
+            PASS - No privileged commands found on scanned filesystems (nothing to audit)
+          {% elif 'Warning:' in output %}
+            FAIL - Some privileged commands are missing audit rules in /etc/audit/rules.d/
+          {% elif 'OK:' in output and 'Warning:' not in output %}
+            PASS - All privileged commands have audit rules in /etc/audit/rules.d/
+          {% else %}
+            UNKNOWN - Unexpected output format
+          {% endif %}
+
+    # Requirement 2: Check running audit configuration
+    - name: Req 2 - Check running audit configuration for privileged commands
+      shell: |
+        {
+           RUNNING=$(auditctl -l)
+           [ -n "${RUNNING}" ] && for PARTITION in $(findmnt -n -l -k -it $(awk '/nodev/ { print $2 }' /proc/filesystems | paste -sd,) | grep -Pv "noexec|nosuid" | awk '{print $1}'); do
+              for PRIVILEGED in $(find "${PARTITION}" -xdev -perm /6000 -type f); do
+                 printf -- "${RUNNING}" | grep -q "${PRIVILEGED}" && printf "OK: '${PRIVILEGED}' found in auditing rules.\n" || printf "Warning: '${PRIVILEGED}' not found in running configuration.\n"
+              done
+           done \
+           || printf "ERROR: Variable 'RUNNING' is unset.\n"
+        }
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check running audit configuration for privileged commands"
+        task_2_cmd: "bash script from CIS audit procedure"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) != 0 %}
+            UNKNOWN
+          {% elif output == '' %}
+            PASS
+          {% elif 'ERROR:' in output %}
+            FAIL
+          {% elif 'Warning:' in output %}
+            FAIL
+          {% elif 'OK:' in output and 'Warning:' not in output and 'ERROR:' not in output %}
+            PASS
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) != 0 %}
+            Script execution failed (exit code {{ result_2.rc | default(-1) }})
+          {% elif output == '' %}
+            PASS - No privileged commands found on scanned filesystems (nothing to audit)
+          {% elif 'ERROR:' in output %}
+            FAIL - auditctl -l returned no output (auditd may not be running)
+          {% elif 'Warning:' in output %}
+            FAIL - Some privileged commands are missing from active audit rules (auditctl -l)
+          {% elif 'OK:' in output and 'Warning:' not in output and 'ERROR:' not in output %}
+            PASS - All privileged commands have active audit rules
+          {% else %}
+            UNKNOWN - Unexpected output format
+          {% endif %}
+
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - Combined check"
+        task_3_rc: 0
+        data_3: "Combined status from requirements 1 and 2"
+        status_3: >-
+          {% set status1 = status_1 | default('UNKNOWN') | trim %}
+          {% set status2 = status_2 | default('UNKNOWN') | trim %}
+          {% if status1 == 'PASS' and status2 == 'PASS' %}
+            PASS
+          {% elif status1 == 'FAIL' or status2 == 'FAIL' %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% set status1 = status_1 | default('UNKNOWN') | trim %}
+          {% set status2 = status_2 | default('UNKNOWN') | trim %}
+          {% if status1 == 'PASS' and status2 == 'PASS' %}
+            PASS - All privileged commands have audit rules in both on-disk and running configurations
+          {% elif status1 == 'FAIL' or status2 == 'FAIL' %}
+            FAIL - Some privileged commands are missing audit rules in on-disk or running configuration
+          {% else %}
+            UNKNOWN - Cannot determine overall status
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.3.6"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

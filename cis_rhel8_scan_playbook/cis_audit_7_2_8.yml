@@ -1,0 +1,261 @@
+---
+- name: Data Collection for CIS 7.2.8
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 7.2.8"
+    req_1: "Identify all local interactive users (those with valid login shells) and their home directories"
+    req_2: "For each identified interactive user, verify their home directory exists"
+    req_3: "For each existing home directory, verify the owner"
+    req_4: "For each existing home directory, verify the permissions are 0750 or more restrictive"
+    req_5: "OVERALL Verify: Ensure local interactive user home directories are configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Identify all local interactive users
+    - name: Req 1 - Identify interactive users and home directories
+      shell: |
+        {
+          l_valid_shells="^($( awk -F\/ '$NF != "nologin" {print}' /etc/shells | sed -rn '/^\//{s,/,\\\\/,g;p}' | paste -s -d '|' - ))$"
+          awk -v pat="$l_valid_shells" -F: '$(NF) ~ pat { print $1 " " $(NF-1) }' /etc/passwd
+        }
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Identify interactive users and home directories"
+        task_1_cmd: |
+          awk -v pat=\"^($(awk -F\/ '$NF != \"nologin\" {print}' /etc/shells | sed -rn '/^\//{s,/,\\\\/,g;p}' | paste -s -d '|' -))$\" -F: '$(NF) ~ pat { print $1 \" \" $(NF-1) }' /etc/passwd
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.rc == 0) else 'FAIL') | trim }}"
+        rationale_1: "PASS when the command successfully lists users and their home directories, FAIL when it cannot parse /etc/passwd"
+
+    # Requirement 2: Verify home directories exist
+    - name: Req 2 - Check home directory existence
+      shell: |
+        {
+          missing_dirs=""
+          while IFS=" " read -r user home; do
+            if [ ! -d "$home" ]; then
+              missing_dirs="${missing_dirs}User: $user Home: $home\n"
+            fi
+          done <<< "{{ data_1 }}"
+          if [ -n "$missing_dirs" ]; then
+            echo -e "$missing_dirs"
+            exit 1
+          else
+            echo "All home directories exist"
+            exit 0
+          fi
+        }
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length > 0
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check home directory existence"
+        task_2_cmd: |
+          Check each home directory with [ -d \"$home\" ] using data from Requirement 1
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if data_1 | length > 0 %}
+            {{ ('PASS' if (result_2.rc == 0) else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: "PASS when the directory exists for all interactive users, FAIL when any interactive user's home directory does not exist"
+
+    # Requirement 3: Verify home directory owners
+    - name: Req 3 - Check home directory ownership
+      shell: |
+        {
+          wrong_owners=""
+          while IFS=" " read -r user home; do
+            if [ -d "$home" ]; then
+              owner=$(stat -Lc '%U' "$home")
+              if [ "$user" != "$owner" ]; then
+                wrong_owners="${wrong_owners}User: $user Home: $home Owner: $owner\n"
+              fi
+            fi
+          done <<< "{{ data_1 }}"
+          if [ -n "$wrong_owners" ]; then
+            echo -e "$wrong_owners"
+            exit 1
+          else
+            echo "All home directories owned by correct user"
+            exit 0
+          fi
+        }
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length > 0
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check home directory ownership"
+        task_3_cmd: |
+          stat -Lc '%U' \"$home\" for each directory using data from Requirement 1
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if data_1 | length > 0 %}
+            {{ ('PASS' if (result_3.rc == 0) else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_3: "PASS when the owner of the home directory matches the username for all interactive users, FAIL when any home directory is not owned by its respective user"
+
+    # Requirement 4: Verify home directory permissions
+    - name: Req 4 - Check home directory permissions
+      shell: |
+        {
+          bad_perms=""
+          while IFS=" " read -r user home; do
+            if [ -d "$home" ]; then
+              perms=$(stat -Lc '%#a' "$home")
+              # Check if permissions are 0750 or more restrictive (no group or world write or world execute)
+              # Using mask 0027 (group write=0020, world write=0002, world execute=0001)
+              if [ $(( perms & 0027 )) -ne 0 ]; then
+                bad_perms="${bad_perms}User: $user Home: $home Permissions: $perms\n"
+              fi
+            fi
+          done <<< "{{ data_1 }}"
+          if [ -n "$bad_perms" ]; then
+            echo -e "$bad_perms"
+            exit 1
+          else
+            echo "All home directories have proper permissions (0750 or more restrictive)"
+            exit 0
+          fi
+        }
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length > 0
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Check home directory permissions"
+        task_4_cmd: |
+          stat -Lc '%#a' \"$home\" for each directory using data from Requirement 1, check (perms & 0027) == 0
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if data_1 | length > 0 %}
+            {{ ('PASS' if (result_4.rc == 0) else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_4: "PASS when the octal permission mode for all home directories is 0750 or less (e.g., 0750, 0700, 0740), meaning no group or world write permission, FAIL when any home directory has group write (e.g., permission bits 0020) or world write (e.g., permission bits 0002) or world execute (0001) set"
+
+    # Requirement 5: Overall verification
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Overall verification"
+        task_5_cmd: "N/A - Composite check"
+        task_5_rc: 0
+        data_5: "Composite check of requirements 2, 3, and 4"
+        status_5: >-
+          {% if data_1 | length > 0 %}
+            {% if (status_2 | trim == 'PASS') and (status_3 | trim == 'PASS') and (status_4 | trim == 'PASS') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            {% if status_1 | trim == 'PASS' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_5: "PASS when req_2=PASS AND req_3=PASS AND req_4=PASS (if interactive users exist), or PASS when req_1=PASS (if no interactive users), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 7.2.8"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,105 @@
+---
+- name: Data Collection for CIS 6.3.2.2
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.3.2.2"
+    req_1: "Check the value of max_log_file_action in /etc/audit/auditd.conf"
+    req_2: "OVERALL Verify: Ensure audit logs are not automatically deleted"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+
+    # Requirement 1: Check the value of max_log_file_action in /etc/audit/auditd.conf
+    - name: "Req 1 - Check max_log_file_action setting"
+      shell: grep max_log_file_action /etc/audit/auditd.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check max_log_file_action setting"
+        task_1_cmd: "grep max_log_file_action /etc/audit/auditd.conf"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == 'max_log_file_action = keep_logs' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == 'max_log_file_action = keep_logs' %}
+            PASS - Output matches expected value 'max_log_file_action = keep_logs'
+          {% elif output == '' %}
+            FAIL - No output returned, expected 'max_log_file_action = keep_logs'
+          {% else %}
+            FAIL - Expected 'max_log_file_action = keep_logs' but got '{{ output }}'
+          {% endif %}
+
+    # Requirement 2: OVERALL Verify: Ensure audit logs are not automatically deleted
+    # Always execute - overall verification based on Requirement 1 result
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Overall verification"
+        task_2_cmd: "N/A - Derived from requirement 1"
+        task_2_rc: 0
+        data_2: "{{ data_1 | default('') }}"
+        status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
+        rationale_2: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS - Requirement 1 passed, audit logs are configured to be kept (not automatically deleted)
+          {% else %}
+            FAIL - Requirement 1 did not pass, audit logs may be automatically deleted
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.2.2"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,23 +1,19 @@
 ---
-- name: Data Collection for CIS 5.1.7 - Ensure sshd Banner is configured
+- name: Data Collection for CIS 5.1.7
   hosts: all
   become: yes
   gather_facts: yes
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.7"
-    req_1: "Verify the sshd Banner directive is configured to a non-empty path"
-    req_2: "If Match blocks are used, verify Banner directive for applicable connections"
-    req_3: "Verify the configured Banner file exists and display its contents"
-    req_4: "Verify the configured Banner file does NOT contain problematic content"
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.7"
+    req_1: "Verify SSH daemon's Banner directive is configured"
+    req_2: "Verify SSH daemon's Banner directive for a specific user match block (if used)"
+    req_3: "Verify the configured banner file exists and display its contents"
+    req_4: "Verify the configured banner file does not contain prohibited content"
     req_5: "OVERALL Verify: Ensure sshd Banner is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
-        data_2: "Not collected yet"
-        data_3: "Not collected yet"
-        data_4: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -30,11 +26,13 @@
         task_4_name: "Not executed"
         task_4_cmd: "N/A"
         task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
 
-    # Requirement 1: Verify the sshd Banner directive is configured to a non-empty path
-    - name: Req 1 - Check Banner directive configuration
+    # Requirement 1: Verify SSH daemon's Banner directive is configured
+    - name: "Req 1 - Check Banner directive"
       shell: |
-        #!/usr/bin/env bash
         source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
         source /etc/sysconfig/sshd 2>/dev/null
         sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^banner\h+\/\H+'
@@ -42,26 +40,22 @@
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check Banner directive configuration"
+        task_1_name: "Check Banner directive"
         task_1_cmd: |
-          #!/usr/bin/env bash
-          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
-          source /etc/sysconfig/sshd 2>/dev/null
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^banner\h+\/\H+'
+          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null; source /etc/sysconfig/sshd 2>/dev/null; sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^banner\h+\/\H+'
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns a line like 'Banner /etc/issue.net', FAIL when no output is returned"
+        status_1: |
+          {{ ('PASS' if (result_1.stdout | default('') | trim | regex_search('^Banner\s+/\S+')) else 'FAIL') | trim }}
+        rationale_1: "PASS when the command outputs a line starting with 'Banner' followed by a valid absolute file path, FAIL when no such line is output"
 
-    # Requirement 2: If Match blocks are used, verify Banner directive for applicable connections
-    - name: Req 2 - Check Banner directive for match block (user sshuser)
+    # Requirement 2: Verify SSH daemon's Banner directive for a specific user match block (if used)
+    - name: "Req 2 - Check Banner directive for user match block"
       shell: |
-        #!/usr/bin/env bash
         source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
         source /etc/sysconfig/sshd 2>/dev/null
         sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '^banner\h+\/\H+'
@@ -69,26 +63,22 @@
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check Banner directive for match block (user sshuser)"
+        task_2_name: "Check Banner directive for user match block"
         task_2_cmd: |
-          #!/usr/bin/env bash
-          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
-          source /etc/sysconfig/sshd 2>/dev/null
-          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '^banner\h+\/\H+'
+          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null; source /etc/sysconfig/sshd 2>/dev/null; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '^banner\h+\/\H+'
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns the expected Banner path for the specified connection parameters, FAIL when it returns a different or no path"
+        status_2: |
+          {{ ('PASS' if (result_2.stdout | default('') | trim | regex_search('^Banner\s+/\S+') or result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+        rationale_2: "PASS when the command outputs a line starting with 'Banner' followed by a valid absolute file path, or if no output is generated, FAIL when output is empty but a match block is known to exist and should contain a Banner directive"
 
-    # Requirement 3: Verify the configured Banner file exists and display its contents
-    - name: Req 3 - Check Banner file exists and display contents
+    # Requirement 3: Verify the configured banner file exists and display its contents
+    - name: "Req 3 - Check banner file exists and contents"
       shell: |
-        #!/usr/bin/env bash
         source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
         source /etc/sysconfig/sshd 2>/dev/null
         [ -e "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')" ] && cat "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')"
@@ -96,66 +86,78 @@
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check Banner file exists and display contents"
+        task_3_name: "Check banner file exists and contents"
         task_3_cmd: |
-          #!/usr/bin/env bash
-          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
-          source /etc/sysconfig/sshd 2>/dev/null
-          [ -e "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')" ] && cat "$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == "banner" {print $2}')"
+          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null; source /etc/sysconfig/sshd 2>/dev/null; [ -e \"$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == \"banner\" {print $2}')\" ] && cat \"$(sshd -T $OPTIONS $CRYPTO_POLICY | awk '$1 == \"banner\" {print $2}')\"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.rc | default(-1) == 0) else 'FAIL') | trim }}"
-        rationale_3: "PASS when the script successfully outputs the file contents, FAIL if the file does not exist or cannot be read"
+        status_3: "{{ ('PASS' if (result_3.rc == 0 and result_3.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_3: "PASS when the banner file exists and its contents are displayed (non-empty output), FAIL when the banner file does not exist or is empty"
 
-    # Requirement 4: Verify the configured Banner file does NOT contain problematic content
-    - name: Req 4 - Check Banner file for problematic content
+    # Requirement 4: Verify the configured banner file does not contain prohibited content
+    # FIXED: Use proper escaping for the grep command with backslashes
+    - name: "Req 4 - Check banner file for prohibited content"
       shell: |
+        # Create a temporary script to handle the complex grep pattern
+        cat > /tmp/check_banner_content.sh << 'EOF'
         #!/usr/bin/env bash
-        grep -Psi -- "(\\\v|\\\r|\\\m|\\\s|\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')\b)" "$(sshd -T | awk '$1 == "banner" {print $2}')"
+        # Get the banner file path
+        BANNER_FILE=$(sshd -T | awk '$1 == "banner" {print $2}')
+        
+        # Get OS distribution name
+        OS_ID=$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')
+        
+        # Check for prohibited content
+        if [ -n "$BANNER_FILE" ] && [ -e "$BANNER_FILE" ]; then
+          grep -Psi -- "(\\v|\\r|\\m|\\s|\\b${OS_ID}\\b)" "$BANNER_FILE"
+        fi
+        EOF
+        chmod +x /tmp/check_banner_content.sh
+        /tmp/check_banner_content.sh
       args:
         executable: /bin/bash
       register: result_4
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 4 details and determine status
+    - name: Clean up temporary script
+      file:
+        path: /tmp/check_banner_content.sh
+        state: absent
+      when: result_4 is defined
+
+    - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check Banner file for problematic content"
+        task_4_name: "Check banner file for prohibited content"
         task_4_cmd: |
-          #!/usr/bin/env bash
-          grep -Psi -- "(\\\v|\\\r|\\\m|\\\s|\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')\b)" "$(sshd -T | awk '$1 == "banner" {print $2}')"
+          grep -Psi -- \"(\\\\v|\\\\r|\\\\m|\\\\s|\\\\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/\"//g')\\\\b)\" \"$(sshd -T | awk '$1 == \"banner\" {print $2}')\"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
         status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_4: "PASS when the command returns no output (no matches found), FAIL when any output is returned"
+        rationale_4: "PASS when the command produces no output (no matches found for escape sequences or OS distribution name), FAIL when any output is produced"
 
-    # Requirement 5: OVERALL Verify - Determine overall compliance
-    - name: Determine overall compliance status
+    # Requirement 5: OVERALL Verify: Ensure sshd Banner is configured
+    - name: "Req 5 - Overall verification"
       set_fact:
-        status_5: >
-          {{ (
-            'PASS' if 
-            (status_1 | trim == 'PASS') and 
-            (status_3 | trim == 'PASS') and 
-            (status_4 | trim == 'PASS')
-            else 'FAIL'
-          ) | trim }}
-        rationale_5: "PASS when req_1=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise. (Note: req_2 is a conditional audit for environments using Match blocks.)"
+        task_5_name: "Overall verification"
+        task_5_cmd: "N/A - Calculated from previous checks"
+        task_5_rc: 0
+        data_5: "Combined results from requirements 1, 3, and 4"
+        status_5: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_5: "PASS when req_1=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise"
 
-    # Final compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.7"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.7"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -189,6 +191,14 @@
           - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

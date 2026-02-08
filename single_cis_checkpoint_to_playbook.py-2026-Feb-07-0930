@@ -1,0 +1,1361 @@
+#!/usr/bin/env python3
+"""
+CIS Checkpoint to Ansible Playbook Generator
+
+This script:
+1. Queries the CIS RHEL 8 Benchmark using RAG to get checkpoint audit info
+2. Uses DeepSeek AI to generate playbook requirements based on the checkpoint
+3. Generates an Ansible playbook to audit the CIS checkpoint
+4. Optionally executes the playbook on the target host
+
+Usage:
+    python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1"
+    python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1 Ensure cramfs kernel module is not available" --target-host 192.168.122.16
+"""
+
+import os
+import sys
+import json
+import re
+import argparse
+from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# =============================================================================
+# Vector Store Setup (from cis_rhel8_rag_deepseek.py)
+# =============================================================================
+
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_chroma import Chroma
+
+# Configuration - Use same directory as cis_rhel8_rag_deepseek.py
+VECTOR_STORE_DIR = Path(__file__).parent / "CIS_RHEL8_DATA_DEEPSEEK"
+PDF_PATH = "resources/CIS_Red_Hat_Enterprise_Linux_8_Benchmark_v4.0.0.pdf"
+
+# Use HuggingFace embeddings (same as cis_rhel8_rag_deepseek.py)
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+    model_kwargs={'device': 'cpu'},
+    encode_kwargs={'normalize_embeddings': True}
+)
+
+def load_or_create_vector_store():
+    """Load existing vector store or create new one from PDF."""
+    
+    if (VECTOR_STORE_DIR / "chroma.sqlite3").exists():
+        print(f"Loading existing vector store from {VECTOR_STORE_DIR}...")
+        vector_store = Chroma(
+            persist_directory=str(VECTOR_STORE_DIR),
+            embedding_function=embeddings
+        )
+        doc_count = vector_store._collection.count()
+        print(f"Vector store loaded with {doc_count} documents")
+        
+        if doc_count == 0:
+            print("⚠️  WARNING: Vector store exists but has 0 documents!")
+            print("    Deleting empty vector store and recreating...")
+            import shutil
+            shutil.rmtree(VECTOR_STORE_DIR)
+            VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
+        else:
+            # Test search to verify it works
+            try:
+                test_results = vector_store.similarity_search("CIS benchmark", k=1)
+                if test_results:
+                    print(f"✅ Vector store verified - test search returned results")
+                else:
+                    print("⚠️  WARNING: Test search returned no results")
+            except Exception as e:
+                print(f"⚠️  WARNING: Test search failed: {e}")
+            return vector_store
+    
+    # Create new vector store from PDF
+    print("No existing vector store found. Creating from PDF...")
+    
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    
+    print(f"Loading CIS RHEL 8 Benchmark PDF from {PDF_PATH}...")
+    loader = PyPDFLoader(PDF_PATH)
+    data = loader.load()
+    print(f"Loaded {len(data)} pages from CIS benchmark document")
+    
+    # Increased chunk size and overlap to better handle long scripts
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=2000, chunk_overlap=500, add_start_index=True
+    )
+    all_splits = text_splitter.split_documents(data)
+    print(f"Created {len(all_splits)} document chunks")
+    
+    print(f"Building and persisting vector store to {VECTOR_STORE_DIR}...")
+    vector_store = Chroma.from_documents(
+        documents=all_splits,
+        embedding=embeddings,
+        persist_directory=str(VECTOR_STORE_DIR)
+    )
+    print("Vector store created and saved")
+    
+    return vector_store
+
+
+# =============================================================================
+# CIS Checkpoint Search - Using Agent-based RAG (like cis_rhel8_rag_deepseek.py)
+# =============================================================================
+
+def create_cis_search_tool(vector_store):
+    """Create a search tool for the CIS benchmark vector store."""
+    from langchain_core.tools import tool
+    
+    @tool
+    def search_cis_benchmark(query: str) -> str:
+        """Search the CIS RHEL 8 Benchmark document for security control information.
+        
+        Use this tool to find:
+        - Audit procedures for specific CIS controls
+        - Remediation steps for security configurations
+        - Profile applicability (Level 1/Level 2, Server/Workstation)
+        - Rationale for security recommendations
+        
+        Args:
+            query: The CIS control number (e.g., '1.1.1.1') or description to search for
+        """
+        # Increase k to 10 to ensure we get enough context for long scripts and procedures
+        results = vector_store.similarity_search(query, k=10)
+        # Combine top results for more comprehensive context
+        combined_content = "\n\n---\n\n".join([doc.page_content for doc in results])
+        return combined_content
+    
+    return search_cis_benchmark
+
+
+def get_checkpoint_info_with_agent(vector_store, checkpoint: str, verbose: bool = False) -> dict:
+    """
+    Use an agent-based RAG approach to get checkpoint information.
+    This mirrors the approach in cis_rhel8_rag_deepseek.py which works better.
+    
+    Args:
+        vector_store: The Chroma vector store
+        checkpoint: The CIS checkpoint ID/description
+        verbose: If True, print debug information
+        
+    Returns:
+        dict: Structured checkpoint information
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain.agents import create_agent
+    from langchain_core.messages import HumanMessage
+    
+    # Create the search tool
+    search_tool = create_cis_search_tool(vector_store)
+    
+    # Create the LLM - Use deepseek-chat for agentic tool use (reasoner has issues with tool calls in LangChain)
+    llm = ChatOpenAI(
+        model="deepseek-chat",
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+        temperature=0
+    )
+    
+    # Create agent with system prompt optimized for extracting structured info
+    system_prompt = """You are a CIS RHEL 8 security expert. Your task is to find and extract detailed information about a specific CIS checkpoint.
+
+When asked about a checkpoint:
+1. Use the search tool to find information about the checkpoint.
+2. Search multiple times if needed - try different queries like:
+   - The checkpoint number (e.g., "1.1.1.2")
+   - The checkpoint with "Ensure" (e.g., "1.1.1.2 Ensure")
+   - Keywords from the checkpoint (e.g., "freevxfs kernel module")
+3. Extract ALL relevant information including:
+   - Profile Applicability (Level 1/Level 2, Server/Workstation)
+   - Description
+   - Rationale
+   - Audit procedure (exact commands)
+   - Remediation procedure (exact commands)
+   - Impact
+   - Default Value
+
+**CRITICAL INSTRUCTIONS FOR SCRIPTS:**
+- If an audit or remediation procedure contains a bash script, you MUST extract the ENTIRE script.
+- Do NOT truncate scripts. Ensure every line from the opening '{' to the closing '}' is included.
+- If a script seems incomplete in one search result, search again or look at adjacent chunks to find the rest of it.
+- The scripts are essential for the audit - missing even one line makes them useless.
+
+Be thorough and search multiple times to find complete information."""
+
+    agent = create_agent(
+        model=llm,
+        tools=[search_tool],
+        system_prompt=system_prompt
+    )
+    
+    # Query the agent for checkpoint information
+    query = f"""Find and extract ALL information about CIS checkpoint {checkpoint}.
+
+I need the following in your response (use the search tool multiple times if needed):
+1. Checkpoint ID (exact number like 1.1.1.2)
+2. Title (e.g., "Ensure freevxfs kernel module is not available")
+3. Profile Applicability (Level 1 or Level 2, Server or Workstation)
+4. Description (what this control does)
+5. Rationale (why this is important for security)
+6. COMPLETE Audit procedure (include ALL shell commands exactly as shown)
+7. COMPLETE Remediation procedure (include ALL shell commands exactly as shown)
+8. Impact (if any)
+9. Default Value (if mentioned)
+
+Search for "{checkpoint}" and related terms to find all the details."""
+
+    if verbose:
+        print(f"🔍 DEBUG: Querying agent for checkpoint: {checkpoint}")
+    
+    response = agent.invoke(
+        {"messages": [HumanMessage(content=query)]}
+    )
+    
+    # Get the agent's response
+    agent_response = response["messages"][-1].content
+    
+    if verbose:
+        print(f"🔍 DEBUG: Agent response length: {len(agent_response)} characters")
+        print("\n" + "-"*50 + " AGENT RESPONSE " + "-"*50)
+        print(agent_response[:3000] if len(agent_response) > 3000 else agent_response)
+        print("-"*120 + "\n")
+    
+    return agent_response
+
+
+def parse_agent_response_to_checkpoint_info(checkpoint: str, agent_response: str) -> dict:
+    """
+    Parse the agent's natural language response into a structured dictionary.
+    
+    Args:
+        checkpoint: The original checkpoint query
+        agent_response: The agent's response text
+        
+    Returns:
+        dict: Structured checkpoint information
+    """
+
+    patterns = {
+        "checkpoint_id": r"###\s*\d+\.\s*\*\*Checkpoint\s*ID\*\*",
+        "title": r"###\s*\d+\.\s*\*\*Title.*?:?\s*\**",
+        "profile_applicability": r"###\s*\d+\.\s*\*\*Profile\s*Applicability.*?:?\s*\**",
+        "description": r"###\s*\d+\.\s*\*\*Description.*?:?\s*\**",
+        "rationale": r"###\s*\d+\.\s*\*\*Rationale.*?:?\s*\**",
+        "audit_procedure": r"###\s*\d+\.\s*\*\*COMPLETE\s+Audit\s+Procedure\*\*[:\s]*",
+        "remediation_procedure": r"###\s*\d+\.\s*\*\*COMPLETE\s+Remediation\s+Procedure\*\*[:\s]*"
+    }
+
+    results = {}
+
+    for key, header_regex in patterns.items():
+        # Match the header, then capture everything until the next major section header or end of string
+        # A major section header starts with ### followed by a number and **
+        full_pattern = rf"(?i){header_regex}(.*?)(?=\n###\s*\d+\.\s*\*\*|\Z)"
+        
+        match = re.search(full_pattern, agent_response, re.DOTALL)
+        
+        if not match and key in ["audit_procedure", "remediation_procedure"]:
+            # Fallback for audit/remediation if "COMPLETE" prefix is missing or formatting is slightly different
+            simple_key = "Audit" if key == "audit_procedure" else "Remediation"
+            fallback_regex = rf"###\s*\d+\.\s*\*\*{simple_key}.*?\*\*[:\s]*"
+            full_pattern = rf"(?i){fallback_regex}(.*?)(?=\n###\s*\d+\.\s*\*\*|\Z)"
+            match = re.search(full_pattern, agent_response, re.DOTALL)
+        
+        if match:
+            # group(1) is the content AFTER the header match
+            content = match.group(1).strip()
+            
+            # Special handling for checkpoint_id
+            if key == "checkpoint_id":
+                # The checkpoint ID might be on the next line after the header
+                # Example formats:
+                #   ### **1. Checkpoint ID**
+                #   1.8.3
+                #   or
+                #   ### 1. Checkpoint ID
+                #   **1.8.3**
+                #   or
+                #   ### 1. Checkpoint ID: **1.8.3**
+                #   or
+                #   ### 1. **Checkpoint ID**: 1.8.3
+                
+                # First, try to extract from ** markers if present
+                id_match = re.search(r'\*\*(\d+\.\d+[\d\.]*)\*\*', content)
+                if id_match:
+                    content = id_match.group(1)
+                else:
+                    # Remove all markdown markers and whitespace
+                    content = content.strip("*").strip()
+                    # Extract only digits and dots (e.g., '1.1.1.1' or '1.8.3')
+                    # Pattern: must start with digit, then dot, then more digits/dots
+                    id_match = re.search(r'(\d+\.\d+[\d\.]*)', content)
+                    if id_match:
+                        content = id_match.group(1)
+                    else:
+                        # Fallback: any sequence of digits and dots (but must have at least one dot)
+                        id_match = re.search(r'(\d+\.\d+[\d\.]*)', content)
+                        if id_match:
+                            content = id_match.group(1)
+                        else:
+                            # Last resort: try to extract from the original checkpoint parameter
+                            id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint)
+                            if id_match:
+                                content = id_match.group(1)
+                            else:
+                                content = None
+                
+            results[key] = content
+            
+            # Debugging prints
+            if os.getenv("DEBUG_PARSING"):
+                print(f"Captured {key}: {results[key] if results[key] else 'None'}") 
+        else:
+            # Special fallback for checkpoint_id if not found with standard pattern
+            if key == "checkpoint_id":
+                # Try alternative patterns for checkpoint ID
+                # Pattern 1: ### **1. Checkpoint ID**\n1.8.3 (ID on next line without **)
+                alt_pattern1 = r'(?i)###\s*\*\*\s*\d+\.\s*Checkpoint\s*ID\s*\*\*\s*\n\s*(\d+\.\d+[\d\.]*)'
+                match1 = re.search(alt_pattern1, agent_response)
+                if match1:
+                    results[key] = match1.group(1)
+                else:
+                    # Pattern 2: ### 1. Checkpoint ID\n**1.8.3** (ID wrapped in **)
+                    alt_pattern2 = r'(?i)###\s*\d+\.\s*Checkpoint\s*ID\s*\n\s*\*\*(\d+\.\d+[\d\.]*)\*\*'
+                    match2 = re.search(alt_pattern2, agent_response)
+                    if match2:
+                        results[key] = match2.group(1)
+                    else:
+                        # Pattern 3: ### 1. Checkpoint ID\n1.8.3 (ID on next line, no **)
+                        alt_pattern3 = r'(?i)###\s*\d+\.\s*Checkpoint\s*ID\s*\n\s*(\d+\.\d+[\d\.]*)'
+                        match3 = re.search(alt_pattern3, agent_response)
+                        if match3:
+                            results[key] = match3.group(1)
+                        else:
+                            # Pattern 4: Just look for **1.8.3** near "Checkpoint ID"
+                            alt_pattern4 = r'(?i)Checkpoint\s*ID[^\d]*\*\*(\d+\.\d+[\d\.]*)\*\*'
+                            match4 = re.search(alt_pattern4, agent_response)
+                            if match4:
+                                results[key] = match4.group(1)
+                            else:
+                                # Pattern 5: Extract from original checkpoint parameter
+                                id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint)
+                                results[key] = id_match.group(1) if id_match else None
+            else:
+                results[key] = None
+            
+            if os.getenv("DEBUG_PARSING"):
+                print(f"Failed to capture {key}")
+
+    return results
+
+
+# =============================================================================
+# Playbook Requirements Generation 
+# =============================================================================
+
+def extract_audit_steps_from_procedure(audit_procedure: str, checkpoint_id: str = "", title: str = "") -> list:
+    """
+    Extract individual audit steps/commands/scripts from the CIS audit procedure text using DeepSeek AI.
+    
+    Args:
+        audit_procedure: The complete audit procedure text from CIS benchmark
+        checkpoint_id: The checkpoint ID for context
+        title: The checkpoint title
+        
+    Returns:
+        list: List of requirement strings extracted from the audit procedure
+    """
+    if not audit_procedure or len(audit_procedure) < 20:
+        return []
+
+    from langchain_openai import ChatOpenAI
+    from langchain_core.prompts import ChatPromptTemplate
+    
+    # Use reasoner for better logic extraction
+    llm = ChatOpenAI(
+        model="deepseek-chat",
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+        temperature=0
+    )
+    
+    prompt_template = """You are a CIS RHEL 8 security expert. Analyze the following CIS Audit Procedure and extract individual audit requirements.
+
+**Checkpoint ID:** {checkpoint_id}
+**Title:** {title}
+
+**Audit Procedure:**
+{audit_procedure}
+
+**Task:**
+1. Break down the audit procedure into individual, actionable audit steps.
+2. **MERGE related information**: If a step includes a description, a command, and an example output, they MUST be merged into a single requirement. Do not create separate requirements for the command and its example output.
+3. **Analyze expected values**: Carefully look for phrases like "is set to", "should be", "Example output:", or "verify... is...". Use these to determine the EXACT expected value.
+4. **Specific Rationales**: Do NOT use generic rationales like "PASS when command shows compliant state". Instead, be specific.
+   - Example: "Rationale: PASS when output is 'kernel.yama.ptrace_scope = 1', '2', or '3', FAIL otherwise."
+   - Example: "Rationale: PASS when the script successfully verifies the configuration in sysctl files, FAIL if incorrect values are found."
+5. **Complex Logic**: Identify any logical dependencies (AND/OR) between steps.
+6. **Requirement Format**: Each requirement MUST follow this format:
+   "Description of what to check using command: `<command>`. Rationale: PASS when <specific condition>, FAIL when <specific condition>"
+7. **Bash Scripts**: If the procedure includes a bash script, include the FULL script content:
+   "Run the following script: ```#!/usr/bin/env bash\\n<script content>```. Rationale: PASS when <condition>, FAIL when <condition>"
+8. **OVERALL Verify**: The LAST requirement MUST be an "OVERALL Verify" that combines the results of all previous requirements.
+   Example: "OVERALL Verify: <checkpoint title>. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+**Output Format:**
+Return ONLY a JSON list of strings. No markdown code blocks, no explanations.
+Example:
+[
+  "Verify kernel.yama.ptrace_scope in running config using command: `sysctl kernel.yama.ptrace_scope`. Rationale: PASS when output is 'kernel.yama.ptrace_scope = 1', '2', or '3', FAIL otherwise",
+  "OVERALL Verify: Ensure ptrace_scope is restricted. Rationale: PASS when req_1=PASS, FAIL otherwise"
+]
+
+Generate the JSON list now:"""
+
+    prompt = ChatPromptTemplate.from_template(prompt_template)
+    chain = prompt | llm
+    
+    try:
+        response = chain.invoke({
+            'checkpoint_id': checkpoint_id,
+            'title': title,
+            'audit_procedure': audit_procedure
+        })
+        
+        response_text = response.content.strip()
+        
+        # Clean up response - handle potential extra text before/after JSON
+        import json
+        import re
+        
+        # Try to find JSON array pattern [...]
+        json_match = re.search(r'\[\s*".*"\s*\]', response_text, re.DOTALL)
+        if json_match:
+            try:
+                requirements = json.loads(json_match.group(0))
+                if isinstance(requirements, list):
+                    print(f"    ✅ AI extracted {len(requirements)} requirements from audit procedure")
+                    return requirements
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback cleanup
+        if "```json" in response_text:
+            response_text = response_text.split("```json")[1].split("```")[0].strip()
+        elif "```" in response_text:
+            response_text = response_text.split("```")[1].split("```")[0].strip()
+            
+        try:
+            requirements = json.loads(response_text)
+            if isinstance(requirements, list):
+                print(f"    ✅ AI extracted {len(requirements)} requirements from audit procedure")
+                return requirements
+        except json.JSONDecodeError as e:
+            print(f"    ⚠️ AI requirement extraction JSON parse error: {e}")
+            if response_text:
+                print(f"    Raw response preview: {response_text[:100]}...")
+            return []
+            
+        print(f"    ⚠️ AI returned non-list response for requirements extraction")
+        return []
+            
+    except Exception as e:
+        print(f"    ⚠️ AI requirement extraction failed: {e}")
+        return []
+
+
+def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dict:
+    """
+    Generate playbook requirements based on CIS checkpoint info.
+    
+    First attempts to extract requirements directly from the audit procedure,
+    then uses DeepSeek AI to enhance/format them.
+    
+    Args:
+        checkpoint_info: Dict containing checkpoint details
+        
+    Returns:
+        dict: {
+            'objective': str,
+            'requirements': list[str]
+        }
+    """
+    from langchain_openai import ChatOpenAI
+    from langchain_core.prompts import ChatPromptTemplate
+    
+    checkpoint_id = checkpoint_info.get('checkpoint_id', 'Unknown')
+    title = checkpoint_info.get('title', '')
+    
+    # Get raw agent response if available (this contains the full details from agent search)
+    raw_agent_response = checkpoint_info.get('raw_agent_response', '')
+    audit_procedure = checkpoint_info.get('audit_procedure', '')
+    
+    # FIRST: Try to extract requirements directly from audit procedure
+    # Use raw_agent_response if audit_procedure is not available (it contains the full audit details)
+    source_text = audit_procedure if audit_procedure and len(audit_procedure) > 100 else raw_agent_response
+    
+    extracted_requirements = extract_audit_steps_from_procedure(source_text, checkpoint_id, title)
+    
+    if extracted_requirements and len(extracted_requirements) >= 2:
+        print(f"    ✅ Extracted {len(extracted_requirements)} audit requirements directly from audit procedure")
+        for i, req in enumerate(extracted_requirements[:3], 1):
+            preview = req[:100] + '...' if len(req) > 100 else req
+            print(f"       {i}. {preview}")
+        if len(extracted_requirements) > 3:
+            print(f"       ... and {len(extracted_requirements) - 3} more")
+        
+        return {
+            'objective': f"Audit CIS checkpoint {checkpoint_id}: {title}" if title else f"Audit CIS checkpoint: {checkpoint_id}",
+            'requirements': extracted_requirements
+        }
+    
+    print(f"    ⚠️ Could not extract requirements directly, using LLM generation...")
+    
+    # FALLBACK: Use LLM to generate requirements
+    llm = ChatOpenAI(
+        model="deepseek-chat",
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        base_url="https://api.deepseek.com",
+        temperature=0
+    )
+    
+    # Build the prompt - include raw agent response if we have it
+    additional_context = ""
+    if raw_agent_response:
+        additional_context = f"""
+**Full Agent Response (contains complete checkpoint details):**
+{raw_agent_response[:6000]}
+"""
+    
+    prompt_template = """You are an expert system administrator creating Ansible playbooks for CIS benchmark compliance auditing.
+
+Based on the following CIS checkpoint information, generate:
+1. A clear playbook objective (one sentence) focused on AUDITING this security control
+2. A list of specific requirements for an Ansible playbook
+
+**CIS Checkpoint Information:**
+- Checkpoint ID: {checkpoint_id}
+- Title: {title}
+- Profile Applicability: {profile_applicability}
+- Description: {description}
+- Rationale: {rationale}
+
+**Audit Procedure from CIS Benchmark:**
+{audit_procedure}
+
+**Remediation Procedure from CIS Benchmark:**
+{remediation_procedure}
+{additional_context}
+**Task:**
+Generate Ansible playbook requirements that will:
+1. AUDIT the system to check if it complies with this CIS checkpoint
+2. COLLECT the current system state/configuration
+3. COMPARE against the expected values from CIS benchmark
+4. REPORT compliance status (PASS/FAIL) with details
+
+**MERGE related information**: If a step includes a description, a command, and an example output, they MUST be merged into a single requirement. Do not create separate requirements for the command and its example output.
+
+**Analyze expected values**: Carefully look for phrases like "is set to", "should be", "Example output:", or "verify... is...". Use these to determine the EXACT expected value.
+
+**Specific Rationales**: Do NOT use generic rationales like "PASS when command shows compliant state". Instead, be specific.
+   - Example: "Rationale: PASS when output is 'kernel.yama.ptrace_scope = 1', '2', or '3', FAIL otherwise."
+
+**Output Format:**
+Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
+{{
+    "objective": "Audit CIS checkpoint {checkpoint_id}: {title}",
+    "requirements": [
+        "Check <condition> using command: `<command>`. Rationale: PASS when <expected result>, FAIL when <failure condition>",
+        "Verify <setting> with command: `<command>`. Rationale: PASS when <expected>, FAIL otherwise",
+        "Run the following audit script to check <module>: ```#!/usr/bin/env bash\\n<full script content here>```. Rationale: PASS when <condition>, FAIL when <condition>",
+        ...
+    ]
+}}
+
+**Script Inclusion Example:**
+If the audit procedure contains a script like:
+  #!/usr/bin/env bash
+  l_output="" l_output2=""
+  ...
+You MUST include the ENTIRE script in the requirement, like:
+  "Run the following audit script to verify kernel module availability: ```#!/usr/bin/env bash\\nl_output=\"\" l_output2=\"\"\\n...full script...```. Rationale: PASS when script output shows module not available, FAIL otherwise"
+
+**Important Guidelines:**
+- Base requirements DIRECTLY on the audit procedure commands from the checkpoint information
+- Include the exact commands from the CIS benchmark audit procedure
+- Focus on AUDITING (checking compliance), not remediation
+- Each requirement should map to a specific audit step
+- CRITICAL: Each requirement MUST end with "Rationale: PASS when <condition>, FAIL when <condition>" explaining the pass/fail logic
+- Include expected values/outputs for comparison
+- If the Full Agent Response is provided, extract the audit commands from there
+- CRITICAL: If the audit procedure contains a SCRIPT (bash script, shell script), you MUST include the FULL script content in the requirement, NOT just "use the provided script". The requirement must be SELF-CONTAINED with all script details.
+- When including scripts, format them as: "Run the following script: ```<full script content>```"
+- Never reference "the audit script" or "the provided script" without including the actual script code
+- The LAST requirement MUST be an "OVERALL Verify" that combines the results of all previous requirements.
+   Example: "OVERALL Verify: <checkpoint title>. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+Generate the JSON now:"""
+
+    prompt = ChatPromptTemplate.from_template(prompt_template)
+    chain = prompt | llm
+    
+    response = chain.invoke({
+        'checkpoint_id': checkpoint_info.get('checkpoint_id', 'Unknown'),
+        'title': checkpoint_info.get('title', '') or 'Unknown',
+        'profile_applicability': checkpoint_info.get('profile_applicability', '') or 'Not specified',
+        'description': checkpoint_info.get('description', '') or 'Not specified',
+        'additional_context': additional_context,
+        'rationale': checkpoint_info.get('rationale', '') or 'See Full Agent Response above',
+        'audit_procedure': checkpoint_info.get('audit_procedure', '') or 'See Full Agent Response above',
+        'remediation_procedure': checkpoint_info.get('remediation_procedure', '') or 'See Full Agent Response above'
+    })
+    
+    response_text = response.content.strip()
+    
+    # Clean up response - handle potential extra text before/after JSON
+    import json
+    import re
+    
+    # Try to find JSON object pattern {...}
+    json_match = re.search(r'\{\s*".*"\s*\}', response_text, re.DOTALL)
+    if json_match:
+        try:
+            result = json.loads(json_match.group(0))
+            if isinstance(result, dict) and 'requirements' in result:
+                return result
+        except json.JSONDecodeError:
+            pass
+
+    # Fallback cleanup
+    if "```json" in response_text:
+        response_text = response_text.split("```json")[1].split("```")[0].strip()
+    elif "```" in response_text:
+        response_text = response_text.split("```")[1].split("```")[0].strip()
+    
+    try:
+        result = json.loads(response_text)
+        return result
+    except json.JSONDecodeError as e:
+        print(f"Warning: Failed to parse JSON response: {e}")
+        if response_text:
+            print(f"    Raw response preview: {response_text[:100]}...")
+        # Build better fallback requirements using available checkpoint info
+        checkpoint_id = checkpoint_info.get('checkpoint_id', 'Unknown')
+        title = checkpoint_info.get('title', '')
+        audit_proc = checkpoint_info.get('audit_procedure', '')
+        raw_response = checkpoint_info.get('raw_agent_response', '')
+        
+        # Try to extract key audit commands from audit procedure or raw response
+        source_text = audit_proc if audit_proc and len(audit_proc) > 50 else raw_response
+        fallback_requirements = []
+        
+        if source_text:
+            import re
+            # Look for shell commands in the source text
+            cmd_patterns = [
+                r'(?:Run|Execute|Use)[:\s]+[`\'"]?([^`\'"]+(?:lsmod|modprobe|find|grep|cat|ls|systemctl|sysctl)[^`\'"]*)[`\'"]?',
+                r'#\s*([a-z/]+\s+[^\n]+)',  # Commands starting with #
+                r'```(?:bash|shell)?\n([^`]+)```',  # Code blocks
+            ]
+            
+            for pattern in cmd_patterns:
+                matches = re.findall(pattern, source_text, re.IGNORECASE)
+                for match in matches[:5]:  # Limit to 5 commands
+                    cmd = match.strip()
+                    if len(cmd) > 10 and len(cmd) < 200:
+                        fallback_requirements.append(f"Execute audit command: `{cmd}`. Rationale: PASS when command shows compliant state, FAIL otherwise")
+        
+        # If no commands found, use generic but more specific requirements
+        if not fallback_requirements:
+            if title:
+                fallback_requirements.append(f"Verify that: {title}. Rationale: PASS when verified, FAIL otherwise")
+            fallback_requirements.extend([
+                f"Check system configuration for CIS {checkpoint_id}. Rationale: PASS when compliant, FAIL otherwise",
+                "Collect audit evidence and system state. Rationale: PASS when data collected, FAIL otherwise"
+            ])
+        
+        return {
+            'objective': f"Audit CIS checkpoint {checkpoint_id}: {title}" if title else f"Audit CIS checkpoint: {checkpoint_id}",
+            'requirements': fallback_requirements
+        }
+
+
+def run_playbook_generation(objective, requirements, target_host, test_host, become_user, filename, skip_execution=True, audit_procedure=None, enhance=True, skip_test=False):
+    """
+    Call langgraph_deepseek_generate_playbook to generate and execute the playbook.
+    
+    Args:
+        objective: Playbook objective
+        requirements: List of requirements
+        target_host: Target host for execution
+        test_host: Test host for validation
+        become_user: User to become
+        filename: Output filename
+        skip_execution: If True, skip playbook execution (NOT USED - kept for compatibility)
+        audit_procedure: CIS Benchmark audit procedure (script/commands)
+        enhance: If True, check for existing playbook and skip generation if found (default: True)
+        skip_test: If True, skip all test-related tasks and execute directly on target host (default: False)
+        
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    print("\n" + "="*100)
+    print("🚀 Calling langgraph_deepseek_generate_playbook to generate and execute playbook...")
+    print("="*100)
+    
+    max_retries = int(max(len(requirements), 3) * 1.5)
+    print(f"Max retries: {max_retries} (based on {len(requirements)} requirements)")
+    print()
+    
+    try:
+        # Import the workflow function
+        from langgraph_deepseek_generate_playbook import generate_playbook_workflow
+    
+        #print("FileName: ", filename)
+        #ok = input("Enter: ")
+        # Call the workflow programmatically
+        final_state = generate_playbook_workflow(
+            objective=objective,
+            requirements=requirements,
+            target_host=target_host,
+            test_host=test_host,
+            become_user=become_user,
+            filename=filename,
+            audit_procedure=audit_procedure,
+            max_retries=max_retries,
+            verbose=True,
+            enhance=enhance,
+            skip_execution=skip_execution,
+            skip_test=skip_test
+        )
+        
+        # Check if successful
+        if final_state['workflow_complete'] and final_state['test_success']:
+            return True, "Playbook generation and execution completed successfully"
+        else:
+            return False, f"Workflow failed: {final_state['error_message']}"
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"\n❌ Error calling workflow: {str(e)}")
+        print(error_details)
+        return False, f"Error running playbook generation: {str(e)}"
+
+
+# =============================================================================
+# Interactive Mode
+# =============================================================================
+
+def interactive_mode(vector_store, args):
+    """Interactive mode to query CIS checkpoints and generate playbooks."""
+    print("\n" + "="*70)
+    print("CIS RHEL 8 Checkpoint to Ansible Playbook Generator")
+    print("="*70)
+    print("\nEnter CIS checkpoint IDs to generate audit playbooks.")
+    print("Examples:")
+    print("  - 1.1.1.1")
+    print("  - 1.1.1.1 Ensure cramfs kernel module is not available")
+    print("  - 5.2.1 Ensure permissions on /etc/ssh/sshd_config are configured")
+    print("\nType 'quit' or 'exit' to stop.\n")
+    
+    while True:
+        try:
+            checkpoint = input("Enter checkpoint (or 'quit'): ").strip()
+            
+            if not checkpoint:
+                continue
+            
+            if checkpoint.lower() in ['quit', 'exit', 'q']:
+                print("\nGoodbye!")
+                break
+            
+            process_checkpoint(vector_store, checkpoint, args)
+            
+        except KeyboardInterrupt:
+            print("\n\nInterrupted. Goodbye!")
+            break
+        except Exception as e:
+            print(f"\nError: {e}\n")
+
+
+def process_checkpoint(vector_store, checkpoint: str, args):
+    """Process a single CIS checkpoint and generate playbook."""
+    
+    verbose = getattr(args, 'verbose', False)
+    
+    # Step 1 & 2 Combined: Use Agent-based RAG to get checkpoint info (like cis_rhel8_rag_deepseek.py)
+    print("\n" + "="*100)
+    print(f"STEP 1: Querying CIS RHEL 8 Benchmark using Agent RAG for: '{checkpoint}'")
+    print("="*100)
+    
+    # Use agent to get checkpoint info - this works better than direct search
+    agent_response = get_checkpoint_info_with_agent(vector_store, checkpoint, verbose=verbose)
+    print("-"*20, 'agent_response', "-"*20)
+    print(agent_response)
+    print("-"*80)
+    
+    # Step 2: Parse the agent response into structured format
+    print("\n" + "="*100)
+    print("STEP 2: Parsing checkpoint information from agent response")
+    print("="*100)
+    
+    checkpoint_info = parse_agent_response_to_checkpoint_info(checkpoint, agent_response)
+    
+    print(f"\n📋 CIS Checkpoint Details:")
+    print("-"*100)
+    print(f"ID: {checkpoint_info.get('checkpoint_id', 'N/A')}")
+    print(f"Title: {checkpoint_info.get('title', 'N/A') or 'See agent response below'}")
+    print(f"Profile: {checkpoint_info.get('profile_applicability', 'N/A') or 'See agent response below'}")
+    print(f"\nDescription: {checkpoint_info.get('description', 'N/A') or 'See agent response below'}")
+    print(f"\nRationale: {checkpoint_info.get('rationale', 'N/A') or 'See agent response below'}")
+    
+    # Check if we have parsed audit procedure or need to show raw response
+    audit_proc = checkpoint_info.get('audit_procedure', '')
+    remed_proc = checkpoint_info.get('remediation_procedure', '')
+    raw_response = checkpoint_info.get('raw_agent_response', '')
+    checkpoint_id = checkpoint_info.get('checkpoint_id', 'N/A')
+
+    if audit_proc:
+        print("\n" + "-"*100)
+        print("🔍 AUDIT PROCEDURE:")
+        print("-"*100)
+        print(audit_proc)
+    
+    if remed_proc:
+        print("\n" + "-"*100)
+        print("🔧 REMEDIATION PROCEDURE:")
+        print("-"*100)
+        print(remed_proc)
+    
+    # If parsing didn't extract key fields, show the full agent response
+    if raw_response or (not audit_proc and not remed_proc):
+        print("\n" + "-"*100)
+        print("📝 FULL AGENT RESPONSE (use this for requirements):")
+        print("-"*100)
+        response_to_show = raw_response or agent_response
+        print(response_to_show)
+        # Store the agent response in checkpoint_info for use in requirements generation
+        checkpoint_info['raw_agent_response'] = response_to_show
+    print("-"*100)
+    
+    # Step 3: Generate playbook requirements
+    print("\n" + "="*100)
+    print("STEP 3: Generating playbook requirements using DeepSeek AI")
+    print("="*100)
+    
+    playbook_spec = generate_playbook_requirements_from_checkpoint(checkpoint_info)
+    
+    objective = playbook_spec.get('objective', '')
+    requirements = playbook_spec.get('requirements', [])
+    
+    print(f"\n📋 Generated Playbook Specification:")
+    print("-"*100)
+    print(f"Objective: {objective}")
+    print(f"\nRequirements ({len(requirements)} items):")
+    for idx, req in enumerate(requirements, 1):
+        print(f"  {idx}. {req}")
+    print("-"*100)
+    
+    # Interactive requirement review (unless --no-interactive)
+    if not args.no_interactive:
+        print("\n" + "="*100)
+        print("📝 REQUIREMENT REVIEW AND FEEDBACK")
+        print("="*100)
+        print("Options:")
+        print("  1. Press ENTER to generate playbook")
+        print("  2. Type 'add' to add new requirements")
+        print("  3. Type 'edit N' to edit requirement N")
+        print("  4. Type 'delete N' to delete requirement N")
+        print("  5. Type 'skip' to skip playbook generation")
+        print("  6. Type 'help' for more commands")
+        print("="*100)
+        
+        while True:
+            user_input = input("\n👤 Your action (ENTER to generate, 'skip' to skip): ").strip()
+            
+            if not user_input:
+                print("\n✅ Generating playbook...")
+                break
+            
+            if user_input.lower() == 'skip':
+                print("\n⏭️  Skipping playbook generation for this checkpoint")
+                return
+            
+            if user_input.lower() == 'done':
+                print("\n📋 Updated Requirements ({} items):".format(len(requirements)))
+                for idx, req in enumerate(requirements, 1):
+                    print(f"  {idx}. {req}")
+                continue
+            
+            if user_input.lower() == 'add':
+                new_req = input("   Enter new requirement: ").strip()
+                if new_req:
+                    requirements.append(new_req)
+                    print(f"   ✅ Added requirement {len(requirements)}: {new_req}")
+                continue
+            
+            if user_input.lower().startswith('edit '):
+                try:
+                    req_num = int(user_input.split()[1])
+                    if 1 <= req_num <= len(requirements):
+                        print(f"   Current: {requirements[req_num-1]}")
+                        new_text = input("   New text: ").strip()
+                        if new_text:
+                            requirements[req_num-1] = new_text
+                            print(f"   ✅ Updated requirement {req_num}")
+                    else:
+                        print(f"   ❌ Invalid number. Must be 1-{len(requirements)}")
+                except (ValueError, IndexError):
+                    print("   ❌ Invalid format. Use: edit N")
+                continue
+            
+            if user_input.lower().startswith('delete '):
+                try:
+                    req_num = int(user_input.split()[1])
+                    if 1 <= req_num <= len(requirements):
+                        deleted = requirements.pop(req_num-1)
+                        print(f"   ✅ Deleted: {deleted}")
+                    else:
+                        print(f"   ❌ Invalid number. Must be 1-{len(requirements)}")
+                except (ValueError, IndexError):
+                    print("   ❌ Invalid format. Use: delete N")
+                continue
+            
+            if user_input.lower() == 'help':
+                print("\n📖 Commands: ENTER (generate), skip, add, edit N, delete N, done (show reqs)")
+                continue
+            
+            print("   ❌ Unknown command. Type 'help' for options.")
+    
+    # Add CIS reference to requirements
+    # Get checkpoint_id from checkpoint_info, ensuring we use the extracted value
+    # checkpoint_id = checkpoint_info.get('checkpoint_id')
+    checkpoint_id = checkpoint_info.get('checkpoint_id', '0.0.0.0')
+
+    #if not checkpoint_id or checkpoint_id in ['None', 'N/A', '']:
+    #    checkpoint_id = checkpoint
+
+    requirements.append(f"Add comment referencing CIS RHEL 8 Benchmark v4.0.0, checkpoint {checkpoint_id}")
+    requirements.append(f"""Create a task named 'Generate compliance report' that displays a debug msg with this format:
+========================================================
+        COMPLIANCE REPORT - CIS {checkpoint_id}
+========================================================
+Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint {checkpoint_id}
+========================================================
+
+REQUIREMENT 1 - <requirement description>:
+  Task: <task name>
+  Command: <command executed>
+  Exit code: <exit code>
+  Data: <command output>
+  Status: PASS or FAIL
+  Rationale: <why PASS or FAIL based on the requirement's rationale>
+
+(repeat for each requirement)
+
+========================================================
+OVERALL COMPLIANCE:
+  Result: PASS or FAIL
+  Rationale: <overall pass/fail logic explanation>
+========================================================
+
+Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
+    requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks (except `set_fact` tasks) so all checks complete and report status")
+    
+    # Step 4: Generate playbook filename
+    # Extract only digits and dots from checkpoint_id (e.g., "1.8.3" from "1.8.3" or "1.8.3 Ensure...")
+    # Handle None case and extract from original checkpoint if needed
+    clean_checkpoint_id = "unknown_checkpoint"
+    
+    # Debug: Print what we have
+    print(f"\n🔍 DEBUG: Filename generation - checkpoint_info keys: {list(checkpoint_info.keys())}")
+    print(f"🔍 DEBUG: checkpoint_info.get('checkpoint_id') = {repr(checkpoint_info.get('checkpoint_id'))}")
+    print(f"🔍 DEBUG: checkpoint_id variable = {repr(checkpoint_id)}")
+    print(f"🔍 DEBUG: checkpoint parameter = {repr(checkpoint)}")
+    
+    #try:
+    #    # Initialize checkpoint_id_str to avoid UnboundLocalError
+    #    checkpoint_id_str = ""
+    #    
+    #    # Priority 1: Get checkpoint_id directly from checkpoint_info
+    #    checkpoint_id_from_info = checkpoint_info.get('checkpoint_id')
+    #    
+    #    # Try checkpoint_info first - check if it's a valid non-empty value
+    #    checkpoint_id_from_info_str = str(checkpoint_id_from_info).strip() if checkpoint_id_from_info else ""
+    #    if checkpoint_id_from_info_str and checkpoint_id_from_info_str not in ['None', 'N/A', '']:
+    #        checkpoint_id_str = checkpoint_id_from_info_str
+    #        print(f"🔍 DEBUG: Using checkpoint_id_from_info: {repr(checkpoint_id_str)}")
+    #    elif checkpoint_id:
+    #        checkpoint_id_var_str = str(checkpoint_id).strip()
+    #        if checkpoint_id_var_str not in ['None', 'N/A', '']:
+    #            checkpoint_id_str = checkpoint_id_var_str
+    #            print(f"🔍 DEBUG: Using checkpoint_id variable: {repr(checkpoint_id_str)}")
+    #        elif checkpoint:
+    #            checkpoint_id_str = str(checkpoint).strip()
+    #            print(f"🔍 DEBUG: Using checkpoint parameter (checkpoint_id was invalid): {repr(checkpoint_id_str)}")
+    #        else:
+    #            checkpoint_id_str = ""
+    #            print(f"🔍 DEBUG: No valid checkpoint_id found")
+    #    elif checkpoint:
+    #        checkpoint_id_str = str(checkpoint).strip()
+    #        print(f"🔍 DEBUG: Using checkpoint parameter: {repr(checkpoint_id_str)}")
+    #    else:
+    #        checkpoint_id_str = ""
+    #        print(f"🔍 DEBUG: No checkpoint_id found, using empty string")
+    #    
+    #    # Validate and extract
+    #    # Ensure checkpoint_id_str is always a string
+    #    if not isinstance(checkpoint_id_str, str):
+    #        checkpoint_id_str = str(checkpoint_id_str) if checkpoint_id_str is not None else ""
+    #    
+    #    if checkpoint_id_str and checkpoint_id_str not in ["None", "N/A", ""]:
+    #        print(f"🔍 DEBUG: Attempting to extract from: {repr(checkpoint_id_str)}")
+    #        
+    #        # First check: if it's already in the correct format (digits and dots only), use it directly
+    #        try:
+    #            if re.match(r'^\d+\.\d+[\d\.]*$', checkpoint_id_str):
+    #                clean_checkpoint_id = checkpoint_id_str
+    #                print(f"🔍 DEBUG: Checkpoint ID already in correct format: {clean_checkpoint_id}")
+    #            else:
+    #                # Extract only digits and dots pattern (must start with digit+dot)
+    #                id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint_id_str)
+    #                if id_match:
+    #                    clean_checkpoint_id = id_match.group(1)
+    #                    print(f"🔍 DEBUG: Extracted checkpoint ID: {clean_checkpoint_id}")
+    #                else:
+    #                    # Fallback: extract any sequence of digits and dots
+    #                    id_match = re.search(r'(\d+[\d\.]*)', checkpoint_id_str)
+    #                    if id_match:
+    #                        clean_checkpoint_id = id_match.group(1)
+    #                        print(f"🔍 DEBUG: Extracted checkpoint ID (fallback): {clean_checkpoint_id}")
+    #        except (TypeError, AttributeError) as e:
+    #            print(f"⚠️  Warning: Error in regex operations: {e}, checkpoint_id_str type: {type(checkpoint_id_str)}, value: {repr(checkpoint_id_str)}")
+    #            # Fallback: try to convert and extract
+    #            try:
+    #                checkpoint_id_str = str(checkpoint_id_str) if checkpoint_id_str else ""
+    #                id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint_id_str)
+    #                if id_match:
+    #                    clean_checkpoint_id = id_match.group(1)
+    #            except:
+    #                pass
+    #    
+    #    if clean_checkpoint_id == "unknown_checkpoint":
+    #        print(f"⚠️  Warning: Could not extract checkpoint ID from '{checkpoint_id_str}', using default: {clean_checkpoint_id}")
+    #        print(f"    Debug: checkpoint_info.get('checkpoint_id') = {repr(checkpoint_id_from_info)}")
+    #        print(f"    Debug: checkpoint_id variable = {repr(checkpoint_id)}")
+    #        print(f"    Debug: checkpoint parameter = {repr(checkpoint)}")
+    #        # Last resort: try to extract from checkpoint parameter
+    #        if checkpoint:
+    #            id_match = re.search(r'(\d+\.\d+[\d\.]*)', str(checkpoint))
+    #            if id_match:
+    #                clean_checkpoint_id = id_match.group(1)
+    #                print(f"    ✅ Extracted from checkpoint parameter: {clean_checkpoint_id}")
+    #except Exception as e:
+    #    # Fallback on any error
+    #    print(f"⚠️  Warning: Error extracting checkpoint ID: {e}")
+    #    import traceback
+    #    traceback.print_exc()
+    #    # Try to extract from original checkpoint string as last resort
+    #    try:
+    #        if checkpoint:
+    #            id_match = re.search(r'(\d+\.\d+[\d\.]*)', str(checkpoint))
+    #            if id_match:
+    #                clean_checkpoint_id = id_match.group(1)
+    #                print(f"    ✅ Extracted from checkpoint parameter (exception handler): {clean_checkpoint_id}")
+    #    except:
+    #        pass
+    #
+    #print("checkpoint_id: ", checkpoint_id)
+    #ok = input("Enter: ")
+
+    # Replace dots with underscores for filename (e.g., "1.8.3" -> "1_8_3")
+    #safe_checkpoint_id = clean_checkpoint_id.replace('.', '_')
+    safe_checkpoint_id = checkpoint_id.replace('.', '_')
+    base_filename = args.filename if args.filename else f"cis_audit_{safe_checkpoint_id}.yml"
+    print(f"🔍 DEBUG: Final filename: {base_filename}")
+    
+    # Handle output directory
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+        # Create directory if it doesn't exist
+        output_dir.mkdir(parents=True, exist_ok=True)
+        filename = str(output_dir / base_filename)
+    else:
+        filename = base_filename
+    
+    #print("FileName: ", filename)
+    #ok = input("Enter: ")
+
+    # Step 4: Generate and optionally execute playbook
+    print("\n" + "="*100)
+    print("STEP 4: Generating Ansible Playbook")
+    print("="*100)
+    print(f"Target Host:    {args.target_host}")
+    print(f"Become User:    {args.become_user}")
+    print(f"Output File:    {filename}")
+    
+    # Get the audit procedure from checkpoint info
+    # Priority: 1) parsed audit_procedure, 2) raw_agent_response (contains full details)
+    audit_procedure = checkpoint_info.get('audit_procedure', '')
+    raw_response = checkpoint_info.get('raw_agent_response', '')
+    
+    # If audit_procedure is empty or generic, try to extract from raw_agent_response
+    if not audit_procedure or audit_procedure in ['Not specified', 'See Full Agent Response above', 'N/A', '']:
+        if raw_response:
+            # Try multiple patterns to extract audit procedure
+            import re
+            audit_patterns = [
+                # Pattern 1: **Audit:** or **Audit Procedure:** section
+                r'\*\*Audit(?:\s+Procedure)?\*\*[:\s]*\n?(.*?)(?=\*\*(?:Remediation|Impact|Default|References)|\n\n\*\*|$)',
+                # Pattern 2: Audit: or Audit Procedure: section  
+                r'(?:Audit|AUDIT)(?:\s+Procedure)?[:\s]*\n(.*?)(?=(?:Remediation|REMEDIATION|Impact|IMPACT|Default|DEFAULT|References|$))',
+                # Pattern 3: numbered section like "6. Audit procedure"
+                r'\d+\.\s*(?:Audit|AUDIT)[^\n]*\n(.*?)(?=\d+\.\s*(?:Remediation|Impact)|$)',
+            ]
+            
+            for pattern in audit_patterns:
+                audit_match = re.search(pattern, raw_response, re.DOTALL | re.IGNORECASE)
+                if audit_match and len(audit_match.group(1).strip()) > 50:
+                    audit_procedure = audit_match.group(1).strip()
+                    break
+            
+            # If still no audit procedure found, use the FULL raw_agent_response
+            # This contains all the checkpoint details including audit commands
+            if not audit_procedure or len(audit_procedure) < 50:
+                # The raw_agent_response contains the complete checkpoint info
+                # which the LLM can use to understand what needs to be audited
+                audit_procedure = raw_response
+                print(f"    Using full agent response as audit context ({len(audit_procedure)} chars)")
+    
+    if audit_procedure and len(audit_procedure) > 50:
+        print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure will be used)")
+        # Show a preview of the audit procedure
+        preview_lines = audit_procedure[:500].split('\n')[:5]
+        for line in preview_lines:
+            if line.strip():
+                print(f"                {line[:80]}{'...' if len(line) > 80 else ''}")
+        if len(audit_procedure) > 500:
+            print(f"                ... ({len(audit_procedure) - 500} more chars)")
+    else:
+        print(f"Audit Proc:     Not available (using requirements only)")
+    
+    if args.skip_execution:
+        print("⚠️  Execution will be SKIPPED (--skip-execution flag)")
+    
+    if getattr(args, 'skip_test', False):
+        print("⚠️  Test tasks will be SKIPPED (--skip-test flag) - will execute directly on target host")
+    
+    #print("FileName: ", filename)
+    #ok = input("Enter: ")
+
+    # audit_procedure was already extracted above in Step 4
+    success, output = run_playbook_generation(
+        objective=objective,
+        requirements=requirements,
+        target_host=args.target_host,
+        test_host=args.test_host if args.test_host else args.target_host,
+        become_user=args.become_user,
+        filename=filename,
+        skip_execution=args.skip_execution,
+        audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None,
+        enhance=args.enhance,
+        skip_test=getattr(args, 'skip_test', False)
+    )
+    
+    # Summary
+    print("\n" + "="*100)
+    print("📊 SUMMARY")
+    print("="*100)
+    
+    if success:
+        print(f"✅ Successfully generated audit playbook!")
+        print(f"\n📋 CIS Checkpoint: {checkpoint_info.get('checkpoint_id', checkpoint)}")
+        print(f"📄 Title: {checkpoint_info.get('title', 'N/A')}")
+        print(f"📁 Playbook: {filename}")
+        print(f"🎯 Target: {args.target_host}")
+    else:
+        print(f"❌ Playbook generation failed: {output}")
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Generate Ansible audit playbooks from CIS RHEL 8 checkpoints',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive mode
+  python3 cis_checkpoint_to_playbook.py
+  
+  # Single checkpoint
+  python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1"
+  
+  # With custom target host
+  python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --target-host 192.168.122.16
+  
+  # Save to custom directory
+  python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --output-dir ./playbooks
+  
+  # Skip execution (generate only)
+  python3 cis_checkpoint_to_playbook.py --checkpoint "5.2.4" --skip-execution
+"""
+    )
+    
+    parser.add_argument(
+        '--checkpoint', '-c',
+        type=str,
+        default=None,
+        help='CIS checkpoint ID or description (e.g., "1.1.1.1" or "Ensure cramfs kernel module is not available")'
+    )
+    
+    parser.add_argument(
+        '--target-host', '-t',
+        type=str,
+        default='192.168.122.16',
+        help='Target host for playbook execution (default: 192.168.122.16)'
+    )
+    
+    parser.add_argument(
+        '--test-host',
+        type=str,
+        default=None,
+        help='Test host for validation before target execution'
+    )
+    
+    parser.add_argument(
+        '--become-user', '-u',
+        type=str,
+        default='root',
+        help='User to become when executing tasks (default: root)'
+    )
+    
+    parser.add_argument(
+        '--filename', '-f',
+        type=str,
+        default=None,
+        help='Output filename for the generated playbook (default: cis_audit_<checkpoint>.yml)'
+    )
+    
+    parser.add_argument(
+        '--output-dir', '-d',
+        type=str,
+        default=None,
+        help='Output directory for the generated playbook (default: current directory)'
+    )
+    
+    parser.add_argument(
+        '--skip-execution',
+        action='store_true',
+        help='Generate playbook but skip execution'
+    )
+    
+    parser.add_argument(
+        '--skip-test',
+        dest='skip_test',
+        action='store_true',
+        help='Skip all test-related tasks and execute directly on target host (playbook must exist)'
+    )
+    
+    parser.add_argument(
+        '--no-interactive',
+        action='store_true',
+        help='Skip interactive requirement review'
+    )
+    
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Show verbose output including raw search results for debugging'
+    )
+    
+    parser.add_argument(
+        '--no-enhance',
+        dest='enhance',
+        action='store_false',
+        help='Disable enhance mode (always generate new playbook). Default: enhance=True (check for existing playbook)'
+    )
+    
+    parser.add_argument(
+        '--generate',
+        action='store_true',
+        help='Force playbook generation regardless of whether playbook exists (equivalent to --no-enhance)'
+    )
+    
+    args = parser.parse_args()
+    
+    args.enhance = True
+    # If --generate is specified, set enhance=False
+    if args.generate:
+        args.enhance = False
+    
+    ## Set default enhance=True if not explicitly set via --no-enhance or --generate
+    #if not hasattr(args, 'enhance') or args.enhance is None:
+    #    args.enhance = True
+    
+    try:
+        # When skip_test is True, we don't need to query CIS benchmark
+        # We just execute the existing playbook directly
+        if getattr(args, 'skip_test', False):
+            if args.checkpoint:
+                # Extract checkpoint ID from checkpoint string (e.g., "2.1.6" from "2.1.6 Ensure...")
+                import re
+                checkpoint_match = re.search(r'^(\d+\.\d+\.\d+)', args.checkpoint)
+                checkpoint_id = checkpoint_match.group(1) if checkpoint_match else "0.0.0"
+                
+                # Generate filename from checkpoint
+                filename = args.filename if args.filename else f"cis_rhel8_scan_playbook/cis_audit_{checkpoint_id.replace('.', '_')}.yml"
+                
+                # Use minimal values for objective and requirements since we're just executing existing playbook
+                objective = f"Audit CIS checkpoint {checkpoint_id}: {args.checkpoint}"
+                requirements = [f"Execute existing playbook for CIS checkpoint {checkpoint_id}"]
+                
+                # Call run_playbook_generation directly without CIS benchmark query
+                run_playbook_generation(
+                    objective=objective,
+                    requirements=requirements,
+                    target_host=args.target_host,
+                    test_host=args.test_host if args.test_host else args.target_host,
+                    become_user=args.become_user,
+                    filename=filename,
+                    skip_execution=args.skip_execution,
+                    audit_procedure=None,
+                    enhance=args.enhance,
+                    skip_test=args.skip_test
+                )
+            else:
+                print("❌ ERROR: --skip-test requires --checkpoint to be specified")
+                sys.exit(1)
+        else:
+            # Load vector store for normal flow
+            print("\n" + "="*100)
+            print("🔧 Initializing CIS RHEL 8 Benchmark Vector Store")
+            print("="*100)
+            
+            vector_store = load_or_create_vector_store()
+            print("✅ Vector store ready")
+            
+            if args.checkpoint:
+                # Single checkpoint mode
+                process_checkpoint(vector_store, args.checkpoint, args)
+            else:
+                # Interactive mode
+                interactive_mode(vector_store, args)
+            
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,119 +1,178 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.21
-- name: Data Collection for CIS 5.1.21 - Ensure sshd PermitEmptyPasswords is disabled
+- name: Data Collection for CIS 5.1.21
   hosts: all
   become: yes
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.21"
-    req_1: "Verify the global sshd configuration has PermitEmptyPasswords disabled"
-    req_2: "If Match blocks are used, verify PermitEmptyPasswords is disabled for test user 'sshuser'"
+    req_1: "Run primary audit script for PermitEmptyPasswords"
+    req_2: "Run audit script for Match blocks (if used)"
     req_3: "OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled"
 
   tasks:
+    - name: Check OS compatibility
+      set_fact:
+        os_mismatch: "{{ ansible_distribution != 'RedHat' or ansible_distribution_major_version != '8' }}"
+      when: ansible_distribution is defined and ansible_distribution_major_version is defined
+
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
-        data_2: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
 
-    - name: Check if Match blocks are present in sshd configuration
+    # Requirement 1: Run primary audit script for PermitEmptyPasswords
+    - name: "Req 1 - Check PermitEmptyPasswords setting"
       shell: |
-        grep -q '^Match' /etc/ssh/sshd_config 2>/dev/null || test $? -eq 1
-      args:
-        executable: /bin/bash
-      register: match_blocks_check
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Set match_blocks_present fact
-      set_fact:
-        match_blocks_present: "{{ match_blocks_check.rc == 0 }}"
-
-    # Requirement 1: Verify the global sshd configuration has PermitEmptyPasswords disabled
-    - name: Req 1 - Check global sshd PermitEmptyPasswords setting
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i permitemptypasswords || true
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config
+        source /etc/sysconfig/sshd
+        sshd -T $OPTIONS $CRYPTO_POLICY | grep -i permitemptypasswords
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: not os_mismatch|default(false)
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global sshd PermitEmptyPasswords setting"
+        task_1_name: "Check PermitEmptyPasswords setting"
         task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i permitemptypasswords"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'permitemptypasswords no', FAIL otherwise"
+        status_1: >-
+          {% if os_mismatch|default(false) %}
+            NA
+          {% else %}
+            {{ ('PASS' if (result_1.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL') | trim }}
+          {% endif %}
+        rationale_1: >-
+          {% if os_mismatch|default(false) %}
+            OS mismatch - audit not applicable for this OS version
+          {% else %}
+            PASS when the output is exactly 'permitemptypasswords no', FAIL otherwise
+          {% endif %}
+      when: not os_mismatch|default(false)
 
-    # Requirement 2: If Match blocks are used, verify PermitEmptyPasswords is disabled for test user 'sshuser'
-    - name: Req 2 - Check sshd PermitEmptyPasswords setting for test user (if Match blocks used)
+    - name: Set requirement 1 details for OS mismatch
+      set_fact:
+        task_1_name: "Check PermitEmptyPasswords setting"
+        task_1_cmd: "OS mismatch - command not executed"
+        task_1_rc: -1
+        data_1: "OS mismatch - Red Hat 8 required"
+        status_1: "NA"
+        rationale_1: "OS mismatch - audit not applicable for this OS version"
+      when: os_mismatch|default(false)
+
+    # Requirement 2: Run audit script for Match blocks (if used)
+    - name: "Req 2 - Check PermitEmptyPasswords for Match blocks"
       shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser 2>/dev/null | grep -i permitemptypasswords || true
+        #!/usr/bin/env bash
+        source /etc/crypto-policies/back-ends/opensshserver.config
+        source /etc/sysconfig/sshd
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i permitemptypasswords
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: match_blocks_present
+      when: not os_mismatch|default(false)
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sshd PermitEmptyPasswords setting for test user 'sshuser'"
+        task_2_name: "Check PermitEmptyPasswords for Match blocks"
         task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i permitemptypasswords"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL' if match_blocks_present else 'NA') | trim }}"
-        rationale_2: "{{ ('PASS when output is "permitemptypasswords no", FAIL otherwise' if match_blocks_present else 'NA - Match blocks not used in sshd configuration') | trim }}"
+        status_2: >-
+          {% if os_mismatch|default(false) %}
+            NA
+          {% else %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL') | trim }}
+          {% endif %}
+        rationale_2: >-
+          {% if os_mismatch|default(false) %}
+            OS mismatch - audit not applicable for this OS version
+          {% else %}
+            PASS when the output is exactly 'permitemptypasswords no' for the specified user connection test, FAIL otherwise
+          {% endif %}
+      when: not os_mismatch|default(false)
 
-    # Requirement 3: OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled
-    - name: Store requirement 3 details and determine overall status
+    - name: Set requirement 2 details for OS mismatch
       set_fact:
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA')) else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+        task_2_name: "Check PermitEmptyPasswords for Match blocks"
+        task_2_cmd: "OS mismatch - command not executed"
+        task_2_rc: -1
+        data_2: "OS mismatch - Red Hat 8 required"
+        status_2: "NA"
+        rationale_2: "OS mismatch - audit not applicable for this OS version"
+      when: os_mismatch|default(false)
 
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled"
+        task_3_cmd: "N/A (calculated from req_1 and req_2)"
+        task_3_rc: 0
+        data_3: "Primary check: {{ data_1 | default('') }}, Match block check: {{ data_2 | default('') }}"
+        status_3: >-
+          {% if os_mismatch|default(false) %}
+            NA
+          {% elif status_1 | default('UNKNOWN') | trim == 'PASS' and (data_2 | default('') | trim == '' or status_2 | default('UNKNOWN') | trim == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if os_mismatch|default(false) %}
+            OS mismatch - audit not applicable for this OS version
+          {% else %}
+            PASS when req_1=PASS AND (Match blocks are not used OR req_2=PASS), FAIL otherwise
+          {% endif %}
+
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.21"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.21"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

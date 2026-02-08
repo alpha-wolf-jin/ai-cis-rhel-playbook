@@ -1,135 +1,137 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0, checkpoint 2.4.1.9
-- name: Data Collection for CIS checkpoint 2.4.1.9
+- name: Data Collection for CIS 2.4.1.9
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: yes
   vars:
     kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.9"
-    req_1: "Verify cron is installed on the system"
-    req_2: "Verify /etc/cron.allow exists, has permissions 0640 or more restrictive, is owned by root, and is group-owned by root or crontab"
-    req_3: "Verify /etc/cron.deny either does NOT exist OR, if it exists, has permissions 0640 or more restrictive, is owned by root, and is group-owned by root or crontab"
+    req_1: "Check if cron is installed"
+    req_2: "Verify /etc/cron.allow exists and has correct permissions/ownership"
+    req_3: "Verify /etc/cron.deny either does not exist OR has correct permissions/ownership"
     req_4: "OVERALL Verify: Ensure access to crontab is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
 
-    # Requirement 1: Verify cron is installed on the system
-    - name: Req 1 - Check if cron is installed
+    # Requirement 1: Check if cron is installed
+    - name: "Req 1 - Check cron installation"
       shell: rpm -q cronie
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if cron is installed"
+        task_1_name: "Check cron installation"
         task_1_cmd: "rpm -q cronie"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
-        rationale_1: "PASS when cron is installed (exit code 0), FAIL otherwise"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is search('cronie-')) else 'FAIL') | trim }}"
+        rationale_1: "PASS when cronie package is installed (output shows version), FAIL when not installed (output: 'package cronie is not installed')"
 
-    # Requirement 2: Verify /etc/cron.allow exists, has permissions 0640 or more restrictive, is owned by root, and is group-owned by root or crontab
-    - name: Req 2 - Check /etc/cron.allow permissions and ownership
-      shell: >
-        stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.allow 2>/dev/null || echo 'File not found'
+    # Requirement 2: Verify /etc/cron.allow exists and has correct permissions/ownership
+    - name: "Req 2 - Check cron.allow permissions"
+      shell: |
+        if [ -e "/etc/cron.allow" ]; then
+          stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.allow
+        else
+          echo "File /etc/cron.allow does not exist"
+        fi
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
       when: status_1 | trim == 'PASS'
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check /etc/cron.allow permissions and ownership"
-        task_2_cmd: "stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.allow 2>/dev/null || echo 'File not found'"
+        task_2_name: "Check cron.allow permissions"
+        task_2_cmd: "stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.allow"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{ (
-            'PASS' if
-            result_2.stdout | default('') | trim != 'File not found' and
-            result_2.stdout | default('') | trim != '' and
-            (
-              (result_2.stdout | default('') | trim | regex_search('Access: \\(([0-7]{3})/') | first | int <= 640) and
-              (result_2.stdout | default('') | trim | regex_search('Owner: \\((root)\\)') | first == 'root') and
-              (
-                (result_2.stdout | default('') | trim | regex_search('Group: \\((root)\\)') | first == 'root') or
-                (result_2.stdout | default('') | trim | regex_search('Group: \\((crontab)\\)') | first == 'crontab')
-              )
-            )
-            else 'FAIL'
-          ) | trim }}
-        rationale_2: "PASS when /etc/cron.allow exists, has permissions 0640 or more restrictive (octal <= 640), is owned by root, and is group-owned by root or crontab, FAIL otherwise"
+        status_2: >-
+          {% if status_1 | trim == 'FAIL' %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == 'Access: (640/-rw-r-----) Owner: (root) Group: (root)' or
+                  output == 'Access: (640/-rw-r-----) Owner: (root) Group: (crontab)' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: "PASS when output matches exactly 'Access: (640/-rw-r-----) Owner: (root) Group: (root)' OR 'Access: (640/-rw-r-----) Owner: (root) Group: (crontab)', FAIL otherwise"
 
-    # Requirement 3: Verify /etc/cron.deny either does NOT exist OR, if it exists, has permissions 0640 or more restrictive, is owned by root, and is group-owned by root or crontab
-    - name: Req 3 - Check /etc/cron.deny existence, permissions and ownership
-      shell: >
-        [ -e "/etc/cron.deny" ] && stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.deny
+    # Requirement 3: Verify /etc/cron.deny either does not exist OR has correct permissions/ownership
+    - name: "Req 3 - Check cron.deny permissions"
+      shell: |
+        if [ -e "/etc/cron.deny" ]; then
+          stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.deny
+        fi
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
       when: status_1 | trim == 'PASS'
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check /etc/cron.deny existence, permissions and ownership"
+        task_3_name: "Check cron.deny permissions"
         task_3_cmd: |
           [ -e \"/etc/cron.deny\" ] && stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/cron.deny
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if
-            result_3.stdout | default('') | trim == '' or
-            (
-              result_3.stdout | default('') | trim != '' and
-              (result_3.stdout | default('') | trim | regex_search('Access: \\(([0-7]{3})/') | first | int <= 640) and
-              (result_3.stdout | default('') | trim | regex_search('Owner: \\((root)\\)') | first == 'root') and
-              (
-                (result_3.stdout | default('') | trim | regex_search('Group: \\((root)\\)') | first == 'root') or
-                (result_3.stdout | default('') | trim | regex_search('Group: \\((crontab)\\)') | first == 'crontab')
-              )
-            )
-            else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when the command returns no output (file does not exist) OR returns output with permissions 0640 or more restrictive (octal <= 640), owned by root, and group-owned by root or crontab, FAIL otherwise"
+        status_3: >-
+          {% if status_1 | trim == 'FAIL' %}
+            NA
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output == '' or
+                  output == 'Access: (640/-rw-r-----) Owner: (root) Group: (root)' or
+                  output == 'Access: (640/-rw-r-----) Owner: (root) Group: (crontab)' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: "PASS when command returns no output (file does not exist) OR output matches exactly 'Access: (640/-rw-r-----) Owner: (root) Group: (root)' OR 'Access: (640/-rw-r-----) Owner: (root) Group: (crontab)', FAIL otherwise"
 
     # Requirement 4: OVERALL Verify: Ensure access to crontab is configured
-    - name: Store requirement 4 details and determine overall status
+    - name: "Req 4 - Overall verification"
       set_fact:
-        status_4: >
-          {{ (
-            'PASS' if
-            status_1 | trim == 'PASS' and
-            status_2 | trim == 'PASS' and
-            status_3 | trim == 'PASS'
-            else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS, FAIL otherwise"
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
+        data_4: "Cron installed: {{ status_1 }}, cron.allow: {{ status_2 }}, cron.deny: {{ status_3 }}"
+        status_4: >-
+          {% if status_1 | trim == 'FAIL' %}
+            PASS
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS AND req_3=PASS), FAIL otherwise"
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -162,6 +164,14 @@
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

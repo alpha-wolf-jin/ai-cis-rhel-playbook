@@ -1,0 +1,103 @@
+---
+- name: Data Collection for CIS 6.2.2.4
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.2.2.4"
+    req_1: "Check $FileCreateMode directive in rsyslog configuration files"
+    req_2: "OVERALL Verify: Ensure rsyslog log file creation mode is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_1: ""
+        status_1: "FAIL"
+        rationale_1: "No data collected yet"
+        status_2: "FAIL"
+        rationale_2: "No data collected yet"
+
+    # Requirement 1: Check $FileCreateMode directive in rsyslog configuration files
+    - name: "Req 1 - Check $FileCreateMode directive"
+      shell: |
+        grep -Ps '^\h*\$FileCreateMode\h+0[0,2,4,6][0,2,4]0\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check $FileCreateMode directive in rsyslog configuration files"
+        task_1_cmd: |
+          grep -Ps '^\h*\$FileCreateMode\h+0[0,2,4,6][0,2,4]0\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output %}
+            {% set matches = output | regex_findall('\\$FileCreateMode\\s+(0[0,2,4,6][0,2,4]0)') %}
+            {% if matches %}
+              {% set mode = matches[0] %}
+              {% if mode in ['0640', '0440', '0600', '0400', '0200', '0000'] %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when the command output includes a line matching the pattern and the octal permission value is 0640 or more restrictive (i.e., 0640, 0440, 0600, 0400, 0200, or 0000), FAIL when no line is found or the value is less restrictive than 0640."
+
+    # Requirement 2: OVERALL Verify: Ensure rsyslog log file creation mode is configured
+    # Only execute if data was found in requirement 1 (following audit procedure)
+    - name: "Req 2 - Overall verification"
+      set_fact:
+        task_2_name: "Overall verification"
+        task_2_cmd: "N/A (calculated from requirement 1)"
+        task_2_rc: 0
+        data_2: "{{ data_1 }}"
+        status_2: "{{ status_1 }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+      when: data_1 | length > 0
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.2.2.4"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('FAIL') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('FAIL when requirement 1 fails or no data collected') | trim }}"
+          - "========================================================"

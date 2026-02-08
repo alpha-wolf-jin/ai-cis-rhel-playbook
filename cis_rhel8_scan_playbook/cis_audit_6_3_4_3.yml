@@ -1,0 +1,245 @@
+---
+- name: Data Collection for CIS 6.3.4.3
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.3.4.3"
+    req_1: "Check if /etc/audit/auditd.conf exists"
+    req_2: "Extract the log_file directory path from /etc/audit/auditd.conf"
+    req_3: "Verify the extracted log_file directory exists"
+    req_4: "Run audit script to check audit log file ownership"
+    req_5: "OVERALL Verify: Ensure audit log files owner is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if /etc/audit/auditd.conf exists
+    - name: "Req 1 - Check auditd.conf existence"
+      shell: |
+        if [ -e "/etc/audit/auditd.conf" ]; then
+          echo "File exists"
+        else
+          echo "File not found"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if /etc/audit/auditd.conf exists"
+        task_1_cmd: "test -e /etc/audit/auditd.conf"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'File exists') else 'FAIL') | trim }}"
+        rationale_1: "PASS when file exists, FAIL otherwise (auditd may not be installed)"
+
+    # Requirement 2: Extract log_file directory path
+    - name: "Req 2 - Extract log_file directory path"
+      shell: |
+        if [ -e "/etc/audit/auditd.conf" ]; then
+          log_file="$(awk -F= '/^\s*log_file\s*/{print $2}' /etc/audit/auditd.conf | xargs)"
+          if [ -n "$log_file" ]; then
+            dirname "$log_file"
+          else
+            echo "No log_file directive found"
+          fi
+        else
+          echo "File not found"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Extract log_file directory path from auditd.conf"
+        task_2_cmd: |
+          awk -F= '/^\s*log_file\s*/{print $2}' /etc/audit/auditd.conf | xargs | xargs dirname
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != 'File not found' and output != 'No log_file directive found' and output != '' and '/dev/null' not in output %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: "PASS when a directory path is successfully extracted, FAIL when the log_file directive is not set or file is malformed"
+
+    # Requirement 3: Verify extracted directory exists
+    - name: "Req 3 - Verify log directory exists"
+      shell: |
+        if [ -e "/etc/audit/auditd.conf" ]; then
+          log_file="$(awk -F= '/^\s*log_file\s*/{print $2}' /etc/audit/auditd.conf | xargs)"
+          if [ -n "$log_file" ]; then
+            log_dir="$(dirname "$log_file")"
+            if [ -d "$log_dir" ]; then
+              echo "Directory exists: $log_dir"
+            else
+              echo "Directory not found: $log_dir"
+            fi
+          else
+            echo "No log_file directive found"
+          fi
+        else
+          echo "File not found"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS' and status_2 | trim == 'PASS'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify extracted log_file directory exists"
+        task_3_cmd: "Extract log_file, get dirname, test -d"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | regex_search('Directory exists:')) else 'FAIL') | trim }}"
+        rationale_3: "PASS when the directory from step 2 exists, FAIL otherwise"
+
+    # Requirement 4: Run audit script
+    - name: "Req 4 - Create temporary audit script"
+      copy:
+        dest: "/tmp/cis_audit_script_4.sh"
+        mode: '0700'
+        content: |
+          #!/usr/bin/env bash
+          {
+             l_output="" l_output2=""
+             if [ -e "/etc/audit/auditd.conf" ]; then
+                l_audit_log_directory="$(dirname "$(awk -F= '/^\s*log_file\s*/{print $2}' /etc/audit/auditd.conf | xargs)")"
+                if [ -d "$l_audit_log_directory" ]; then
+                   while IFS= read -r -d $'\0' l_file; do
+                      l_output2="$l_output2\n  - File: \"$l_file\" is owned by user: \"$(stat -Lc '%U' "$l_file")\"\n     (should be owned by user: \"root\")"
+                   done < <(find "$l_audit_log_directory" -maxdepth 1 -type f ! -user root -print0)
+                else
+                   l_output2="$l_output2\n  - Log file directory not set in \"/etc/audit/auditd.conf\" please set log file directory"
+                fi
+             else
+                l_output2="$l_output2\n  - File: \"/etc/audit/auditd.conf\" not found.\n  - ** Verify auditd is installed **"
+             fi
+             if [ -z "$l_output2" ]; then
+                l_output="$l_output\n  - All files in \"$l_audit_log_directory\" are owned by user: \"root\""
+                echo -e "\n- Audit Result:\n  ** PASS **\n - * Correctly configured * :$l_output"
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - * Reasons for audit failure * :$l_output2\n"
+             fi
+          }
+      when: status_1 | trim == 'PASS'
+
+    - name: "Req 4 - Execute audit script"
+      shell: "/tmp/cis_audit_script_4.sh"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: "Req 4 - Remove temporary audit script"
+      file:
+        path: "/tmp/cis_audit_script_4.sh"
+        state: absent
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Run audit script to check audit log file ownership"
+        task_4_cmd: "Execute CIS audit script for 6.3.4.3"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: |
+          {{ ('PASS' if (result_4.stdout | default('') | regex_search('\*\* PASS \*\*')) else 'FAIL') | trim }}
+        rationale_4: "PASS when script output contains '** PASS **' and indicates all files in the audit log directory are owned by user 'root', FAIL when script output contains '** FAIL **' or indicates any file is not owned by root, the log directory is not set, or /etc/audit/auditd.conf does not exist"
+
+    # Requirement 5: OVERALL Verify
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "OVERALL Verify: Ensure audit log files owner is configured"
+        task_5_cmd: "N/A - Derived from requirement 4"
+        task_5_rc: 0
+        data_5: "Overall verification based on requirement 4"
+        status_5: "{{ status_4 | default('UNKNOWN') | trim }}"
+        rationale_5: "PASS when req_4=PASS, FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.4.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 6.3.4.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

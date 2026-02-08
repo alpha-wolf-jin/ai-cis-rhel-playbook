@@ -1,0 +1,119 @@
+---
+# Audit for CIS RHEL 8 Benchmark v4.0.0, checkpoint 5.3.3.1.1
+- name: Data Collection for CIS 5.3.3.1.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.3.1.1"
+    req_1: "Verify the 'deny' parameter in /etc/security/faillock.conf is set to a value between 1 and 5"
+    req_2: "Verify no pam_faillock.so module line in /etc/pam.d/system-auth or /etc/pam.d/password-auth sets a 'deny' value of 0, 6-9, or 10+"
+    req_3: "OVERALL Verify: Ensure password failed attempts lockout is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Verify the 'deny' parameter in /etc/security/faillock.conf is set to a value between 1 and 5
+    - name: "Req 1 - Check deny parameter in faillock.conf"
+      shell: >
+        grep -Pi -- '^\h*deny\h*=\h*[1-5]\b' /etc/security/faillock.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check deny parameter in faillock.conf"
+        task_1_cmd: |
+          grep -Pi -- '^\h*deny\h*=\h*[1-5]\b' /etc/security/faillock.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | length > 0) else 'FAIL') | trim }}"
+        rationale_1: "PASS when output matches the pattern and the value is 5 or less (e.g., 'deny = 5'), FAIL when no match or value is outside 1-5"
+
+    # Requirement 2: Verify no pam_faillock.so module line sets a 'deny' value of 0, 6-9, or 10+
+    - name: "Req 2 - Check pam_faillock.so deny parameter in PAM files"
+      shell: >
+        grep -Pi -- '^\h*auth\h+(requisite|required|sufficient)\h+pam_faillock\.so\h+([^#\n\r]+\h+)?deny\h*=\h*(0|[6-9]|[1-9][0-9]+)\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check pam_faillock.so deny parameter in PAM files"
+        task_2_cmd: |
+          grep -Pi -- '^\h*auth\h+(requisite|required|sufficient)\h+pam_faillock\.so\h+([^#\n\r]+\h+)?deny\h*=\h*(0|[6-9]|[1-9][0-9]+)\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when command returns NO output (empty), FAIL when any output is returned"
+
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details and determine overall status
+      set_fact:
+        task_3_name: "OVERALL Verify: Ensure password failed attempts lockout is configured"
+        task_3_cmd: "N/A - Overall verification based on req_1 and req_2"
+        task_3_rc: 0
+        data_3: "req_1 status: {{ status_1 }}, req_2 status: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.3.3.1.1"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,169 +1,220 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.15
 - name: Data Collection for CIS 3.3.1.15
   hosts: all
   become: yes
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.15"
-    req_1: "Verify net.ipv4.conf.default.accept_source_route is set to 0 in the running kernel configuration using command: sysctl net.ipv4.conf.default.accept_source_route"
-    req_2: "Run the following script to verify net.ipv4.conf.default.accept_source_route = 0 is set in a persistent configuration file used by systemd-sysctl"
-    req_3: "OVERALL Verify: Ensure net.ipv4.conf.default.accept_source_route is configured"
+    req_1: "Verify net.ipv4.conf.default.accept_source_route is set to 0 in the running configuration using command: `sysctl net.ipv4.conf.default.accept_source_route`. Rationale: PASS when output is exactly 'net.ipv4.conf.default.accept_source_route = 0', FAIL otherwise"
+    req_2: "Verify net.ipv4.conf.default.accept_source_route = 0 is set in a persistent configuration file using script. Rationale: PASS when script output shows at least one line containing 'net.ipv4.conf.default.accept_source_route = 0' and the file path where it is set, FAIL otherwise"
+    req_3: "OVERALL Verify: Ensure net.ipv4.conf.default.accept_source_route is configured. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+    audit_script: |
+      {% raw %}
+      #!/usr/bin/env bash
+      {
+         l_parameter_name="net.ipv4.conf.default.accept_source_route"  
+         l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
+         l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
+         || readlink -e /usr/lib/systemd/systemd-sysctl)"
+         l_ufw_file="$([ -f /etc/default/ufw ] && \
+         awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
+         [ -f "$(readlink -e "$l_ufw_file")" ] && \
+         a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
+         while IFS= read -r l_fname; do
+            l_file="$(readlink -e "${l_fname//# /}")"
+            [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
+            <<< "${a_files[*]}" && a_files+=("$l_file")
+         done < <("$l_systemdsysctl" --cat-config | tac | \
+         grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
+         for l_file in "${a_files[@]}"; do
+            l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n 1)"
+            l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
+            [ -n "$l_option_value" ] && \
+            a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
+            "    \"$l_file\"")
+         done
+         [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
+      }
+      {% endraw %}
 
   tasks:
+    - name: Check OS compatibility
+      set_fact:
+        os_supported: "{{ ansible_distribution == 'RedHat' and ansible_distribution_major_version == '8' }}"
+        os_info: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify net.ipv4.conf.default.accept_source_route is set to 0 in the running kernel configuration
-    - name: "Req 1 - Check running kernel configuration"
+    # Requirement 1: Verify net.ipv4.conf.default.accept_source_route is set to 0 in the running configuration
+    - name: "Req 1 - Check running sysctl configuration"
       shell: sysctl net.ipv4.conf.default.accept_source_route
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: os_supported
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running kernel configuration"
+        task_1_name: "Check running sysctl configuration"
         task_1_cmd: "sysctl net.ipv4.conf.default.accept_source_route"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv4.conf.default.accept_source_route = 0') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'net.ipv4.conf.default.accept_source_route = 0', FAIL otherwise"
+        status_1: >-
+          {% if os_supported %}
+            {% if result_1.stdout | default('') | trim == 'net.ipv4.conf.default.accept_source_route = 0' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% if os_supported %}
+            {% if result_1.stdout | default('') | trim == 'net.ipv4.conf.default.accept_source_route = 0' %}
+              PASS when output is exactly 'net.ipv4.conf.default.accept_source_route = 0', FAIL otherwise
+            {% else %}
+              FAIL when output is not exactly 'net.ipv4.conf.default.accept_source_route = 0'
+            {% endif %}
+          {% else %}
+            OS not supported for this audit - {{ os_info }}
+          {% endif %}
 
-    # Requirement 2: Run script to verify persistent configuration
-    - name: "Req 2 - Create temporary audit script for persistent configuration check"
+    # Requirement 2: Verify net.ipv4.conf.default.accept_source_route = 0 is set in a persistent configuration file
+    - name: "Req 2 - Create temporary audit script"
       copy:
         dest: "/tmp/cis_audit_script_2.sh"
         mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          {
-             l_parameter_name="net.ipv4.conf.default.accept_source_route"  
-             l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
-             l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
-             || readlink -e /usr/lib/systemd/systemd-sysctl)"
-             l_ufw_file="$([ -f /etc/default/ufw ] && \
-             awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
-             [ -f "$(readlink -e "$l_ufw_file")" ] && \
-             a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
-             while IFS= read -r l_fname; do
-                l_file="$(readlink -e "${l_fname//# /}")"
-                [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
-                <<< "${a_files[*]}" && a_files+=("$l_file")
-             done < <("$l_systemdsysctl" --cat-config | tac | \
-             grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
-             for l_file in "${a_files[@]}"; do
-                l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n 1)"
-                l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
-                [ -n "$l_option_value" ] && \
-                a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
-                "    \"$l_file\"")
-             done
-             [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
-          }
-          {% endraw %}
-      register: script_created_2
-      ignore_errors: true
-      failed_when: false
+        content: "{{ audit_script }}"
+      when: os_supported
 
-    - name: "Req 2 - Execute audit script for persistent configuration check"
+    - name: "Req 2 - Execute audit script"
       shell: "/tmp/cis_audit_script_2.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: os_supported
 
     - name: "Req 2 - Remove temporary audit script"
       file:
         path: "/tmp/cis_audit_script_2.sh"
         state: absent
-      ignore_errors: true
+      when: os_supported
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Execute audit script for persistent configuration check"
-        task_2_cmd: "/tmp/cis_audit_script_2.sh"
+        task_2_name: "Check persistent sysctl configuration"
+        task_2_cmd: "CIS audit script for persistent configuration"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{ (
-            'PASS' if (
-              result_2.stdout | default('') | trim | length > 0 and
-              'net.ipv4.conf.default.accept_source_route = 0' in result_2.stdout
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_2: "PASS when the script outputs that the parameter is set to '0' in at least one configuration file, FAIL if the script finds the parameter set to any other value or finds no setting"
+        status_2: >-
+          {% if os_supported %}
+            {% if result_2.stdout | default('') | regex_search('net\\.ipv4\\.conf\\.default\\.accept_source_route = 0') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% if os_supported %}
+            {% if result_2.stdout | default('') | regex_search('net\\.ipv4\\.conf\\.default\\.accept_source_route = 0') %}
+              PASS when script output shows at least one line containing 'net.ipv4.conf.default.accept_source_route = 0' and the file path where it is set, FAIL otherwise
+            {% else %}
+              FAIL when no line containing 'net.ipv4.conf.default.accept_source_route = 0' found in script output
+            {% endif %}
+          {% else %}
+            OS not supported for this audit - {{ os_info }}
+          {% endif %}
 
     # Requirement 3: OVERALL Verify
-    - name: Store requirement 3 details and determine overall status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify"
-        task_3_cmd: "N/A"
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "N/A - Derived from requirements 1 and 2"
         task_3_rc: 0
-        data_3: "N/A"
-        status_3: >
-          {{ (
-            'PASS' if (
-              status_1 | trim == 'PASS' and
-              status_2 | trim == 'PASS'
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
+        status_3: >-
+          {% if os_supported %}
+            {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% if os_supported %}
+            {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+              PASS when req_1=PASS AND req_2=PASS, FAIL otherwise
+            {% else %}
+              FAIL when either req_1 or req_2 is not PASS
+            {% endif %}
+          {% else %}
+            OS not supported for this audit - {{ os_info }}
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
       debug:
-        msg: |
-          ========================================================
-                  COMPLIANCE REPORT - CIS 3.3.1.15
-          ========================================================
-          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.15
-          ========================================================
-
-          REQUIREMENT 1 - {{ req_1 }}:
-            Task: {{ task_1_name | default('Task not recorded') }}
-            Command: {{ task_1_cmd | default('N/A') }}
-            Exit code: {{ task_1_rc | default(-1) }}
-            Data: {{ data_1 | default('') | trim }}
-            Status: {{ status_1 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 2 - {{ req_2 }}:
-            Task: {{ task_2_name | default('Task not recorded') }}
-            Command: {{ task_2_cmd | default('N/A') }}
-            Exit code: {{ task_2_rc | default(-1) }}
-            Data: {{ data_2 | default('') | trim }}
-            Status: {{ status_2 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 3 - {{ req_3 }}:
-            Task: {{ task_3_name | default('Task not recorded') }}
-            Command: {{ task_3_cmd | default('N/A') }}
-            Exit code: {{ task_3_rc | default(-1) }}
-            Data: {{ data_3 | default('') | trim }}
-            Status: {{ status_3 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
-
-          ========================================================
-          OVERALL COMPLIANCE:
-            Result: {{ status_3 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
-          ========================================================
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 3.3.1.15"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

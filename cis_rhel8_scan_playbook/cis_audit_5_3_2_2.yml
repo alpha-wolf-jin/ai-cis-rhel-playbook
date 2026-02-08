@@ -1,0 +1,292 @@
+---
+# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.2
+- name: Data Collection for CIS 5.3.2.2 - Ensure pam_faillock module is enabled
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.2"
+    req_1: "Verify the pam_faillock.so module is configured for preauth in /etc/pam.d/password-auth"
+    req_2: "Verify the pam_faillock.so module is configured for authfail in /etc/pam.d/password-auth"
+    req_3: "Verify the pam_faillock.so module is configured in the account section of /etc/pam.d/password-auth"
+    req_4: "Verify the pam_faillock.so module is configured for preauth in /etc/pam.d/system-auth"
+    req_5: "Verify the pam_faillock.so module is configured for authfail in /etc/pam.d/system-auth"
+    req_6: "Verify the pam_faillock.so module is configured in the account section of /etc/pam.d/system-auth"
+    req_7: |
+      Execute CIS audit procedure: grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/{password,system}-auth
+    req_8: "OVERALL Verify: Ensure pam_faillock module is enabled"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: "Not collected yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: "Not collected yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: "Not collected yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_4: "Not collected yet"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_5: "Not collected yet"
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        data_6: "Not collected yet"
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        data_7: "Not collected yet"
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        data_8: "Not collected yet"
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+
+    # Requirement 1: Verify the pam_faillock.so module is configured for preauth in /etc/pam.d/password-auth
+    - name: "Req 1 - Check preauth in password-auth"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/password-auth | grep 'preauth'
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details and determine status
+      set_fact:
+        task_1_name: "Check preauth in password-auth"
+        task_1_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/password-auth | grep 'preauth'
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'auth        required        pam_faillock.so preauth silent') else 'FAIL') | trim }}"
+        rationale_1: "PASS when the line 'auth        required        pam_faillock.so preauth silent' is present, FAIL otherwise"
+
+    # Requirement 2: Verify the pam_faillock.so module is configured for authfail in /etc/pam.d/password-auth
+    - name: "Req 2 - Check authfail in password-auth"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/password-auth | grep 'authfail'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 2 details and determine status
+      set_fact:
+        task_2_name: "Check authfail in password-auth"
+        task_2_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/password-auth | grep 'authfail'
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'auth        required        pam_faillock.so authfail') else 'FAIL') | trim }}"
+        rationale_2: "PASS when the line 'auth        required        pam_faillock.so authfail' is present, FAIL otherwise"
+
+    # Requirement 3: Verify the pam_faillock.so module is configured in the account section of /etc/pam.d/password-auth
+    - name: "Req 3 - Check account in password-auth"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/password-auth | grep 'account'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 3 details and determine status
+      set_fact:
+        task_3_name: "Check account in password-auth"
+        task_3_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/password-auth | grep 'account'
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == 'account     required        pam_faillock.so') else 'FAIL') | trim }}"
+        rationale_3: "PASS when the line 'account     required        pam_faillock.so' is present, FAIL otherwise"
+
+    # Requirement 4: Verify the pam_faillock.so module is configured for preauth in /etc/pam.d/system-auth
+    - name: "Req 4 - Check preauth in system-auth"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/system-auth | grep 'preauth'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 4 details and determine status
+      set_fact:
+        task_4_name: "Check preauth in system-auth"
+        task_4_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/system-auth | grep 'preauth'
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim == 'auth          required        pam_faillock.so preauth silent') else 'FAIL') | trim }}"
+        rationale_4: "PASS when the line 'auth          required        pam_faillock.so preauth silent' is present, FAIL otherwise"
+
+    # Requirement 5: Verify the pam_faillock.so module is configured for authfail in /etc/pam.d/system-auth
+    - name: "Req 5 - Check authfail in system-auth"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/system-auth | grep 'authfail'
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 5 details and determine status
+      set_fact:
+        task_5_name: "Check authfail in system-auth"
+        task_5_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/system-auth | grep 'authfail'
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: "{{ ('PASS' if (result_5.stdout | default('') | trim == 'auth          required        pam_faillock.so authfail') else 'FAIL') | trim }}"
+        rationale_5: "PASS when the line 'auth          required        pam_faillock.so authfail' is present, FAIL otherwise"
+
+    # Requirement 6: Verify the pam_faillock.so module is configured in the account section of /etc/pam.d/system-auth
+    - name: "Req 6 - Check account in system-auth"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/system-auth | grep 'account'
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 6 details and determine status
+      set_fact:
+        task_6_name: "Check account in system-auth"
+        task_6_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/system-auth | grep 'account'
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: "{{ ('PASS' if (result_6.stdout | default('') | trim == 'account       required        pam_faillock.so') else 'FAIL') | trim }}"
+        rationale_6: "PASS when the line 'account       required        pam_faillock.so' is present, FAIL otherwise"
+
+    # Requirement 7: Execute CIS audit procedure
+    - name: "Req 7 - Execute CIS audit procedure"
+      shell: |
+        grep -P -- '\bpam_faillock.so\b' /etc/pam.d/{password,system}-auth
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 7 details and determine status
+      set_fact:
+        task_7_name: "Execute CIS audit procedure"
+        task_7_cmd: |
+          grep -P -- '\\bpam_faillock.so\\b' /etc/pam.d/{password,system}-auth
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: |
+          {{ ('PASS' if (result_7.stdout | default('') | trim == '/etc/pam.d/password-auth:auth        required        pam_faillock.so preauth silent\n/etc/pam.d/password-auth:auth        required        pam_faillock.so authfail\n/etc/pam.d/password-auth:account     required        pam_faillock.so\n/etc/pam.d/system-auth:auth          required        pam_faillock.so preauth silent\n/etc/pam.d/system-auth:auth          required        pam_faillock.so authfail\n/etc/pam.d/system-auth:account       required        pam_faillock.so') else 'FAIL') | trim }}
+        rationale_7: "PASS when output matches expected CIS benchmark output, FAIL otherwise"
+
+    # Requirement 8: OVERALL Verify
+    - name: Store requirement 8 details and determine overall status
+      set_fact:
+        task_8_name: "OVERALL Verify"
+        task_8_cmd: "N/A - Overall check based on requirements 1-6"
+        task_8_rc: 0
+        data_8: "Overall status check"
+        status_8: >
+          {{ (
+            'PASS' if
+            (status_1 | trim == 'PASS' and
+             status_2 | trim == 'PASS' and
+             status_3 | trim == 'PASS' and
+             status_4 | trim == 'PASS' and
+             status_5 | trim == 'PASS' and
+             status_6 | trim == 'PASS')
+            else 'FAIL'
+          ) | trim }}
+        rationale_8: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS AND req_5=PASS AND req_6=PASS, FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg: |
+          ========================================================
+                  COMPLIANCE REPORT - CIS 5.3.2.2
+          ========================================================
+          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.2
+          ========================================================
+
+          REQUIREMENT 1 - {{ req_1 }}:
+            Task: {{ task_1_name }}
+            Command: {{ task_1_cmd }}
+            Exit code: {{ task_1_rc }}
+            Data: {{ data_1 | trim }}
+            Status: {{ status_1 | trim }}
+            Rationale: {{ rationale_1 | trim }}
+
+          REQUIREMENT 2 - {{ req_2 }}:
+            Task: {{ task_2_name }}
+            Command: {{ task_2_cmd }}
+            Exit code: {{ task_2_rc }}
+            Data: {{ data_2 | trim }}
+            Status: {{ status_2 | trim }}
+            Rationale: {{ rationale_2 | trim }}
+
+          REQUIREMENT 3 - {{ req_3 }}:
+            Task: {{ task_3_name }}
+            Command: {{ task_3_cmd }}
+            Exit code: {{ task_3_rc }}
+            Data: {{ data_3 | trim }}
+            Status: {{ status_3 | trim }}
+            Rationale: {{ rationale_3 | trim }}
+
+          REQUIREMENT 4 - {{ req_4 }}:
+            Task: {{ task_4_name }}
+            Command: {{ task_4_cmd }}
+            Exit code: {{ task_4_rc }}
+            Data: {{ data_4 | trim }}
+            Status: {{ status_4 | trim }}
+            Rationale: {{ rationale_4 | trim }}
+
+          REQUIREMENT 5 - {{ req_5 }}:
+            Task: {{ task_5_name }}
+            Command: {{ task_5_cmd }}
+            Exit code: {{ task_5_rc }}
+            Data: {{ data_5 | trim }}
+            Status: {{ status_5 | trim }}
+            Rationale: {{ rationale_5 | trim }}
+
+          REQUIREMENT 6 - {{ req_6 }}:
+            Task: {{ task_6_name }}
+            Command: {{ task_6_cmd }}
+            Exit code: {{ task_6_rc }}
+            Data: {{ data_6 | trim }}
+            Status: {{ status_6 | trim }}
+            Rationale: {{ rationale_6 | trim }}
+
+          REQUIREMENT 7 - {{ req_7 }}:
+            Task: {{ task_7_name }}
+            Command: {{ task_7_cmd }}
+            Exit code: {{ task_7_rc }}
+            Data: {{ data_7 | trim }}
+            Status: {{ status_7 | trim }}
+            Rationale: {{ rationale_7 | trim }}
+
+          ========================================================
+          OVERALL COMPLIANCE:
+            Result: {{ status_8 | trim }}
+            Rationale: {{ rationale_8 | trim }}
+          ========================================================

@@ -1,129 +1,116 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.9
 - name: Data Collection for CIS 5.1.9
   hosts: all
   become: yes
   gather_facts: yes
   vars:
     cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.9"
-    req_1: "Run the following script to verify the global sshd configuration for ClientAliveInterval and ClientAliveCountMax"
-    req_2: "If Match blocks are used in the environment, for each applicable user/connection type, run the following script to verify the settings are not incorrectly overridden"
+    req_1: "Check the global SSH daemon configuration for ClientAliveInterval and ClientAliveCountMax using the primary audit script"
+    req_2: "If Match blocks are used in the SSH configuration, for each applicable user/connection parameter, verify the settings are not incorrectly overridden using the extended test mode"
     req_3: "OVERALL Verify: Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
 
-    # Requirement 1: Run the following script to verify the global sshd configuration for ClientAliveInterval and ClientAliveCountMax
-    - name: "Req 1 - Check global sshd ClientAlive settings"
+    # Requirement 1: Global SSH configuration check
+    - name: "Req 1 - Check global SSH client alive settings"
       shell: |
         #!/usr/bin/env bash
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '(clientaliveinterval|clientalivecountmax)'
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
+        source /etc/sysconfig/sshd 2>/dev/null || true
+        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -Pi -- '(clientaliveinterval|clientalivecountmax)' || true
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global sshd ClientAlive settings"
-        task_1_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config
-          source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '(clientaliveinterval|clientalivecountmax)'
+        task_1_name: "Check global SSH client alive settings"
+        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '(clientaliveinterval|clientalivecountmax)'"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >
-          {{
-            (
-              'PASS' if
-              (result_1.stdout | default('') | trim != '') and
-              ('clientaliveinterval' in result_1.stdout | lower) and
-              ('clientalivecountmax' in result_1.stdout | lower) and
-              (result_1.stdout | regex_search('clientaliveinterval\\s+(\\d+)') | default('0') | int > 0) and
-              (result_1.stdout | regex_search('clientalivecountmax\\s+(\\d+)') | default('0') | int > 0)
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_1: "PASS when output shows 'clientaliveinterval' is set to a non-zero value (e.g., 15) and 'clientalivecountmax' is set to a value greater than 0 (e.g., 3), FAIL if either setting is missing, has a zero interval, or a zero count"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output %}
+            {% set interval_match = output | regex_search('clientaliveinterval\\s+(\\d+)') %}
+            {% set countmax_match = output | regex_search('clientalivecountmax\\s+(\\d+)') %}
+            {% if interval_match and countmax_match %}
+              {% set interval = interval_match.split()[1] | int %}
+              {% set countmax = countmax_match.split()[1] | int %}
+              {% if interval > 0 and countmax > 0 %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when output contains 'clientaliveinterval' with value > 0 AND 'clientalivecountmax' with value > 0, FAIL if either missing or value is 0"
 
-    # Requirement 2: If Match blocks are used in the environment, for each applicable user/connection type, run the following script to verify the settings are not incorrectly overridden
-    - name: "Req 2 - Check Match block overrides for sshuser"
+    # Requirement 2: Match blocks check (example for user sshuser)
+    - name: "Req 2 - Check SSH match blocks for user sshuser"
       shell: |
         #!/usr/bin/env bash
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '(clientaliveinterval|clientalivecountmax)'
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
+        source /etc/sysconfig/sshd 2>/dev/null || true
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser 2>/dev/null | grep -Pi -- '(clientaliveinterval|clientalivecountmax)' || true
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | default('') | trim != ''
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check Match block overrides for sshuser"
-        task_2_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config
-          source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '(clientaliveinterval|clientalivecountmax)'
+        task_2_name: "Check SSH match blocks for user sshuser"
+        task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '(clientaliveinterval|clientalivecountmax)'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{
-            (
-              'PASS' if
-              (result_2.stdout | default('') | trim == '') or
-              (
-                (result_2.stdout | default('') | trim != '') and
-                ('clientaliveinterval' in result_2.stdout | lower) and
-                ('clientalivecountmax' in result_2.stdout | lower) and
-                (result_2.stdout | regex_search('clientaliveinterval\\s+(\\d+)') | default('0') | int > 0) and
-                (result_2.stdout | regex_search('clientalivecountmax\\s+(\\d+)') | default('0') | int > 0)
-              )
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_2: "PASS when the output matches the expected global values (non-zero interval and count > 0) or when no output is returned (indicating the global setting applies), FAIL if the output shows a non-compliant value (e.g., interval 0)"
-      when: data_1 | default('') | trim != ''
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output %}
+            {% set interval_match = output | regex_search('clientaliveinterval\\s+(\\d+)') %}
+            {% set countmax_match = output | regex_search('clientalivecountmax\\s+(\\d+)') %}
+            {% if interval_match and countmax_match %}
+              {% set interval = interval_match.split()[1] | int %}
+              {% set countmax = countmax_match.split()[1] | int %}
+              {% if interval > 0 and countmax > 0 %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            PASS
+          {% endif %}
+        rationale_2: "PASS when output contains 'clientaliveinterval' with value > 0 AND 'clientalivecountmax' with value > 0, or if no output (no override), FAIL if output shows interval of 0 or countmax of 0"
 
-    - name: Set requirement 2 as NA when not executed
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_2_name: "Check Match block overrides for sshuser"
-        task_2_cmd: "N/A - Skipped (no global output)"
-        task_2_rc: -1
-        data_2: "Not applicable - No global output to check against"
-        status_2: "NA"
-        rationale_2: "Skipped - No global output returned, so no further audit steps are required per CIS audit procedure"
-      when: data_1 | default('') | trim == ''
-
-    # Requirement 3: OVERALL Verify: Ensure sshd ClientAliveInterval and ClientAliveCountMax are configured
-    - name: Store requirement 3 details and determine overall status
-      set_fact:
-        status_3: >
-          {{
-            (
-              'PASS' if
-              (status_1 | trim == 'PASS') and
-              (data_1 | default('') | trim == '' or status_2 | default('PASS') | trim == 'PASS')
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_3: "PASS when req_1=PASS AND (req_2 is not applicable OR req_2=PASS for all tested Match blocks), FAIL otherwise"
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - Calculated from previous results"
+        task_3_rc: 0
+        data_3: "Global check: {{ status_1 | default('UNKNOWN') }}, Match block check: {{ status_2 | default('UNKNOWN') }}"
+        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('PASS') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS for all relevant connection parameters), FAIL otherwise"
 
     # Final report
     - name: Generate compliance report
@@ -132,7 +119,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.9"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.9"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -152,6 +139,10 @@
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
