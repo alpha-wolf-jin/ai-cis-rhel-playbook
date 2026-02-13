@@ -105,9 +105,13 @@ load_dotenv()
 
 # Initialize LLM model
 model = ChatDeepSeek(
-    model="deepseek-chat",
+    #model="deepseek-chat",
+    model="deepseek-reasoner",
+    base_url="https://api.deepseek.com",
     temperature=0,
-    max_tokens=None,
+    #max_tokens=None,
+    max_tokens=16384,
+    #max_tokens=8192,
     timeout=1800,  # 30 minutes timeout
     max_retries=3,
     request_timeout=1800  # Explicit request timeout: 30 minutes
@@ -170,16 +174,20 @@ Your playbook MUST implement this audit procedure:
 ```
 
 **CRITICAL INSTRUCTIONS FOR AUDIT PROCEDURE:**
-1. Convert the audit procedure script/commands into Ansible tasks
-2. Each distinct check in the audit procedure should become a separate requirement/task
-3. Capture the output of each command for the compliance report
-4. **USE THE EXPECTED OUTPUT** from the audit procedure to determine PASS/FAIL status:
+1. **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
+   - **MANDATORY**: If the audit procedure provides scripts or commands, you MUST use them exactly as provided
+   - **DO NOT** create alternative commands or scripts unless the provided ones fail to work
+   - **ONLY** explore other options if the provided scripts/commands do not work (e.g., command not found, syntax errors, etc.)
+   - Preserve the exact commands, scripts, and logic from the audit procedure
+2. Convert the audit procedure script/commands into Ansible tasks
+3. Each distinct check in the audit procedure should become a separate requirement/task
+4. Capture the output of each command for the compliance report
+5. **USE THE EXPECTED OUTPUT** from the audit procedure to determine PASS/FAIL status:
    - If the procedure shows "Example output: generated", then "generated" = PASS
    - If the procedure shows "Verify output is not masked or disabled", then check for those strings
    - Compare actual command output against the expected output shown in the procedure
-5. The audit procedure defines what PASS and FAIL mean - use this for status determination logic
-6. If the audit procedure is a script, break it into individual commands that can be run as Ansible tasks
-7. Preserve the exact commands from the audit procedure where possible
+6. The audit procedure defines what PASS and FAIL mean - use this for status determination logic
+7. If the audit procedure is a script, break it into individual commands that can be run as Ansible tasks
 8. **Extract expected outputs and failure conditions** from the procedure text and use them in your status variables
 
 """
@@ -331,13 +339,22 @@ The following feedback identifies issues and provides recommendations for enhanc
 - Task names: Use ' - ' (dash) instead of ':' (colon), e.g., 'Req 1 - description' not 'Req 1: description'
 
 ## 2. SIMPLICITY RULES
-1. MINIMUM tasks - only what's needed to collect data
-2. NO debug tasks except the final report
-3. NO complex Jinja2 - use simple expressions
-4. ONE task per requirement
-5. Use shell/command for simple checks (faster than modules)
-6. Use EXACT requirement text in vars - copy from requirements above!
-7. CRITICAL: ALWAYS use `args: executable: /bin/bash` for ALL shell tasks (CIS scripts require bash)
+1. **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
+   - **MANDATORY**: If the audit procedure or requirements provide scripts or commands, use them exactly as provided
+   - **DO NOT** create alternative commands or scripts unless the provided ones fail to work
+   - **ONLY** explore other options if the provided scripts/commands do not work (e.g., command not found, syntax errors, etc.)
+   - Preserve the exact commands, scripts, and logic from the audit procedure
+2. MINIMUM tasks - only what's needed to collect data
+3. NO debug tasks except the final report
+4. NO complex Jinja2 - use simple expressions
+5. ONE task per requirement
+6. Use shell/command for simple checks (faster than modules)
+7. Use EXACT requirement text in vars - copy from requirements above!
+   - **CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)**
+   - ❌ WRONG: `req_2: Run script to check for audit log files`
+   - ✅ CORRECT: `req_2: "Run script to check for audit log files"`
+   - This prevents YAML syntax errors when requirement text contains colons, special characters, or multiple words
+8. CRITICAL: ALWAYS use `args: executable: /bin/bash` for ALL shell tasks (CIS scripts require bash)
 
 ## 3. MANDATORY STRUCTURE
 ```yaml
@@ -345,10 +362,13 @@ The following feedback identifies issues and provides recommendations for enhanc
 - name: Data Collection for KCS [KCS ID]
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
     kcs_article: "[KCS URL]"
     # COPY EXACT requirement text from requirements above!
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    # ❌ WRONG: req_2: Run script to check for audit log files
+    # ✅ CORRECT: req_2: "Run script to check for audit log files"
 {vars_section}
 
   tasks:
@@ -375,6 +395,8 @@ The following feedback identifies issues and provides recommendations for enhanc
         task_{{first_idx}}_rc: "{{{{{{ result_{{first_idx}}.rc | default(-1) }}}}}}"
         data_{{first_idx}}: "{{{{{{ result_{{first_idx}}.stdout | default('') | trim }}}}}}"
         status_{{first_idx}}: "{{{{{{ ('PASS' if condition else 'FAIL') | trim }}}}}}"
+        # NOTE: If rationale contains double quotes, use single quotes for outer wrapper:
+        # rationale_{{first_idx}}: '{{ ("PASS when output is exactly \"value\", FAIL otherwise" if ... else "FAIL: Expected \"value\"") | trim }}'
         rationale_{{first_idx}}: "{{{{{{ 'PASS when X, FAIL when Y' | trim }}}}}}"
 
     # Final report - MUST include Status and Rationale for each requirement
@@ -401,17 +423,237 @@ The following feedback identifies issues and provides recommendations for enhanc
   - ✅ CORRECT: `failed_when: false` (prevents task from being marked as failed)
   - ❌ WRONG: Both `ignore_errors: true` and `failed_when: false` together (redundant)
 
+**CRITICAL - YAML Quoting for Jinja2 Expressions with String Literals:**
+- **Problem**: When a Jinja2 expression contains double quotes inside and is wrapped in double quotes, YAML parser gets confused:
+  ```yaml
+  # ❌ WRONG - Causes "did not find expected key" error:
+  rationale_1: "{{ ('PASS when output is exactly "permitemptypasswords no", FAIL otherwise' if ... else 'FAIL: Expected "permitemptypasswords no", got "' + ...) | trim }}"
+  # Problem: Double quotes inside the expression conflict with outer double quotes
+  ```
+- **Solution**: Use single quotes for the outer wrapper and escape double quotes inside:
+  ```yaml
+  # ✅ CORRECT - Single quotes outside, escaped double quotes inside:
+  rationale_1: '{{ ("PASS when output is exactly \"permitemptypasswords no\", FAIL otherwise" if (result_1.stdout | default("") | trim == "permitemptypasswords no") else "FAIL: Expected \"permitemptypasswords no\", got " + (result_1.stdout | default("") | trim)) | trim }}'
+  ```
+- **Alternative**: Use single quotes for string literals inside the expression:
+  ```yaml
+  # ✅ CORRECT - Single quotes for string literals inside:
+  rationale_1: "{{{{ ('PASS when output is exactly \'permitemptypasswords no\', FAIL otherwise' if (result_1.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL: Expected \'permitemptypasswords no\', got \'' + (result_1.stdout | default('') | trim) + '\'') | trim }}}}"
+  ```
+- **Rule**: When Jinja2 expressions contain string literals with quotes:
+  1. **Preferred**: Use single quotes `'...'` for the outer wrapper and escape double quotes `\"` inside
+  2. **Alternative**: Use double quotes `"..."` for the outer wrapper and escape single quotes `\'` inside, or use single quotes for string literals inside
+  3. **Why**: YAML parser sees the second set of matching quotes and thinks the string has ended prematurely
+
 **YAML Syntax for Shell Commands:**
 - Commands with special characters MUST use literal block scalar (|) or folded (>)
 - ❌ WRONG: `- shell: journalctl | grep 'error: failed'` (colon causes YAML error)
 - ✅ CORRECT: Use `>` or `|` for shell commands with pipes, colons, backslashes
 
-**Shell Command with Arrays or Complex Syntax - Use !unsafe Tag:**
-- If you encounter the syntax error "failed at splitting arguments", wrap the shell content in the `!unsafe` tag:
-- ✅ CORRECT - Using `!unsafe` tag for complex shell commands:
+**Shell Command with Special Characters - MANDATORY: Use {% raw %} and {% endraw %} Tags:**
+- **CRITICAL**: Commands with special characters like `%`, `(`, `)`, `[`, `]`, or complex formatting MUST use `{% raw %}` and `{% endraw %}` tags to prevent YAML/Jinja2 parsing errors
+- **IMPORTANT**: `{% raw %}` is MORE FLEXIBLE than `!unsafe` because it allows you to mix Ansible variable substitution (outside raw block) with raw bash code (inside raw block)
+- ❌ WRONG - Causes "mapping values are not allowed" error:
+  ```yaml
+  - name: Req 2 - Verify permissions
+    shell: stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/
+  ```
+- ❌ WRONG - Using `!unsafe` prevents Ansible variable substitution:
+  ```yaml
+  - name: Req 2 - Test Match blocks if they exist
+    shell: !unsafe |
+      if [ "{{ match_blocks_used }}" = "true" ]; then
+        sshd -T -C user=root | grep ignorerhosts
+      fi
+  # Problem: {{ match_blocks_used }} is NOT replaced because !unsafe prevents ALL Jinja2 processing
+  ```
+- ✅ CORRECT - Using `{% raw %}` and `{% endraw %}` for commands with special characters:
+  ```yaml
+  - name: Req 2 - Verify permissions
+    shell: |
+      {% raw %}
+      stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/
+      {% endraw %}
+    args:
+      executable: /bin/bash
+    register: result_2
+    ignore_errors: true
+    changed_when: false
+  ```
+- ✅ CORRECT - Using `{% raw %}` with Ansible variables (MIXED approach):
+  ```yaml
+  - name: Req 2 - Test Match blocks if they exist
+    shell: |
+      # 1. Ansible REPLACES this because it is OUTSIDE the raw block:
+      # Check if we have match blocks to test
+      match_blocks_count={{ match_blocks_list | default([]) | length }}
+      match_blocks_used="{{ match_blocks_used }}"
+      
+      # 2. Ansible IGNORES this because it is INSIDE the raw block:
+      {% raw %}
+      if [ "$match_blocks_count" -eq 0 ]; then
+        echo "No Match blocks to test"
+        exit 0
+      fi
+      
+      if [ "$match_blocks_used" = "true" ]; then
+        # Test with a common user parameter
+        sshd -T -C user=root | grep ignorerhosts
+      else
+        echo "No Match blocks to test"
+      fi
+      {% endraw %}
+    args:
+      executable: /bin/bash
+    register: result_2
+    ignore_errors: true
+    changed_when: false
+    when: match_blocks_used is defined
+  ```
+- **CRITICAL: Scope of `{% raw %}` blocks - Variable Assignment Rules:**
+  - ❌ WRONG - Ansible variable assignment INSIDE raw block (will NOT be processed):
+    ```yaml
+    shell: |
+      {% raw %}
+      match_blocks_count={{ match_blocks_list | default([]) | length }}
+      if [ "$match_blocks_count" -eq 0 ]; then
+        echo "No Match blocks"
+      fi
+      {% endraw %}
+    # Problem: {{ match_blocks_list | default([]) | length }} is NOT replaced because it's inside {% raw %}
+    ```
+  - ✅ CORRECT - Ansible variable assignment OUTSIDE raw block (will be processed):
+    ```yaml
+    shell: |
+      # Ansible processes this first outside raw block
+      match_blocks_count={{ match_blocks_list | default([]) | length }}
+      
+      # Ansible ignores this inside raw block
+      {% raw %}
+      if [ "$match_blocks_count" -eq 0 ]; then
+        echo "No Match blocks"
+      fi
+      {% endraw %}
+    # Result: match_blocks_count gets the actual value, then bash uses it
+    ```
+  - **CRITICAL RULE**: When you need to mix Ansible variables and Bash variables:
+    1. **OUTSIDE `{% raw %}`**: ALL Ansible variable assignments MUST be outside (e.g., `var={{ ansible_var }}`, `count={{ list | length }}`, `value="{{ string_var }}"`)
+    2. **INSIDE `{% raw %}`**: ALL Bash code that uses those variables (e.g., `if [ "$var" -eq 0 ]`, `for item in "$list"`)
+    3. **Place variable assignments at the BEGINNING**, before the `{% raw %}` block starts
+    4. **Processing order**: Ansible processes content OUTSIDE raw blocks FIRST, then passes the result to the shell
+    5. **Remember**: Anything inside `{% raw %}` is treated as literal text - NO Jinja2 processing happens inside
+  - **CRITICAL: Jinja2 Variables MUST Be Outside `{% raw %}` Blocks:**
+    - ❌ WRONG - Jinja2 inside raw block (will NOT be processed):
+      ```yaml
+      shell: |
+        {% raw %}
+        # This will send literal {{ match_conditions_list }} to bash, causing errors
+        done <<< "$(echo '{{ match_conditions_list | default([]) | join("\n") }}')"
+        {% endraw %}
+      ```
+    - ✅ CORRECT - Jinja2 outside raw block, use variable inside:
+      ```yaml
+      shell: |
+        # Ansible processes these FIRST (outside raw block):
+        match_blocks_exist="{{ match_blocks_exist }}"
+        match_conditions_count="{{ match_conditions_list | default([]) | length }}"
+        conditions_string="{{ match_conditions_list | default([]) | join('\n') }}"
+        
+        {% raw %}
+        # Bash code uses the variables that were set above
+        if [ "$match_blocks_exist" = "false" ] || [ "$match_conditions_count" -eq 0 ]; then
+          echo "No Match blocks to test"
+          exit 0
+        fi
+        
+        # Use heredoc to pass multi-line variable to bash
+        while IFS= read -r condition; do
+          # Process condition...
+        done << EOF
+        $conditions_string
+        EOF
+        {% endraw %}
+      ```
+  - **CRITICAL: Avoid Complex Bash Array Syntax with Parentheses Inside `{% raw %}` Blocks:**
+    - **Problem**: Even inside `{% raw %}` blocks, YAML's argument splitter can get confused by bash array syntax with parentheses like `words=($condition)` or `for ((i=0; i<...; i+=2))`
+    - ❌ WRONG - Complex array syntax with parentheses can cause parsing errors:
+      ```yaml
+      shell: |
+        {% raw %}
+        # This can confuse YAML parser even inside raw block
+        words=($condition)
+        for ((i=0; i<${#words[@]}; i+=2)); do
+          key="${words[i]}"
+          value="${words[i+1]}"
+        done
+        {% endraw %}
+      ```
+    - ✅ CORRECT - Use simpler bash syntax without parentheses:
+      ```yaml
+      shell: |
+        {% raw %}
+        # Use set and shift instead of array syntax
+        set -- $condition
+        while [ $# -gt 0 ]; do
+          key="$1"
+          value="$2"
+          shift 2
+          # Process key and value...
+        done
+        {% endraw %}
+      ```
+    - **Rule**: Inside `{% raw %}` blocks, prefer simpler bash syntax:
+      - Use `set -- $variable` and `shift` instead of array syntax `words=($variable)`
+      - Use `while [ $# -gt 0 ]` instead of `for ((i=0; i<...; i+=2))`
+      - Use heredoc `<< EOF` for multi-line input instead of command substitution with Jinja2
+  - **CRITICAL: Avoid special characters in comments within `shell:` blocks:**
+    - **MANDATORY Three Rules for Comments in `shell:` blocks (applies to BOTH inside and outside `{% raw %}` blocks):**
+      1. **NO Parentheses in Comments**: DO NOT use `( )` anywhere in comments - they confuse Ansible's argument splitter
+      2. **NO Quotes in Comments**: DO NOT use `"` or `'` anywhere in comments - both single and double quotes cause parsing errors
+      3. **Use Literal Blocks**: Always use `shell: |` to ensure newlines are preserved correctly
+    - **ABSOLUTE PROHIBITION**: Comments in `shell:` blocks MUST NOT contain:
+      - ❌ Parentheses: `( )` - e.g., "FIRST (outside raw block)" → use "first outside raw block"
+      - ❌ Double quotes: `"` - e.g., "says: "specify"" → use "says: specify"
+      - ❌ Single quotes: `'` - e.g., "We'll test" → use "We will test" (NO CONTRACTIONS!)
+    - ❌ WRONG - Special characters in comments cause "failed at splitting arguments" error:
+      ```yaml
+      shell: |
+        # Ansible processes this FIRST (outside raw block):  ← Problem: parentheses in comment
+        match_blocks_used="{{ match_blocks_used }}"
+        
+        {% raw %}
+        # The CIS procedure says: "specify the connection parameters"  ← Problem: double quotes in comment
+        # We'll test with root user as a common case  ← Problem: single quote in contraction
+        # Match conditions can be: User, Group, Host, LocalAddress, LocalPort, Address, etc.  ← Problem: parentheses in comment
+        # We'll extract the applicable parameters  ← Problem: single quote in contraction
+        output=""
+        {% endraw %}
+      ```
+    - ✅ CORRECT - Plain text comments without ANY special characters:
+      ```yaml
+      shell: |
+        # Ansible processes this first outside raw block
+        match_blocks_used="{{ match_blocks_used }}"
+        
+        {% raw %}
+        # Simplified approach: Test with common connection parameters
+        # The CIS procedure says: specify the connection parameters to use for the -T test
+        # We will test with root user as a common case
+        # Match conditions can be: User, Group, Host, LocalAddress, LocalPort, Address, and others
+        # We will extract the applicable parameters
+        output=""
+        {% endraw %}
+      ```
+    - **CRITICAL RULE**: In `shell:` blocks, comments MUST be plain text without:
+      - Parentheses: `( )` - Replace with "and", "or", "including", etc.
+      - Double quotes: `"` - Remove quotes from quoted text in comments
+      - Single quotes: `'` - Replace contractions (e.g., "We'll" → "We will", "can't" → "cannot", "it's" → "it is")
+    - **Why**: Ansible's argument splitter can get confused by parentheses and quotes in comments, thinking you're trying to call a function or open a grouped expression that doesn't close correctly, even when they're just in comments.
+- ✅ CORRECT - Using `{% raw %}` for complex shell commands with arrays:
   ```yaml
   - name: Req 1 - Check if audit tools exist
-    shell: !unsafe |
+    shell: |
+      {% raw %}
       a_audit_files=("auditctl" "auditd" "ausearch" "aureport" "autrace" "augenrules")
       a_parlist=()
       for a_file in "${a_audit_files[@]}"; do
@@ -420,45 +662,116 @@ The following feedback identifies issues and provides recommendations for enhanc
         fi
       done
       echo "${a_parlist[@]}"
+      {% endraw %}
     args:
       executable: /bin/bash
     register: result_1
     ignore_errors: true
     changed_when: false
   ```
-- **When to use `!unsafe`**:
-  - When shell command contains arrays (e.g., `("item1" "item2")`)
-  - When shell command contains complex bash syntax that Ansible tries to parse
-  - When you get "failed at splitting arguments" error
-  - The `!unsafe` tag tells Ansible to not parse the content as a template or split arguments
-- **Note**: `!unsafe` is a YAML tag, not a Jinja2 tag - it goes directly on the `shell:` line
-
-**Complex Bash Scripts:**
-- For multi-line scripts with {{ }} blocks, arrays, or complex variables, use this pattern:
-```yaml
-- name: "Req N - Create temporary audit script"
-  copy:
-    dest: "/tmp/cis_audit_script_N.sh"
-    mode: '0700'
-    content: |
+- **CRITICAL: Scope of `{% raw %}` blocks - Variable Assignment Rules:**
+  - ❌ WRONG - Ansible variable assignment INSIDE raw block (will NOT be processed):
+    ```yaml
+    shell: |
       {% raw %}
-      #!/usr/bin/env bash
-      # [FULL SCRIPT CONTENT HERE]
+      match_blocks_count={{ match_blocks_list | default([]) | length }}
+      if [ "$match_blocks_count" -eq 0 ]; then
+        echo "No Match blocks"
+      fi
       {% endraw %}
-- name: "Req N - Execute audit script"
-  shell: "/tmp/cis_audit_script_N.sh"
-  args:
-    executable: /bin/bash
-  register: result_N
-  ignore_errors: true
-  changed_when: false
-- name: "Req N - Remove temporary audit script"
-  file:
-    path: "/tmp/cis_audit_script_N.sh"
-    state: absent
+    # Problem: {{ match_blocks_list | default([]) | length }} is NOT replaced because it's inside {% raw %}
+    ```
+  - ✅ CORRECT - Ansible variable assignment OUTSIDE raw block (will be processed):
+    ```yaml
+    shell: |
+      # 1. Ansible REPLACES this because it is OUTSIDE the raw block:
+      # Check if we have match blocks to test
+      match_blocks_count={{ match_blocks_list | default([]) | length }}
+      
+      # 2. Ansible IGNORES this because it is INSIDE the raw block:
+      {% raw %}
+      if [ "$match_blocks_count" -eq 0 ]; then
+        echo "No Match blocks to test"
+        exit 0
+      fi
+      {% endraw %}
+    # Result: match_blocks_count gets the actual value, then bash uses it
+    ```
+  - **Rule**: When you need to mix Ansible variables and Bash variables:
+    1. **OUTSIDE `{% raw %}`**: All Ansible variable assignments (e.g., `var={{ ansible_var }}`, `count={{ list | length }}`)
+    2. **INSIDE `{% raw %}`**: All Bash code that uses those variables (e.g., `if [ "$var" -eq 0 ]`, `for item in "$list"`)
+    3. **Place variable assignments at the BEGINNING**, before the `{% raw %}` block
+    4. **Ansible processes the content OUTSIDE raw blocks FIRST**, then passes the result to the shell
+- **MANDATORY: Use `{% raw %}` and `{% endraw %}` when shell command contains**:
+  - Special characters: `%`, `(`, `)`, `[`, `]`, `{`, `}`
+  - Arrays: `("item1" "item2")` or `["item1", "item2"]`
+  - Complex bash syntax that Ansible tries to parse
+  - Format strings with placeholders like `%a`, `%A`, `%u`, `%U`, `%g`, `%G`
+  - Any command that causes "mapping values are not allowed" or "failed at splitting arguments" errors
+- **Key Benefits of `{% raw %}` over `!unsafe`**:
+  - ✅ Allows mixing Ansible variable substitution (outside raw block) with raw bash code (inside raw block)
+  - ✅ More flexible - you can set variables before the raw block and use them inside
+  - ✅ Prevents YAML/Jinja2 parsing errors while still allowing variable substitution when needed
+- **Note**: `{% raw %}` and `{% endraw %}` are Jinja2 tags that go INSIDE the shell content, not on the `shell:` line
+
+**Complex Bash Scripts - MANDATORY PATTERN:**
+- **CRITICAL**: When a requirement contains a bash script (from audit procedure or requirements), you MUST use this EXACT pattern:
+  1. Use `copy` module to create the script on remote client with `{% raw %}` tags
+  2. Use `shell` module to execute the script
+  3. Use `file` module to delete the temporary script
+- **MANDATORY PATTERN** (use this EXACT structure):
+```yaml
+    - name: Req 1 - Execute CIS audit script for [description]
+      copy:
+        dest: "/tmp/cis_audit_[checkpoint_id].sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output3="" l_dl="" # clear variables
+             unset a_output; unset a_output2 # unset arrays
+             l_mod_name="cramfs" # set module name
+             # ... [FULL SCRIPT CONTENT FROM REQUIREMENT/AUDIT PROCEDURE] ...
+             if [ "${#a_output2[@]}" -le 0 ]; then
+                printf '%s\\n' "- Audit Result:" "  ** PASS **"
+             else
+                printf '%s\\n' "- Audit Result:" "  ** FAIL **" "${a_output2[@]}"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_[checkpoint_id].sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_[checkpoint_id].sh"
+        state: absent
+      ignore_errors: true
 ```
+- **CRITICAL RULES**:
+  - **ALWAYS** wrap script content in `{% raw %}` and `{% endraw %}` tags in the `copy` module's `content` field
+  - **ALWAYS** use three tasks: `copy` (create), `shell` (execute), `file` (delete)
+  - Script filename should be unique per requirement (e.g., `/tmp/cis_audit_7.2.9.sh` or `/tmp/cis_audit_req_1.sh`)
+  - Set `mode: '0700'` on the copy task to make script executable
+  - Use `args: executable: /bin/bash` on the shell task
+  - Use `ignore_errors: true` on all three tasks
+  - Use `changed_when: false` on the shell task (audit scripts don't change system state)
+  - Register the shell task result (e.g., `register: result_1`) for status evaluation
+  - **DO NOT** try to execute scripts inline with shell module - always use copy/shell/file pattern
 
 **Multi-line Variable Assignments:**
+- **CRITICAL: For regular requirement text (req_ variables), ALWAYS use quoted strings:**
+  - ✅ CORRECT: `req_2: "Run script to check for audit log files not owned by root"`
+  - ❌ WRONG: `req_2: Run script to check for audit log files not owned by root` (missing quotes causes YAML syntax error)
 - When you encounter requirement to assign a complicated multi-lines value (for example script) to a variable, wrap the block in `{% raw %}` tags:
 ```yaml
 vars:
@@ -487,19 +800,63 @@ vars:
 - **MANDATORY: Use SINGLE QUOTES for regex patterns** - In Ansible/Jinja2, single quotes are "raw-ish," meaning you don't need to double-escape backslashes
 - **CRITICAL RULE:** With single quotes, use `\\.` (SINGLE backslash) NOT `\\\\.` (DOUBLE backslash)
 
+**CRITICAL - Extracting Specific Values from Regex Matches:**
+- **PREFERRED APPROACH: Use `regex_replace()` with backreferences to extract specific capture groups directly**
+  - This is safer and more readable than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
+  - Array indexing is error-prone and can grab characters from the full match string rather than the specific capture group
+  - Use backreferences `\\1`, `\\2`, `\\3`, etc. to extract the 1st, 2nd, 3rd capture groups
+- ✅ **CORRECT - Using `regex_replace()` to extract values directly:**
+  ```yaml
+  status_1: >-
+    {% set output = result_1.stdout | default('') | trim %}
+    {% if "Access:" in output %}
+      {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+      {% set uid  = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+      {% set gid  = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+      {% if mode | int(base=8) <= 420 and uid == '0' and gid == '0' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    {% else %}
+      FAIL
+    {% endif %}
+  ```
+- ❌ **WRONG - Using `regex_search()` with array indexing (error-prone):**
+  ```yaml
+  status_1: >-
+    {% set output = result_1.stdout | default('') | trim %}
+    {% if output != '' %}
+      {% set match = output | regex_search('Access: \\(([0-9]+)/.*Uid: \\(\\s*([0-9]+)/.*Gid: \\(\\s*([0-9]+)/') %}
+      {% if match %}
+        {% set mode_str = match[1] %}  # ❌ WRONG: match[1] may grab wrong character
+        {% set uid_str = match[2] %}    # ❌ WRONG: match[2] may grab wrong character
+        {% set gid_str = match[3] %}    # ❌ WRONG: match[3] may grab wrong character
+  ```
+- **Key Rules for `regex_replace()` extraction:**
+  - Use `.*` at the start to match everything before the capture group
+  - Use `.*` at the end to match everything after the capture group
+  - Use `\\1`, `\\2`, `\\3` (with double backslash) as the replacement to extract the 1st, 2nd, 3rd capture groups
+  - In template blocks (`{% %}`), use `\\` (double backslash) for backreferences - this is CORRECT
+  - Example: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}`
+
 **Examples in Status Variables (MOST COMMON USE CASE):**
 - ✅ CORRECT: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (quoted string, single quotes, SINGLE backslash `\\.`)
+- ✅ CORRECT (for extraction): `status_1: "{{{{ ('PASS' if ((result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') | int) >= 25) else 'FAIL') | trim }}}}"` (using regex_replace to extract version number)
 - ❌ WRONG: `status_1: |` followed by `{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAIL') | trim }}` (literal block scalar `|` + DOUBLE backslash `\\\\.` - DOUBLE TRAP!)
 - ❌ WRONG: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (DOUBLE backslash `\\\\.` - THIS IS THE TRAP!)
 - ❌ WRONG: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search("pam-1\\\\.3\\\\.1-([0-9]+)")) else 'FAIL') | trim }}}}"` (double quotes require double-escaping - causes trap)
 
 **Standalone Examples:**
-- ✅ CORRECT: `{{ result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)') }}` (single quotes, SINGLE backslash `\\.`)
-- ✅ CORRECT: `{{ result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') }}` (single quotes, SINGLE backslash `\\.`)
+- ✅ CORRECT: `{{ result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)') }}` (single quotes, SINGLE backslash `\\.`) - for boolean checks
+- ✅ CORRECT: `{{ result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') }}` (single quotes, SINGLE backslash `\\.`, double backslash `\\1` for backreference) - for extracting values
 - ❌ WRONG: `{{ result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)') }}` (DOUBLE backslash `\\\\.` - THIS IS THE TRAP!)
 - ❌ WRONG: `{{ result_1.stdout is match('pattern') }}` (too strict, use regex_search)
 
-**Remember:** Single quotes + SINGLE backslash (`\\.`) = CORRECT. Single quotes + DOUBLE backslash (`\\\\.`) = TRAP!
+**Remember:** 
+- Single quotes + SINGLE backslash (`\\.`) = CORRECT for regex patterns
+- Single quotes + DOUBLE backslash (`\\\\.`) = TRAP!
+- For extracting values: Use `regex_replace()` with `\\1`, `\\2`, etc. (double backslash for backreferences) - PREFERRED over array indexing
 
 ## 5. STATUS AND RATIONALE - CRITICAL RULES
 
@@ -578,16 +935,25 @@ vars:
         {% endif %}
   ```
 - **Key Points for Complex Comparisons:**
-  - **RECOMMENDED**: Use `regex_search()` to get the full version match first, then use `split()` to extract components
-    - This is more reliable than multiple `regex_replace()` calls
+  - **PREFERRED**: Use `regex_replace()` with backreferences to extract specific values directly into variables
+    - This is safer and more reliable than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
+    - Array indexing is error-prone and can grab characters from the full match string rather than the specific capture group
+    - Example for extracting multiple values: 
+      ```yaml
+      {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+      {% set uid  = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+      {% set gid  = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+      ```
+  - **ALTERNATIVE**: For version strings with consistent delimiters, use `regex_search()` to get the full match, then use `split()` to extract components
+    - This approach works well when the format is predictable (e.g., `pam-1.3.1-25`)
     - Example: `{% set version_match = output | regex_search('pam-([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)') %}`
     - Then extract parts: `{% set version_parts = version_match.split('-')[1] %}`
     - Then split by `.`: `{% set major = version_parts.split('.')[0] | int %}`
+    - **NOTE**: Only use this approach if you're certain about the format. For extracting specific capture groups, `regex_replace()` is preferred.
   - Use `{% set variable = ... %}` to extract and store intermediate values
   - Use `{% if %}` blocks for multi-condition logic
-  - Use `regex_search()` with proper escaping: in template blocks, use single backslash `\\.` for periods in regex patterns
-  - Use `split()` method to break down version strings into components (more reliable than multiple regex_replace calls)
-  - Use `| int` filter to convert extracted strings to integers for numeric comparison
+  - Use `regex_replace()` or `regex_search()` with proper escaping: in template blocks, use single backslash `\\.` for periods in regex patterns
+  - Use `| int` or `| int(base=8)` filter to convert extracted strings to integers for numeric comparison
   - Folded block scalar (`>-`) is ACCEPTABLE for complex templates (folds newlines correctly)
   - Always end with `PASS` or `FAIL` (not quoted, as it's inside the template block)
   - Use `{# ... #}` for comments/debugging within template blocks
@@ -926,6 +1292,55 @@ def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
         return False, error_msg
 
 
+def filter_verbose_task_output(output: str) -> str:
+    """
+    Filter verbose Ansible task output to reduce data size for AI feedback.
+    
+    Removes lines between TASK markers and status lines (skipping/fatal/ok),
+    keeping only task names and their final status (including JSON blocks).
+    
+    Args:
+        output: Raw Ansible output
+        
+    Returns:
+        Filtered output with verbose task details removed
+    """
+    import re
+    
+    lines = output.split('\n')
+    filtered_lines = []
+    i = 0
+
+    Skip = False
+    while i < len(lines):
+        next_line = lines[i]
+
+        # Check if this is a TASK line
+        task_match = re.match(r'^TASK\s+\[([^\]]+)\]\s*', next_line)
+        if task_match:
+            # Found a TASK line - keep it
+            filtered_lines.append(next_line)
+            Skip = True
+
+
+        #if re.search(r'\s*ok:\s*', line):
+
+        if (re.search(r'\s*skipping:\s*', next_line) or
+            re.search(r'\s*fatal:\s*', next_line) or
+            re.search(r'\s*ok:\s*', next_line) or
+            re.search(r'\s*changed:\s*', next_line) or
+            re.search(r'\s*failed:\s*', next_line)):
+
+            Skip = False
+
+        if not Skip:
+            filtered_lines.append(next_line)
+
+        i += 1
+
+    return '\n'.join(filtered_lines)
+
+
 def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", check_mode: bool = False, verbose: str = "v", skip_debug: bool = False) -> tuple[bool, str]:
     """
     Test the playbook on a real server to verify it meets requirements.
@@ -938,7 +1353,7 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
         skip_debug: If True, skip debug-tagged tasks (for production execution)
         
     Returns:
-        tuple: (is_successful, output)
+        tuple: (is_successful, output) - output is filtered to reduce verbose task details
     """
     try:
         # Normalize verbose level (handle legacy bool values for backward compatibility)
@@ -995,7 +1410,11 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
             env=os.environ  # Pass current environment to find ansible-navigator in venv
         )
         
-        output = result.stdout + result.stderr
+        raw_output = result.stdout + result.stderr
+        
+        # Filter verbose task output to reduce data size for AI feedback
+        # Keep full output for error detection, then filter before returning
+        output = raw_output
         
         # Check for PLAYBOOK BUGS that require retry/regeneration
         playbook_bug_patterns = [
@@ -1047,12 +1466,76 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
                         break
                 print("="*80)
                 
-                # Return detailed error with full context
+                # Return detailed error with filtered context - CRITICAL: Return False immediately when bug detected
                 full_error_context = '\n'.join(error_context_lines) if error_context_lines else output[:500]
-                #return False, f"PLAYBOOK BUG: {description}\n\nError context:\n{full_error_context}\n\nFull pattern: {pattern}"
+                # Filter output before returning to reduce data size
+                filtered_output = filter_verbose_task_output(output)
+                return False, f"PLAYBOOK BUG: {description}\n\nError context:\n{full_error_context}\n\nFull pattern: {pattern}\n\nFiltered output:\n{filtered_output}"
 
         if result.returncode == 0:
             print(f"✅ Playbook executed successfully in {mode_desc}!")
+            
+            # CRITICAL: Check for fatal errors in ignored tasks (playbook bugs)
+            # Even if tasks are ignored (ignore_errors: true), fatal errors indicate playbook bugs
+            # These are playbook bugs that need to be fixed, not verification failures
+            fatal_error_patterns = [
+                ("Invalid data passed to 'loop'", "Invalid loop data - playbook bug"),
+                ("Invalid data passed to", "Invalid data passed to task - playbook bug"),
+                ("is undefined", "Undefined variable - playbook bug"),
+                ("template error", "Jinja2 template error - playbook bug"),
+                ("syntax error", "Syntax error - playbook bug"),
+                ("cannot be converted to", "Type conversion error - playbook bug"),
+                ("'dict object' has no attribute", "Invalid attribute access - playbook bug"),
+                ("has no attribute", "Invalid attribute access - playbook bug"),
+                ("Unexpected end of template", "Jinja2 unclosed block - playbook bug"),
+                ("expected token", "Jinja2 syntax error - playbook bug"),
+            ]
+            
+            # Check if there are fatal errors that are being ignored
+            has_fatal_error = False
+            fatal_error_details = []
+            
+            import re
+            # Find all fatal errors in the output
+            # Pattern: "fatal: [host]: FAILED! => {"msg": "error message"}
+            fatal_blocks = re.finditer(
+                r'fatal:\s*\[[^\]]+\]:\s*FAILED!\s*=>\s*\{[^}]*"msg":\s*"([^"]+)"',
+                output,
+                re.DOTALL
+            )
+            
+            for fatal_match in fatal_blocks:
+                error_msg = fatal_match.group(1)
+                match_start = fatal_match.start()
+                match_end = fatal_match.end()
+                
+                # Check if this error matches any playbook bug pattern
+                for error_pattern, description in fatal_error_patterns:
+                    if error_pattern in error_msg:
+                        # Check if this fatal error is being ignored
+                        # Look for "...ignoring" after the fatal error block
+                        next_ignoring = output.find("...ignoring", match_end)
+                        if next_ignoring != -1 and next_ignoring - match_end < 300:
+                            # This fatal error is being ignored - it's a playbook bug!
+                            has_fatal_error = True
+                            # Extract task name if available (look backwards for TASK [)
+                            task_start = output.rfind("TASK [", 0, match_start)
+                            task_name = ""
+                            if task_start != -1:
+                                task_end = output.find("]", task_start)
+                                if task_end != -1:
+                                    task_name = output[task_start:task_end+1]
+                            
+                            error_detail = f"{description}"
+                            if task_name:
+                                error_detail += f" in {task_name}"
+                            error_detail += f": {error_msg[:300]}"
+                            fatal_error_details.append(error_detail)
+                            print(f"❌ PLAYBOOK BUG DETECTED (ignored task): {description}")
+                            if task_name:
+                                print(f"   Task: {task_name}")
+                            print(f"   Error: {error_msg[:300]}")
+                        break  # Found a match, no need to check other patterns for this error
             
             # For verification/compliance playbooks, success means it completed
             # We don't require failed=0 because checks are allowed to find non-compliance
@@ -1066,7 +1549,19 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
                     if failed_count > 0:
                         print(f"⚠️  Playbook has {failed_count} failed task(s)")
                         # This could be a playbook bug, return failure to trigger retry
-                        return False, f"Playbook had {failed_count} failed tasks\n\n{output}"
+                        # Filter output before returning to reduce data size
+                        filtered_output = filter_verbose_task_output(output)
+                        return False, f"Playbook had {failed_count} failed tasks\n\n{filtered_output}"
+                
+                # Check for ignored tasks with fatal errors (playbook bugs)
+                if has_fatal_error:
+                    error_summary = "\n".join(fatal_error_details)
+                    print(f"❌ PLAYBOOK BUG: Fatal errors detected in ignored tasks")
+                    print("   These errors indicate playbook bugs that need to be fixed")
+                    print("   The playbook will be regenerated with corrections")
+                    # Filter output before returning to reduce data size
+                    filtered_output = filter_verbose_task_output(output)
+                    return False, f"PLAYBOOK BUG: Fatal errors in ignored tasks (playbook bugs)\n\nErrors:\n{error_summary}\n\nFiltered output:\n{filtered_output}"
                 
                 print("✅ Playbook completed successfully!")
                 
@@ -1082,9 +1577,13 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
                         if line.strip():
                             print(f"   {line}")
                 
-                return True, output
+                # Filter output before returning to reduce data size for AI feedback
+                filtered_output = filter_verbose_task_output(output)
+                return True, filtered_output
             else:
-                return False, f"Execution completed but output format unexpected:\n{output}"
+                # Filter output before returning to reduce data size
+                filtered_output = filter_verbose_task_output(output)
+                return False, f"Execution completed but output format unexpected:\n{filtered_output}"
         else:
             print(f"⚠️  Playbook execution returned code: {result.returncode}")
             
@@ -1136,8 +1635,10 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
                 print("   ✅ Treating as successful - compliance report was generated")
                 return True, "Compliance verification completed with findings"
             
-            return False, f"PLAYBOOK BUG:\n\nError context:\n{full_error_context}\n"
-            #return False, output
+            # If we get here, it's a non-zero exit code and not a known acceptable case
+            # Return the filtered output as error message
+            filtered_output = filter_verbose_task_output(output)
+            return False, f"Playbook execution failed with return code {result.returncode}\n\nFiltered output:\n{filtered_output}"
             
     except subprocess.TimeoutExpired:
         error_msg = "Playbook execution timed out after 120 seconds"
@@ -1684,11 +2185,16 @@ The playbook MUST implement this audit procedure correctly:
 ```
 
 **CRITICAL - AUDIT PROCEDURE COMPLIANCE:**
-1. The playbook should convert the audit procedure script/commands into Ansible tasks
-2. Each distinct check in the audit procedure should become a separate requirement/task
-3. The playbook should follow the step-by-step logic from the audit procedure
-4. Conditional execution should match the audit procedure (e.g., "If nothing is returned, no further audit steps are required")
-5. Status determination logic should match the expected outputs and pass/fail criteria from the audit procedure
+1. **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
+   - **MANDATORY**: If the audit procedure provides scripts or commands, the playbook MUST use them exactly as provided
+   - **DO NOT** accept alternative commands or scripts unless the provided ones are confirmed to not work
+   - **ONLY** flag as incorrect if the playbook uses different commands when the audit procedure provides specific ones
+   - Verify that the playbook preserves the exact commands, scripts, and logic from the audit procedure
+2. The playbook should convert the audit procedure script/commands into Ansible tasks
+3. Each distinct check in the audit procedure should become a separate requirement/task
+4. The playbook should follow the step-by-step logic from the audit procedure
+5. Conditional execution should match the audit procedure (e.g., "If nothing is returned, no further audit steps are required")
+6. Status determination logic should match the expected outputs and pass/fail criteria from the audit procedure
 
 """
     
@@ -1736,7 +2242,12 @@ The playbook MUST implement this audit procedure correctly:
    - **Purpose**: Verify tasks IMPLEMENT requirements correctly
    - **Scope**: Implementation details and correctness
    - **Check**:
-     * Command/script matches requirement description
+     * **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
+       - **MANDATORY**: If the audit procedure or requirements provide scripts or commands, verify the playbook uses them exactly as provided
+       - **DO NOT** flag as incorrect if the playbook uses the provided scripts/commands, even if alternatives exist
+       - **ONLY** flag as incorrect if the playbook uses different commands when specific ones are provided in the audit procedure
+       - Verify that the playbook preserves the exact commands, scripts, and logic from the audit procedure
+     * Command/script matches requirement description OR matches the provided audit procedure script/command
      * Regex patterns are correct (extract and compare values properly)
      * Version comparisons implemented correctly (e.g., "1.3.1-25 or later" extracts and compares numerically)
      * Status determination logic matches requirement's pass/fail criteria
@@ -1748,9 +2259,10 @@ The playbook MUST implement this audit procedure correctly:
      * **IGNORE potential issues** (e.g., "may not correctly match", "could cause issues") - execution will test these
      * **IGNORE reliability concerns** (e.g., "may not reliably produce") - execution will test reliability
      * **ONLY FLAG confirmed problems**: Clearly wrong patterns, missing logic, incorrect syntax, or obvious mismatches
+     * **DO NOT flag if playbook uses provided scripts/commands from audit procedure** - this is correct behavior
      * If you cannot confirm an issue definitively, do NOT flag it - let execution reveal the actual behavior
    - **PASS**: Tasks implement requirements correctly (or issues are only potential/uncertain)
-   - **FAIL**: Tasks have confirmed implementation problems (wrong regex, incorrect comparisons, missing logic, etc.)
+   - **FAIL**: Tasks have confirmed implementation problems (wrong regex, incorrect comparisons, missing logic, etc.) OR playbook uses different commands when audit procedure provides specific ones
 
 **3. AUDIT PROCEDURE COMPLIANCE** (if audit procedure provided):
    - **Purpose**: Verify playbook WORKFLOW and DEPENDENCIES align with audit procedure
@@ -1828,11 +2340,14 @@ The playbook MUST implement this audit procedure correctly:
          {% endif %}
        ```
      * **Key indicators of valid complex templates**:
-       - **RECOMMENDED**: Uses `regex_search()` to get full version match first, then `split()` to extract components
+       - **PREFERRED**: Uses `regex_replace()` with backreferences (`\\1`, `\\2`, etc.) to extract specific capture groups directly
+         - This is safer than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
+         - Example: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}`
+       - **ALTERNATIVE**: For version strings with consistent delimiters, uses `regex_search()` to get full version match first, then `split()` to extract components
+         - This approach works well when the format is predictable (e.g., `pam-1.3.1-25`)
        - Uses `{% set variable = ... %}` to extract and store intermediate values
        - Uses `{% if %}` blocks for multi-condition logic
-       - Uses `split()` method to break down version strings (more reliable than multiple regex_replace calls)
-       - Uses `| int` filter to convert strings to integers for numeric comparison
+       - Uses `| int` or `| int(base=8)` filter to convert strings to integers for numeric comparison
        - Ends with `PASS` or `FAIL` (not quoted, inside template block)
        - Uses folded block scalar (`>-`) which is ACCEPTABLE for this use case
        - May use `{# ... #}` for comments/debugging within template blocks
@@ -1933,7 +2448,9 @@ PLAYBOOK_STRUCTURE: PASS
 - Multi-line variable assignments (scripts, complex content) correctly use `{% raw %}` tags when needed
 - All regex patterns use correct escaping:
   - In inline expressions (`{{ }}`): SINGLE backslash (`\\.`)
-  - In template blocks (`{% %}`): Use `regex_search()` with single backslash `\\.` for periods, then use `split()` to extract components (RECOMMENDED approach)
+  - In template blocks (`{% %}`): 
+    - **PREFERRED**: Use `regex_replace()` with backreferences (`\\1`, `\\2`, etc.) to extract specific capture groups directly
+    - **ALTERNATIVE**: For version strings with consistent delimiters, use `regex_search()` with single backslash `\\.` for periods, then use `split()` to extract components
 
 {{If audit procedure provided:}}
 **Audit Procedure Compliance:** PASS
@@ -1965,11 +2482,17 @@ Missing/Not Found:
 **Requirements Analysis:** FAIL
 - **NOTE**: Checks CORRECTNESS and IMPLEMENTATION DETAILS. Tasks may exist but fail here if incorrect.
 - **CRITICAL**: Only flag CONFIRMED issues. Do NOT flag potential issues (e.g., "may not correctly", "could cause") or reliability concerns (e.g., "may not reliably") - execution will test these.
+- **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
+  - **MANDATORY**: If the audit procedure provides scripts or commands, verify the playbook uses them exactly as provided
+  - **DO NOT** flag as incorrect if the playbook uses the provided scripts/commands from the audit procedure
+  - **ONLY** flag as incorrect if the playbook uses different commands when specific ones are provided in the audit procedure
 - Requirement X: [requirement text] - Task exists but implementation incorrect
   - Example: "Regex pattern `'pam-1\\.3\\.1-([0-9]+)'` doesn't extract and compare build number to '25' as required" (CONFIRMED issue)
+  - Example: "Playbook uses `grep -r pattern` but audit procedure specifies `find /path -name 'file' | xargs grep pattern`" (CONFIRMED issue - different command when specific one provided)
   - ❌ WRONG: "Regex pattern may not correctly match" (potential issue - DO NOT FLAG)
   - ❌ WRONG: "May not reliably produce" (reliability concern - DO NOT FLAG)
-- Requirement Y: [requirement text] - Task exists but doesn't match requirement (wrong command/script, incorrect regex, wrong version comparison - CONFIRMED issues only)
+  - ❌ WRONG: "Playbook uses audit procedure command X, but alternative command Y might be better" (DO NOT FLAG - using provided command is correct)
+- Requirement Y: [requirement text] - Task exists but doesn't match requirement (wrong command/script when audit procedure provides specific one, incorrect regex, wrong version comparison - CONFIRMED issues only)
 
 {{If status variables have issues:}}
 **Status Variable Format and Regex Verification:** FAIL
@@ -1987,16 +2510,22 @@ Missing/Not Found:
   - ❌ WRONG: Multi-line script without `{% raw %}` tags (Jinja2 will try to process it and may fail)
 - Regex patterns MUST use correct escaping:
   - In inline expressions (`{{ }}`): SINGLE backslash (`\\.`), NOT multiple backslashes (`\\\\.` or `\\\\\\.`)
-  - In template blocks (`{% %}`): Use `regex_search()` with single backslash `\\.` for periods, then use `split()` to extract components (RECOMMENDED approach)
+  - In template blocks (`{% %}`): 
+    - **PREFERRED**: Use `regex_replace()` with backreferences (`\\1`, `\\2`, etc.) to extract specific capture groups directly
+      - This is safer than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
+      - Example: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}`
+    - **ALTERNATIVE**: For version strings with consistent delimiters, use `regex_search()` with single backslash `\\.` for periods, then use `split()` to extract components
 - **Detection**: In the YAML source, distinguish between inline expressions and template blocks
 - **Examples**:
   * ❌ WRONG: `status_1: |` (literal preserves newlines)
   * ❌ WRONG: `regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')` in inline expression (TWO backslashes `\\\\.` before period - WRONG!)
   * ❌ WRONG: `regex_search('pam-1\\\\\\.3\\\\\\.1-([0-9]+)')` in inline expression (FOUR backslashes `\\\\\\.` before period - WRONG!)
-  * ✅ CORRECT: `regex_search('pam-1\\.3\\.1-([0-9]+)')` in inline expression (ONE backslash `\\.` before period - CORRECT)
-  * ✅ CORRECT: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (quoted string + single backslash)
-  * ✅ CORRECT: `{% set version_match = output | regex_search('pam-([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)') %}` - In template block, use `regex_search()` first, then `split()` to extract components (RECOMMENDED)
-  * ✅ CORRECT: `{% set major = version_parts.split('.')[0] | int %}` - Use `split()` method to extract version components (more reliable than multiple regex_replace calls)
+  * ❌ WRONG: Using `regex_search()` with array indexing: `{% set match = output | regex_search('pattern') %}{% set value = match[1] %}` (error-prone, may grab wrong character)
+  * ✅ CORRECT: `regex_search('pam-1\\.3\\.1-([0-9]+)')` in inline expression (ONE backslash `\\.` before period - CORRECT) - for boolean checks
+  * ✅ CORRECT: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (quoted string + single backslash) - for boolean checks
+  * ✅ CORRECT: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}` - PREFERRED: Extract specific capture group directly
+  * ✅ CORRECT: `{% set version_match = output | regex_search('pam-([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)') %}` - ALTERNATIVE: For version strings with consistent delimiters, use `regex_search()` first, then `split()` to extract components
+  * ✅ CORRECT: `{% set major = version_parts.split('.')[0] | int %}` - Use `split()` method to extract version components (when using regex_search approach)
   * ✅ CORRECT: Complex template using folded block scalar (RECOMMENDED APPROACH):
     ```yaml
     status_1: >-
@@ -2122,7 +2651,8 @@ def analyze_data_collection(
     playbook_objective: str,
     test_output: str,
     playbook_content: str = None,
-    audit_procedure: str = None
+    audit_procedure: str = None,
+    suppress_header: bool = False
 ) -> tuple[bool, str]:
     """
     Analyze if the playbook collected sufficient data (STAGE 1: DATA SUFFICIENCY CHECK).
@@ -2135,25 +2665,29 @@ def analyze_data_collection(
         playbook_objective: The objective of the playbook
         test_output: Output from data collection playbook
         playbook_content: The actual playbook YAML content (optional, used to analyze status evaluation issues)
+        audit_procedure: CIS Benchmark audit procedure (optional)
+        suppress_header: If True, suppress the header output (used when called from analyze_playbook_output)
         
     Returns:
         tuple: (is_sufficient, data_collection_analysis_message)
         - is_sufficient: True if data was collected properly and status values are correct
         - data_collection_analysis_message: AI's analysis of data collection sufficiency
     """
-    print("\n" + "=" * 80)
-    print("🔍 STAGE 1: DATA COLLECTION ANALYSIS")
-    print("=" * 80)
-    print("Checking if playbook collected sufficient data...")
+    if not suppress_header:
+        print("\n" + "=" * 80)
+        print("🔍 STAGE 1: DATA COLLECTION ANALYSIS")
+        print("=" * 80)
+        print("Checking if playbook collected sufficient data...")
     
     # First, check if status values are correctly evaluated
     status_values_valid, status_validation_error = check_status_values_evaluated(test_output)
     status_evaluation_issue = None
     if not status_values_valid:
-        print("\n⚠️  WARNING: Status Values Not Evaluated")
-        print("=" * 80)
-        print(status_validation_error)
-        print("=" * 80)
+        if not suppress_header:
+            print("\n⚠️  WARNING: Status Values Not Evaluated")
+            print("=" * 80)
+            print(status_validation_error)
+            print("=" * 80)
         status_evaluation_issue = status_validation_error
     
     # Format requirements for analysis
@@ -2379,58 +2913,69 @@ DO NOT analyze compliance - just verify data collection ran and reported results
     )
     
     try:
-        print("Analyzing data collection (this may take a minute)...")
+        if not suppress_header:
+            print("Analyzing data collection (this may take a minute)...")
         
         # Use the LLM directly
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
-                print(f"Data collection analysis attempt {attempt}/{max_attempts}...")
+                if not suppress_header:
+                    print(f"Data collection analysis attempt {attempt}/{max_attempts}...")
                 response = model.invoke(data_collection_prompt)
                 result = response.content.strip()
                 break
             except Exception as e:
                 error_msg = str(e)
                 if "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-                    print(f"⚠️  Analysis timed out on attempt {attempt}, retrying...")
+                    if not suppress_header:
+                        print(f"⚠️  Analysis timed out on attempt {attempt}, retrying...")
                     if attempt < max_attempts:
                         continue
                     else:
-                        print("⚠️  Analysis timed out, assuming data is sufficient...")
+                        if not suppress_header:
+                            print("⚠️  Analysis timed out, assuming data is sufficient...")
                         return True, "DATA_COLLECTION: PASS (Analysis timed out - assuming sufficient)"
                 else:
                     raise
         
-        print("\n📊 Data Collection Analysis Result:")
-        print("-" * 40)
-        print(result)
-        #print(result[:1000] + ("..." if len(result) > 1000 else ""))
-        print("-" * 40)
+        if not suppress_header:
+            print("\n📊 Data Collection Analysis Result:")
+            print("-" * 40)
+            print(result)
+            #print(result[:1000] + ("..." if len(result) > 1000 else ""))
+            print("-" * 40)
         
         # Check result - IMPORTANT: Check for FAIL first because "FAIL" might contain "PASS"
         result_upper = result.upper()
         
         # Check for status evaluation errors first (most critical)
         if "STATUS_EVALUATION_ERROR" in result_upper or ("STATUS_EVALUATION" in result_upper and "ERROR" in result_upper):
-            print("\n❌ DATA COLLECTION: FAIL - Status values not evaluated correctly")
+            if not suppress_header:
+                print("\n❌ DATA COLLECTION: FAIL - Status values not evaluated correctly")
             return False, result
         
         if "DATA_COLLECTION: FAIL" in result_upper or "INSUFFICIENT_DATA" in result or "INSUFFICIENT" in result_upper[:200]:
-            print("\n❌ DATA COLLECTION: FAIL - Data collection insufficient")
+            if not suppress_header:
+                print("\n❌ DATA COLLECTION: FAIL - Data collection insufficient")
             return False, result
         elif "DATA_COLLECTION: PASS" in result_upper or ("SUFFICIENT" in result_upper[:200] and "INSUFFICIENT" not in result_upper[:200] and "STATUS_EVALUATION" not in result_upper):
-            print("\n✅ DATA COLLECTION: PASS - Data collection sufficient")
+            if not suppress_header:
+                print("\n✅ DATA COLLECTION: PASS - Data collection sufficient")
             return True, result
         else:
             # Ambiguous result - check for positive/negative indicators
             if any(word in result.lower() for word in ["missing", "incomplete", "not collected", "failed to collect", "advice to update", "status_evaluation"]):
-                print("\n❌ DATA COLLECTION: FAIL - Data appears insufficient or status evaluation issue (found negative indicators)")
+                if not suppress_header:
+                    print("\n❌ DATA COLLECTION: FAIL - Data appears insufficient or status evaluation issue (found negative indicators)")
                 return False, result
             elif any(word in result.lower() for word in ["all requirements have", "data values collected", "sufficient"]) and "status_evaluation" not in result.lower():
-                print("\n✅ DATA COLLECTION: PASS - Data appears sufficient")
+                if not suppress_header:
+                    print("\n✅ DATA COLLECTION: PASS - Data appears sufficient")
                 return True, result
             else:
-                print("\n⚠️  DATA COLLECTION: UNCLEAR - Assuming sufficient")
+                if not suppress_header:
+                    print("\n⚠️  DATA COLLECTION: UNCLEAR - Assuming sufficient")
                 return True, result
                 
     except Exception as e:
@@ -2480,12 +3025,14 @@ def analyze_playbook_output(
     # This function only handles STAGE 1 (Data Collection) and STAGE 2 (Compliance Analysis).
     
     # STAGE 1: Check data collection
+    # Suppress header since it will be included in the final analysis result
     data_collection_passed, data_collection_analysis = analyze_data_collection(
         requirements=requirements,
         playbook_objective=playbook_objective,
         test_output=test_output,
         playbook_content=playbook_content,
-        audit_procedure=audit_procedure
+        audit_procedure=audit_procedure,
+        suppress_header=True
     )
     
     # If data collection failed, return early with the data collection analysis
@@ -3851,7 +4398,7 @@ To fix this:
 2. NEVER use a variable in the same set_fact task where it's being defined
 3. Split set_fact tasks that have dependencies into separate tasks
 4. Use 'variable_name | default(value)' for safety
-5. Always set 'gather_facts: yes' at the playbook level
+5. Always set 'gather_facts: false' at the playbook level
 
 Example of the problem:
 BAD - Circular reference:

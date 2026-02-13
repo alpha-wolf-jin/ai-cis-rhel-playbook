@@ -1,0 +1,249 @@
+---
+# CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.13
+- name: Data Collection for CIS 5.1.13
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.13"
+    req_1: "Verify sshd IgnoreRhosts global setting using command: sshd -T | grep ignorerhosts"
+    req_2: "If Match blocks are used, verify sshd IgnoreRhosts setting for each applicable connection parameter combination"
+    req_3: "OVERALL Verify: Ensure sshd IgnoreRhosts is enabled"
+    # Connection parameters for testing Match blocks - should be specified based on environment
+    # Format: List of dictionaries where each dictionary contains connection parameters
+    # Example: [{"user": "root"}, {"user": "sshuser", "addr": "192.168.1.0/24"}]
+    match_test_params: []
+    # Flag to indicate if Match blocks exist in sshd_config
+    match_blocks_exist: false
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        match_test_results: []
+
+    # Check if Match blocks exist in sshd_config
+    - name: Check for Match blocks in sshd_config
+      shell: |
+        grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null && echo "true" || echo "false"
+      args:
+        executable: /bin/bash
+      register: match_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set match_blocks_exist flag
+      set_fact:
+        match_blocks_exist: "{{ match_check.stdout | default('false') | trim == 'true' }}"
+
+    # Requirement 1: Verify sshd IgnoreRhosts global setting using command: sshd -T | grep ignorerhosts
+    - name: Req 1 - Check global sshd IgnoreRhosts setting
+      shell: |
+        sshd -T | grep ignorerhosts
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check global sshd IgnoreRhosts setting"
+        task_1_cmd: "sshd -T | grep ignorerhosts"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'ignorerhosts yes') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly ignorerhosts yes' if (result_1.stdout | default('') | trim == 'ignorerhosts yes') else 'FAIL when output is not exactly ignorerhosts yes') | trim }}"
+
+    # Requirement 2: If Match blocks are used, verify sshd IgnoreRhosts setting for each applicable connection parameter combination
+    # Only execute if Match blocks exist AND connection parameters are provided
+    - name: Req 2 - Test Match blocks with specified connection parameters
+      shell: |
+        # Initialize results array
+        results=()
+        
+        # Test with each specified parameter combination using exact audit procedure command
+        {% for param in match_test_params %}
+        echo "Testing with {{ param | to_json }}:"
+        cmd_output=$(sshd -T {% for key, value in param.items() %}-C {{ key }}={{ value }} {% endfor %}| grep ignorerhosts 2>/dev/null || echo "Command failed")
+        echo "Result: $cmd_output"
+        results+=("{{ param | to_json }}: $cmd_output")
+        {% endfor %}
+        
+        # Print all results
+        printf '%s\n' "${results[@]}"
+      args:
+        executable: /bin/bash
+      register: match_test_result
+      ignore_errors: true
+      changed_when: false
+      when: match_blocks_exist and match_test_params | length > 0
+
+    - name: Store requirement 2 details when Match blocks are tested
+      set_fact:
+        task_2_name: "Check sshd IgnoreRhosts with Match block parameters"
+        task_2_cmd: "Test with specified connection parameters: {{ match_test_params | default([]) }}"
+        task_2_rc: "{{ match_test_result.rc | default(-1) }}"
+        data_2: "{{ match_test_result.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = match_test_result.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lines = output.split('\n') %}
+            {% set test_count = 0 %}
+            {% set pass_count = 0 %}
+            {% for line in lines %}
+              {% if 'Result: ignorerhosts yes' in line %}
+                {% set pass_count = pass_count + 1 %}
+                {% set test_count = test_count + 1 %}
+              {% elif 'Testing with' in line %}
+                {% set test_count = test_count + 1 %}
+              {% endif %}
+            {% endfor %}
+            {% if test_count > 0 and test_count == pass_count %}
+              PASS
+            {% elif test_count == 0 %}
+              UNKNOWN
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% set output = match_test_result.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lines = output.split('\n') %}
+            {% set test_count = 0 %}
+            {% set pass_count = 0 %}
+            {% for line in lines %}
+              {% if 'Result: ignorerhosts yes' in line %}
+                {% set pass_count = pass_count + 1 %}
+                {% set test_count = test_count + 1 %}
+              {% elif 'Testing with' in line %}
+                {% set test_count = test_count + 1 %}
+              {% endif %}
+            {% endfor %}
+            {% if test_count > 0 and test_count == pass_count %}
+              PASS - All tested connection parameters return ignorerhosts yes
+            {% elif test_count == 0 %}
+              UNKNOWN - Could not determine test results
+            {% else %}
+              FAIL - Not all tested connection parameters return ignorerhosts yes
+            {% endif %}
+          {% else %}
+            UNKNOWN - Could not determine Match block test results
+          {% endif %}
+      when: match_blocks_exist and match_test_params | length > 0
+
+    - name: Store requirement 2 details when Match blocks exist but no parameters specified
+      set_fact:
+        task_2_name: "Check sshd IgnoreRhosts with Match block parameters"
+        task_2_cmd: "Match blocks exist but no connection parameters specified for testing"
+        task_2_rc: 0
+        data_2: "Match blocks exist in sshd_config but no connection parameters specified for testing"
+        status_2: "UNKNOWN"
+        rationale_2: "UNKNOWN - Match blocks exist but no connection parameters specified for testing"
+      when: match_blocks_exist and match_test_params | length == 0
+
+    - name: Store requirement 2 details when no Match blocks exist
+      set_fact:
+        task_2_name: "Check sshd IgnoreRhosts with Match block parameters"
+        task_2_cmd: "No Match blocks found in sshd_config"
+        task_2_rc: 0
+        data_2: "No Match blocks found in sshd_config"
+        status_2: "PASS"
+        rationale_2: "PASS - No Match blocks found in sshd_config, requirement not applicable"
+      when: not match_blocks_exist
+
+    # Requirement 3: OVERALL Verify: Ensure sshd IgnoreRhosts is enabled
+    - name: Req 3 - Overall verification
+      set_fact:
+        task_3_name: "Overall verification of sshd IgnoreRhosts"
+        task_3_cmd: "N/A - Calculated from requirements 1 and 2"
+        task_3_rc: 0
+        data_3: "Global check: {{ data_1 }}, Match blocks exist: {{ match_blocks_exist }}, Match block check: {{ status_2 }}"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            {% if match_blocks_exist %}
+              {% if status_2 | trim == 'PASS' %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              PASS
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            {% if match_blocks_exist %}
+              {% if status_2 | trim == 'PASS' %}
+                PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS)
+              {% else %}
+                FAIL - Global check passed but Match block check {{ status_2 | trim }}
+              {% endif %}
+            {% else %}
+              PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS) - No Match blocks found
+            {% endif %}
+          {% else %}
+            FAIL - Global check failed
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.13"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.13"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

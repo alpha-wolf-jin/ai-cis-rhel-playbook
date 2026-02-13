@@ -1,0 +1,311 @@
+---
+- name: Data Collection for CIS checkpoint 4.3.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.3.1"
+    req_1: "Check if nftables is in use on the system"
+    req_2: "Verify that a base chain exists for the INPUT filter hook"
+    req_3: "Verify that a base chain exists for the FORWARD filter hook"
+    req_4: "Verify that a base chain exists for the OUTPUT filter hook"
+    req_5: "OVERALL Verify: Ensure nftables base chains exist"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        # Initialize status variables with default values
+        status_1: "UNKNOWN"
+        status_2: "NA"
+        status_3: "NA"
+        status_4: "NA"
+        status_5: "UNKNOWN"
+        rationale_1: "Not evaluated - OS check may have prevented execution"
+        rationale_2: "Skipped - nftables not in use or OS mismatch"
+        rationale_3: "Skipped - nftables not in use or OS mismatch"
+        rationale_4: "Skipped - nftables not in use or OS mismatch"
+        rationale_5: "Not evaluated"
+
+    # Check if OS is supported (flexible check - execute anyway but report appropriately)
+    - name: Check OS compatibility
+      set_fact:
+        os_supported: "{{ ansible_distribution in ['RedHat', 'CentOS', 'Rocky', 'AlmaLinux', 'Fedora', 'OracleLinux'] and ansible_distribution_major_version|int >= 8 }}"
+      ignore_errors: true
+
+    # Requirement 1: Check if nftables is in use on the system
+    - name: Req 1 - Check if nftables is in use
+      shell: !unsafe |
+        # Check if nft command is available and firewalld is not the primary
+        if command -v nft >/dev/null 2>&1; then
+          if systemctl is-active firewalld >/dev/null 2>&1; then
+            echo "firewalld_active"
+          else
+            echo "nftables_available"
+          fi
+        else
+          echo "nft_not_found"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+      when: os_supported | default(true)
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if nftables is in use"
+        task_1_cmd: "Check nft command availability and firewalld status"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if os_supported | default(true) %}
+            {% if result_1.stdout is defined and result_1.stdout | trim == 'nftables_available' %}
+              PASS
+            {% elif result_1.stdout is defined and result_1.stdout | trim in ['firewalld_active', 'nft_not_found'] %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% if os_supported | default(true) %}
+            {% if result_1.stdout is defined and result_1.stdout | trim == 'nftables_available' %}
+              PASS when nftables is the active firewall utility
+            {% elif result_1.stdout is defined and result_1.stdout | trim == 'firewalld_active' %}
+              FAIL if firewalld is the primary and active firewall management tool
+            {% elif result_1.stdout is defined and result_1.stdout | trim == 'nft_not_found' %}
+              FAIL - nft command not found
+            {% else %}
+              Cannot determine from data (error collecting)
+            {% endif %}
+          {% else %}
+            Cannot determine - OS not fully supported for this check
+          {% endif %}
+      when: os_supported | default(true)
+
+    # Requirement 2: Verify INPUT base chain exists
+    - name: Req 2 - Check INPUT base chain
+      shell: !unsafe |
+        nft list ruleset | grep 'hook input'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: os_supported | default(true) and status_1 | default('FAIL') == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check INPUT base chain"
+        task_2_cmd: "nft list ruleset | grep 'hook input'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if os_supported | default(true) and status_1 | default('FAIL') == 'PASS' %}
+            {% if result_2.stdout is defined and 'type filter hook input' in result_2.stdout %}
+              PASS
+            {% elif result_2.stdout is defined %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if os_supported | default(true) and status_1 | default('FAIL') == 'PASS' %}
+            {% if result_2.stdout is defined and 'type filter hook input' in result_2.stdout %}
+              PASS when output includes exact string type filter hook input
+            {% elif result_2.stdout is defined %}
+              FAIL otherwise
+            {% else %}
+              Cannot determine from data (error collecting)
+            {% endif %}
+          {% else %}
+            Skipped - nftables not in use or OS mismatch
+          {% endif %}
+      when: os_supported | default(true) and status_1 | default('FAIL') == 'PASS'
+
+    # Requirement 3: Verify FORWARD base chain exists
+    - name: Req 3 - Check FORWARD base chain
+      shell: !unsafe |
+        nft list ruleset | grep 'hook forward'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: os_supported | default(true) and status_1 | default('FAIL') == 'PASS'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check FORWARD base chain"
+        task_3_cmd: "nft list ruleset | grep 'hook forward'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if os_supported | default(true) and status_1 | default('FAIL') == 'PASS' %}
+            {% if result_3.stdout is defined and 'type filter hook forward' in result_3.stdout %}
+              PASS
+            {% elif result_3.stdout is defined %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_3: >-
+          {% if os_supported | default(true) and status_1 | default('FAIL') == 'PASS' %}
+            {% if result_3.stdout is defined and 'type filter hook forward' in result_3.stdout %}
+              PASS when output includes exact string type filter hook forward
+            {% elif result_3.stdout is defined %}
+              FAIL otherwise
+            {% else %}
+              Cannot determine from data (error collecting)
+            {% endif %}
+          {% else %}
+            Skipped - nftables not in use or OS mismatch
+          {% endif %}
+      when: os_supported | default(true) and status_1 | default('FAIL') == 'PASS'
+
+    # Requirement 4: Verify OUTPUT base chain exists
+    - name: Req 4 - Check OUTPUT base chain
+      shell: !unsafe |
+        nft list ruleset | grep 'hook output'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: os_supported | default(true) and status_1 | default('FAIL') == 'PASS'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Check OUTPUT base chain"
+        task_4_cmd: "nft list ruleset | grep 'hook output'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if os_supported | default(true) and status_1 | default('FAIL') == 'PASS' %}
+            {% if result_4.stdout is defined and 'type filter hook output' in result_4.stdout %}
+              PASS
+            {% elif result_4.stdout is defined %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_4: >-
+          {% if os_supported | default(true) and status_1 | default('FAIL') == 'PASS' %}
+            {% if result_4.stdout is defined and 'type filter hook output' in result_4.stdout %}
+              PASS when output includes exact string type filter hook output
+            {% elif result_4.stdout is defined %}
+              FAIL otherwise
+            {% else %}
+              Cannot determine from data (error collecting)
+            {% endif %}
+          {% else %}
+            Skipped - nftables not in use or OS mismatch
+          {% endif %}
+      when: os_supported | default(true) and status_1 | default('FAIL') == 'PASS'
+
+    # Requirement 5: Overall verification - FIXED BASED ON FEEDBACK
+    - name: Store requirement 5 details
+      set_fact:
+        status_5: >-
+          {% if not os_supported | default(true) %}
+            UNKNOWN
+          {% elif status_1 | default('FAIL') | trim == 'FAIL' %}
+            PASS
+          {% elif status_1 | default('FAIL') | trim == 'PASS' and 
+                status_2 | default('FAIL') | trim == 'PASS' and 
+                status_3 | default('FAIL') | trim == 'PASS' and 
+                status_4 | default('FAIL') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_5: >-
+          {% if not os_supported | default(true) %}
+            Cannot determine - OS not fully supported for this check
+          {% elif status_1 | default('FAIL') | trim == 'FAIL' %}
+            PASS when firewalld is in use and the check is skipped per CIS benchmark note
+          {% elif status_1 | default('FAIL') | trim == 'PASS' and 
+                status_2 | default('FAIL') | trim == 'PASS' and 
+                status_3 | default('FAIL') | trim == 'PASS' and 
+                status_4 | default('FAIL') | trim == 'PASS' %}
+            PASS when all nftables base chains exist
+          {% else %}
+            FAIL when nftables is in use but base chains are missing
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 4.3.1"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "OS Info: {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }})"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not executed') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Skipped - nftables not in use') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not executed') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Skipped - nftables not in use') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not executed') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Skipped - nftables not in use') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,161 @@
+---
+- name: Data Collection for CIS 4.3.3
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.3.3"
+    req_1: "Check if nftables service is enabled"
+    req_2: "Verify INPUT base chain policy is DROP"
+    req_3: "Verify FORWARD base chain policy is DROP"
+    req_4: "OVERALL Verify: Ensure nftables default deny firewall policy"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if nftables service is enabled
+    - name: Req 1 - Check nftables service status
+      shell: !unsafe |
+        systemctl --quiet is-enabled nftables.service
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check nftables service status"
+        task_1_cmd: "systemctl --quiet is-enabled nftables.service"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
+        rationale_1: "PASS when command returns exit code 0 (service is enabled), FAIL when exit code is non-zero (service is disabled or not found)"
+
+    # Requirement 2: Verify INPUT base chain policy is DROP (only if service enabled)
+    - name: Req 2 - Check INPUT chain policy
+      shell: !unsafe |
+        nft list ruleset | grep 'hook input' | grep -v 'policy drop'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check INPUT chain policy"
+        task_2_cmd: "nft list ruleset | grep 'hook input' | grep -v 'policy drop'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: "PASS when command returns no output (meaning all 'hook input' lines contain 'policy drop'), FAIL when any output is returned. NA when nftables service is not enabled."
+
+    # Requirement 3: Verify FORWARD base chain policy is DROP (only if service enabled)
+    - name: Req 3 - Check FORWARD chain policy
+      shell: !unsafe |
+        nft list ruleset | grep 'hook forward' | grep -v 'policy drop'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check FORWARD chain policy"
+        task_3_cmd: "nft list ruleset | grep 'hook forward' | grep -v 'policy drop'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            {{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_3: "PASS when command returns no output (meaning all 'hook forward' lines contain 'policy drop'), FAIL when any output is returned. NA when nftables service is not enabled."
+
+    # Requirement 4: OVERALL Verify
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Overall compliance check"
+        task_4_cmd: "N/A - Calculated from previous results"
+        task_4_rc: 0
+        data_4: "Service enabled: {{ status_1 }}, INPUT policy: {{ status_2 }}, FORWARD policy: {{ status_3 }}"
+        status_4: >-
+          {% if status_1 | trim == 'FAIL' %}
+            PASS
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 4.3.3"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "========================================================"

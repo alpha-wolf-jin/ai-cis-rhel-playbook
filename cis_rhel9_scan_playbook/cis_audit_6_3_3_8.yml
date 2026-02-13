@@ -1,0 +1,168 @@
+---
+- name: Data Collection for CIS 6.3.3.8
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.8"
+    req_1: |
+      Check on-disk audit rules for identity key using command: `grep -r \"identity\" /etc/audit/rules.d/*.rules`. Rationale: PASS when output contains all required rules (each rule must be present with '-w <file> -p wa -k identity' format) for files: /etc/group, /etc/passwd, /etc/gshadow, /etc/shadow, /etc/security/opasswd, /etc/nsswitch.conf, /etc/pam.conf, and /etc/pam.d, FAIL otherwise
+    req_2: "Check loaded audit rules for identity key using command: `auditctl -l | grep identity`. Rationale: PASS when output contains all required rules (each rule must be present with '-w <file> -p wa -k identity' format) for files: /etc/group, /etc/passwd, /etc/gshadow, /etc/shadow, /etc/security/opasswd, /etc/nsswitch.conf, /etc/pam.conf, and /etc/pam.d, FAIL otherwise"
+    req_3: "OVERALL Verify: Ensure events that modify user/group information are collected. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+    required_patterns:
+      - "-w /etc/group -p wa -k identity"
+      - "-w /etc/passwd -p wa -k identity"
+      - "-w /etc/gshadow -p wa -k identity"
+      - "-w /etc/shadow -p wa -k identity"
+      - "-w /etc/security/opasswd -p wa -k identity"
+      - "-w /etc/nsswitch.conf -p wa -k identity"
+      - "-w /etc/pam.conf -p wa -k identity"
+      - "-w /etc/pam.d -p wa -k identity"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check on-disk audit rules
+    - name: "Req 1 - Check on-disk audit rules for identity key"
+      shell: |
+        grep -r "identity" /etc/audit/rules.d/*.rules
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check on-disk audit rules for identity key"
+        task_1_cmd: "grep -r 'identity' /etc/audit/rules.d/*.rules"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set missing_patterns = [] %}
+          {% for pattern in required_patterns %}
+            {% if pattern not in output %}
+              {% set _ = missing_patterns.append(pattern) %}
+            {% endif %}
+          {% endfor %}
+          {% if missing_patterns | length == 0 %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set missing_patterns = [] %}
+          {% for pattern in required_patterns %}
+            {% if pattern not in output %}
+              {% set _ = missing_patterns.append(pattern) %}
+            {% endif %}
+          {% endfor %}
+          {% if missing_patterns | length == 0 %}
+            PASS: All required rules found in on-disk audit rules.
+          {% else %}
+            FAIL: Missing rules: {{ missing_patterns | join(', ') }}
+          {% endif %}
+
+    # Requirement 2: Check loaded audit rules
+    - name: "Req 2 - Check loaded audit rules for identity key"
+      shell: |
+        auditctl -l | grep identity
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check loaded audit rules for identity key"
+        task_2_cmd: "auditctl -l | grep identity"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set missing_patterns = [] %}
+          {% for pattern in required_patterns %}
+            {% if pattern not in output %}
+              {% set _ = missing_patterns.append(pattern) %}
+            {% endif %}
+          {% endfor %}
+          {% if missing_patterns | length == 0 %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set missing_patterns = [] %}
+          {% for pattern in required_patterns %}
+            {% if pattern not in output %}
+              {% set _ = missing_patterns.append(pattern) %}
+            {% endif %}
+          {% endfor %}
+          {% if missing_patterns | length == 0 %}
+            PASS: All required rules found in loaded audit rules.
+          {% else %}
+            FAIL: Missing rules: {{ missing_patterns | join(', ') }}
+          {% endif %}
+
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "N/A"
+        status_3: "{{ ('PASS' if status_1 == 'PASS' and status_2 == 'PASS' else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS: Both on-disk and loaded audit rules contain all required rules.' if status_1 == 'PASS' and status_2 == 'PASS' else 'FAIL: Either on-disk or loaded audit rules are missing required rules.') | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.3.8"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

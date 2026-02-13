@@ -1,0 +1,174 @@
+---
+- name: Data Collection for CIS checkpoint 6.2.4.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.4.1"
+    req_1: "Verify files in /var/log/ have appropriate permissions and ownership"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+
+    # Requirement 1: Verify files in /var/log/ have appropriate permissions and ownership
+    - name: Req 1 - Execute CIS audit script for 6.2.4.1 (audit-only version)
+      copy:
+        dest: "/tmp/cis_audit_6.2.4.1.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output2=""
+             l_uidmin="$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)"
+             file_test_audit()
+             {
+                l_op2=""
+                if [ $(( $l_mode & $perm_mask )) -gt 0 ]; then
+                   l_op2="$l_op2\n  - Mode: \"$l_mode\" should be \"$maxperm\" or more restrictive"
+                fi
+                if [[ ! "$l_user" =~ $l_auser ]]; then
+                   l_op2="$l_op2\n  - Owned by: \"$l_user\" and should be owned by \"${l_auser//|/ or }\""
+                fi
+                if [[ ! "$l_group" =~ $l_agroup ]]; then
+                   l_op2="$l_op2\n  - Group owned by: \"$l_group\" and should be group owned by \"${l_agroup//|/ or }\""
+                fi
+                [ -n "$l_op2" ] && l_output2="$l_output2\n - File: \"$l_fname\" is:$l_op2\n"
+             }
+             unset a_file && a_file=() # clear and initialize array
+             # Loop to create array with stat of files that could possibly fail one of the audits
+             while IFS= read -r -d $'\0' l_file; do
+                [ -e "$l_file" ] && a_file+=("$(stat -Lc '%n^%#a^%U^%u^%G^%g' "$l_file")")
+             done < <(find -L /var/log -type f \( -perm /0137 -o ! -user root -o ! -group root \) -print0)
+             while IFS="^" read -r l_fname l_mode l_user l_uid l_group l_gid; do
+                l_bname="$(basename "$l_fname")"
+                case "$l_bname" in
+                   lastlog | lastlog.* | wtmp | wtmp.* | wtmp-* | btmp | btmp.* | btmp-* | README)
+                      perm_mask='0113'
+                      maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+                      l_auser="root"
+                      l_agroup="(root|utmp)"
+                      file_test_audit
+                      ;;
+                   secure | auth.log | syslog | messages)
+                      perm_mask='0137'
+                      maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+                      l_auser="(root|syslog)"
+                      l_agroup="(root|adm)"
+                      file_test_audit
+                      ;;
+                   SSSD | sssd)
+                      perm_mask='0117'
+                      maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+                      l_auser="(root|SSSD)"
+                      l_agroup="(root|SSSD)"
+                      file_test_audit             
+                      ;;
+                   gdm | gdm3)
+                      perm_mask='0117'
+                      maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+                      l_auser="root"
+                      l_agroup="(root|gdm|gdm3)"
+                      file_test_audit    
+                      ;;
+                   *.journal | *.journal~)
+                      perm_mask='0137'
+                      maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+                      l_auser="root"
+                      l_agroup="(root|systemd-journal)"        
+                      file_test_audit
+                      ;;
+                   *)
+                      perm_mask='0137'
+                      maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+                      l_auser="(root|syslog)"
+                      l_agroup="(root|adm)"
+                      if [ "$l_uid" -lt "$l_uidmin" ] && [ -z "$(awk -v grp="$l_group" -F: '$1==grp {print $4}' /etc/group)" ]; then
+                         if [[ ! "$l_user" =~ $l_auser ]]; then
+                            l_auser="(root|syslog|$l_user)"
+                         fi
+                         if [[ ! "$l_group" =~ $l_agroup ]]; then
+                            l_tst=""
+                            while l_out3="" read -r l_duid; do
+                               [ "$l_duid" -ge "$l_uidmin" ] && l_tst=failed
+                            done <<< "$(awk -F: '$4=='"$l_gid"' {print $3}' /etc/passwd)"
+                            [ "$l_tst" != "failed" ] && l_agroup="(root|adm|$l_group)"
+                         fi
+                      fi
+                      file_test_audit
+                      ;;
+                esac
+             done <<< "$(printf '%s\n' "${a_file[@]}")"
+             unset a_file # Clear array
+             # If all files passed, then we report compliance
+             if [ -z "$l_output2" ]; then
+                echo -e "** PASS **\n- All files in \"/var/log/\" have appropriate permissions and ownership"
+             else
+                # print audit findings
+                echo -e "** FAIL **\n$l_output2"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_6.2.4.1.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_6.2.4.1.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS audit script for 6.2.4.1"
+        task_1_cmd: "/tmp/cis_audit_6.2.4.1.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('^\*\* PASS \*\*') %}
+            PASS
+          {% elif output is search('^\*\* FAIL \*\*') %}
+            FAIL
+          {% elif result_1.rc | default(-1) != 0 %}
+            UNKNOWN
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when script output shows '** PASS **', FAIL when script shows '** FAIL **' or indicates non-compliance"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.2.4.1"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: CIS checkpoint 6.2.4.1 PASS when req_1=PASS, FAIL otherwise"
+          - "========================================================"

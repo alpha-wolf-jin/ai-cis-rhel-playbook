@@ -1,0 +1,12 @@
+================================================================================
+Checkpoint: 5.1.13 Ensure sshd IgnoreRhosts is enabled (Automated)
+Error: Error running playbook generation: Workflow failed: Workflow did not complete successfully. Failed conditions: syntax check failed, playbook structure analysis failed, test execution failed, analysis failed, test output missing (Context: attempt 9/9)
+Timestamp: 2026-02-10T22:32:50.092760
+================================================================================
+
+================================================================================
+Checkpoint: 5.1.19 Ensure sshd PermitEmptyPasswords is disabled (Automated)
+Error: Error running playbook generation: Workflow failed: Workflow did not complete successfully. Failed conditions: syntax check failed, playbook structure analysis failed, test execution failed, analysis failed, test output missing. Details: Playbook structure: PLAYBOOK_STRUCTURE: FAIL (Context: attempt 9/9)
+Timestamp: 2026-02-10T23:27:21.081074
+================================================================================
+

@@ -1,0 +1,130 @@
+---
+- name: Data Collection for CIS 6.3.1.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.1.1"
+    req_1: "Check if audit package is installed"
+    req_2: "Check if audit-libs package is installed"
+    req_3: "OVERALL Verify: Ensure auditd packages are installed"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if audit package is installed
+    - name: Req 1 - Check audit package installation
+      shell: |
+        rpm -q audit
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check audit package installation"
+        task_1_cmd: "rpm -q audit"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | regex_search('^audit-[0-9]')) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output matches pattern audit-<version>, FAIL when package is not installed' if (result_1.stdout | regex_search('^audit-[0-9]')) else 'FAIL - package audit is not installed') | trim }}"
+
+    # Requirement 2: Check if audit-libs package is installed
+    - name: Req 2 - Check audit-libs package installation
+      shell: |
+        rpm -q audit-libs
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check audit-libs package installation"
+        task_2_cmd: "rpm -q audit-libs"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | regex_search('^audit-libs-[0-9]')) else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when output matches pattern audit-libs-<version>, FAIL when package is not installed' if (result_2.stdout | regex_search('^audit-libs-[0-9]')) else 'FAIL - package audit-libs is not installed') | trim }}"
+
+    # Requirement 3: OVERALL Verify - Ensure auditd packages are installed
+    - name: Req 3 - Execute CIS audit procedure command
+      shell: |
+        rpm -q audit audit-libs
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Execute CIS audit procedure command"
+        task_3_cmd: "rpm -q audit audit-libs"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if (status_1 | trim == 'PASS') and (status_2 | trim == 'PASS') %}
+          PASS
+          {% else %}
+          FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if (status_1 | trim == 'PASS') and (status_2 | trim == 'PASS') %}
+          PASS when req_1=PASS AND req_2=PASS
+          {% else %}
+          FAIL - not all required packages are installed
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.1.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.1.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

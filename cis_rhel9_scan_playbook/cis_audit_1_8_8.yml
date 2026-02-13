@@ -1,0 +1,204 @@
+---
+- name: Data Collection for CIS 1.8.8
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.8.8"
+    req_1: "Check if GNOME Desktop Manager (GDM) is installed"
+    req_2: "If GDM is installed, verify a dconf profile exists that references the system database"
+    req_3: "If GDM is installed, verify the dconf database directory for the profile exists"
+    req_4: "If GDM is installed, verify the 'autorun-never' setting is configured and set to true"
+    req_5: "OVERALL Verify: Ensure GDM autorun-never is enabled"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if GNOME Desktop Manager (GDM) is installed
+    - name: Req 1 - Check if GDM is installed
+      shell: !unsafe |
+        command -v dpkg-query > /dev/null 2>&1 && dpkg-query -W gdm gdm3 2>/dev/null || command -v rpm > /dev/null 2>&1 && rpm -q gdm gdm3 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if GDM is installed"
+        task_1_cmd: "command -v dpkg-query > /dev/null 2>&1 && dpkg-query -W gdm gdm3 2>/dev/null || command -v rpm > /dev/null 2>&1 && rpm -q gdm gdm3 2>/dev/null"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('package gdm is not installed') and output is search('package gdm3 is not installed') %}
+            FAIL
+          {% elif output | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when at least one of the packages 'gdm' or 'gdm3' is installed (output shows package details), FAIL when neither package is installed (output empty or shows 'package not installed')"
+
+    # Requirement 2: Verify dconf profile exists with system-db reference
+    - name: Req 2 - Check dconf profile with system-db reference
+      shell: !unsafe |
+        grep -Pl -- '^\h*system-db:[^\s]+\b' /etc/dconf/profile/* 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check dconf profile with system-db reference"
+        task_2_cmd: |
+          grep -Pl -- '^\h*system-db:[^\s]+\b' /etc/dconf/profile/* 2>/dev/null || true
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | trim != '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when at least one file in /etc/dconf/profile/ contains a line matching pattern 'system-db:<profile_name>', FAIL when no such line exists"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 3: Verify dconf database directory exists
+    - name: Req 3 - Check dconf database directory
+      shell: !unsafe |
+        profile_name=$(grep -hPo '^\h*system-db:\K[^\s]+' /etc/dconf/profile/* 2>/dev/null | head -1); [ -n "$profile_name" ] && [ -d "/etc/dconf/db/$profile_name.d" ] && echo "Directory exists: /etc/dconf/db/$profile_name.d" || echo "Directory not found"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check dconf database directory"
+        task_3_cmd: |
+          profile_name=$(grep -hPo '^\h*system-db:\K[^\s]+' /etc/dconf/profile/* 2>/dev/null | head -1); [ -n \"$profile_name\" ] && [ -d \"/etc/dconf/db/$profile_name.d\" ] && echo \"Directory exists: /etc/dconf/db/$profile_name.d\" || echo \"Directory not found\"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | trim is search('Directory exists:')) else 'FAIL') | trim }}"
+        rationale_3: "PASS when directory /etc/dconf/db/<profile_name>.d exists (where profile_name is extracted from the system-db line), FAIL when directory does not exist"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 4: Verify autorun-never setting is configured
+    - name: Req 4 - Check autorun-never setting
+      shell: !unsafe |
+        grep -Prs -- '^\h*autorun-never\h*=\h*true\b' /etc/dconf/db/*.d 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Check autorun-never setting"
+        task_4_cmd: |
+          grep -Prs -- '^\h*autorun-never\h*=\h*true\b' /etc/dconf/db/*.d 2>/dev/null || true
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('PASS' if (result_4.stdout | trim != '') else 'FAIL') | trim }}"
+        rationale_4: "PASS when any file under /etc/dconf/db/*.d contains a line matching pattern 'autorun-never=true', FAIL when no such line is found"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 5: Overall verification
+    - name: Req 5 - Overall verification
+      set_fact:
+        task_5_name: "Overall verification"
+        task_5_cmd: "N/A - Calculated from previous results"
+        task_5_rc: 0
+        data_5: "GDM installed: {{ status_1 | default('UNKNOWN') }}, Profile exists: {{ status_2 | default('NA') }}, Directory exists: {{ status_3 | default('NA') }}, Setting configured: {{ status_4 | default('NA') }}"
+        status_5: >-
+          {% if status_1 | trim == 'FAIL' %}
+            NA
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_5: >-
+          {% if status_1 | trim == 'FAIL' %}
+            GDM not installed -> Checkpoint not applicable (NA)
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+            GDM installed AND all requirements met -> PASS
+          {% else %}
+            GDM installed BUT one or more requirements failed -> FAIL
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.8.8"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not applicable - GDM not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not applicable - GDM not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not applicable - GDM not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,115 @@
+---
+# CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.12: Ensure login and logout events are collected
+- name: Data Collection for CIS checkpoint 6.3.3.12
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.12"
+    req_1: "Check audit rules on disk for /var/log/lastlog and /var/run/faillock"
+    req_2: "Check running audit rules for /var/log/lastlog and /var/run/faillock"
+    req_3: "OVERALL Verify: Ensure login and logout events are collected"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: "N/A"
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    - name: Req 1 - Check on-disk audit rules
+      shell: |
+        awk '/^ *-w/ &&(/\/var\/log\/lastlog/ ||/\/var\/run\/faillock/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check on-disk audit rules for lastlog and faillock"
+        task_1_cmd: |
+          awk '/^ *-w/ &&(/\/var\/log\/lastlog/ ||/\/var\/run\/faillock/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (('-w /var/log/lastlog -p wa -k logins' in result_1.stdout) and ('-w /var/run/faillock -p wa -k logins' in result_1.stdout)) else 'FAIL') | trim }}"
+        rationale_1: "PASS when output contains exactly both lines '-w /var/log/lastlog -p wa -k logins' and '-w /var/run/faillock -p wa -k logins' (order may vary), FAIL otherwise"
+
+    - name: Req 2 - Check running audit rules
+      shell: |
+        auditctl -l | awk '/^ *-w/ &&(/\/var\/log\/lastlog/ ||/\/var\/run\/faillock/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check running audit rules for lastlog and faillock"
+        task_2_cmd: |
+          auditctl -l | awk '/^ *-w/ &&(/\/var\/log\/lastlog/ ||/\/var\/run\/faillock/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (('-w /var/log/lastlog -p wa -k logins' in result_2.stdout) and ('-w /var/run/faillock -p wa -k logins' in result_2.stdout)) else 'FAIL') | trim }}"
+        rationale_2: "PASS when output contains exactly both lines '-w /var/log/lastlog -p wa -k logins' and '-w /var/run/faillock -p wa -k logins' (order may vary), FAIL otherwise"
+
+    - name: Set overall compliance
+      set_fact:
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.3.12"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
+          - "========================================================"

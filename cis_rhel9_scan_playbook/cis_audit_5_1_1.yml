@@ -1,0 +1,133 @@
+---
+- name: Data Collection for CIS 5.1.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.1"
+    req_1: "Check file permissions, ownership, and group ownership for /etc/ssh/sshd_config using the provided script"
+    req_2: "OVERALL Verify: Ensure permissions on /etc/ssh/sshd_config are configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Check file permissions, ownership, and group ownership for /etc/ssh/sshd_config using the provided script
+    - name: Req 1 - Execute CIS audit script for sshd_config permissions
+      copy:
+        dest: "/tmp/cis_audit_5.1.1.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output="" l_output2=""
+             perm_mask='0177' && maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
+             SSHD_FILES_CHK()
+             {
+                while IFS=: read -r l_mode l_user l_group; do
+                   l_out2=""
+                   [ $(( $l_mode & $perm_mask )) -gt 0 ] && l_out2="$l_out2\n  - Is mode: \"$l_mode\" should be: \"$maxperm\" or more restrictive"
+                   [ "$l_user" != "root" ] && l_out2="$l_out2\n  - Is owned by \"$l_user\" should be owned by \"root\""
+                   [ "$l_group" != "root" ] && l_out2="$l_out2\n  - Is group owned by \"$l_user\" should be group owned by \"root\""
+                   if [ -n "$l_out2" ]; then
+                      l_output2="$l_output2\n - File: \"$l_file\":$l_out2"
+                   else
+                      l_output="$l_output\n - File: \"$l_file\":\n  - Correct: mode ($l_mode), owner ($l_user), and group owner ($l_group) configured"
+                   fi
+                done < <(stat -Lc '%#a:%U:%G' "$l_file")
+             }
+             [ -e "/etc/ssh/sshd_config" ] && l_file="/etc/ssh/sshd_config" && SSHD_FILES_CHK
+             while IFS= read -r -d $'\0' l_file; do
+                [ -e "$l_file" ] && SSHD_FILES_CHK
+             done < <(find -L /etc/ssh/sshd_config.d -type f  \( -perm /077 -o ! -user root -o ! -group root \) -print0 2>/dev/null)
+             if [ -z "$l_output2" ]; then
+                echo -e "\n- Audit Result:\n  *** PASS ***\n- * Correctly set * :\n$l_output\n"
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - * Reasons for audit failure * :\n$l_output2\n"
+                [ -n "$l_output" ] && echo -e " - * Correctly set * :\n$l_output\n"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.1.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.1.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS audit script for sshd_config permissions"
+        task_1_cmd: "/tmp/cis_audit_5.1.1.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('\*\*\* PASS \*\*\*') and not output is search('\*\* FAIL \*\*') %}
+            PASS
+          {% elif output is search('\*\* FAIL \*\*') %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: "PASS when the script's 'Audit Result' section shows '*** PASS ***' and the 'Reasons for audit failure' section is empty, FAIL when the 'Audit Result' section shows '** FAIL **' and the 'Reasons for audit failure' section lists issues."
+      ignore_errors: true
+
+    # Requirement 2: OVERALL Verify: Ensure permissions on /etc/ssh/sshd_config are configured
+    - name: Req 2 - Overall verification
+      set_fact:
+        task_2_name: "Overall verification based on requirement 1"
+        task_2_cmd: "N/A (derived from requirement 1)"
+        task_2_rc: 0
+        data_2: "{{ data_1 | default('') | trim }}"
+        status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise."
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: Overall compliance is determined by requirement 2, which is PASS when requirement 1 is PASS"
+          - "========================================================"

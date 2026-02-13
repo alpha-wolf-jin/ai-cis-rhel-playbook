@@ -1,0 +1,120 @@
+---
+- name: Data Collection for CIS 5.3.3.1.1
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.1.1"
+    req_1: "Check /etc/security/faillock.conf for deny setting"
+    req_2: "Check PAM configuration files for non-compliant pam_faillock.so deny settings"
+    req_3: "OVERALL Verify: Ensure password failed attempts lockout is configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check /etc/security/faillock.conf for deny setting
+    - name: Req 1 - Check faillock.conf deny setting
+      shell: |
+        {% raw %}
+        grep -Pi -- '^\h*deny\h*=\h*[1-5]\b' /etc/security/faillock.conf
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check faillock.conf deny setting"
+        task_1_cmd: |
+          grep -Pi -- '^\h*deny\h*=\h*[1-5]\b' /etc/security/faillock.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        # FIX: Reference result_1.stdout directly instead of data_1
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '' and result_1.stdout | default('') | trim | regex_search('^deny = [1-5]$')) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly deny = 5 (or a value from 1 to 5 that meets local site policy), FAIL when output is empty, shows a value greater than 5, or the pattern does not match') | trim }}"
+
+    # Requirement 2: Check PAM configuration files for non-compliant pam_faillock.so deny settings
+    - name: Req 2 - Check PAM files for non-compliant deny settings
+      shell: |
+        {% raw %}
+        grep -Pi -- '^\h*auth\h+(requisite|required|sufficient)\h+pam_faillock\.so\h+([^#\n\r]+\h+)?deny\h*=\h*(0|[6-9]|[1-9][0-9]+)\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check PAM files for non-compliant deny settings"
+        task_2_cmd: |
+          grep -Pi -- '^\h*auth\h+(requisite|required|sufficient)\h+pam_faillock\.so\h+([^#\n\r]+\h+)?deny\h*=\h*(0|[6-9]|[1-9][0-9]+)\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        # FIX: Reference result_2.stdout directly instead of data_2
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when command returns no output (no deny parameter set, or deny is set to a compliant value of 5 or less), FAIL when any output is returned (indicating a deny parameter is explicitly set to 0 or a value of 6 or greater)') | trim }}"
+
+    # Requirement 3: OVERALL Verify
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - Combined check"
+        task_3_rc: 0
+        data_3: "Req1: {{ status_1 | default('UNKNOWN') }}, Req2: {{ status_2 | default('UNKNOWN') }}"
+        # FIX: Reference status_1 and status_2 directly (they are now defined in previous tasks)
+        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise') | trim }}"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.3.3.1.1"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

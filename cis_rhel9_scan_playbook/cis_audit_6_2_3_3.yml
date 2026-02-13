@@ -1,0 +1,141 @@
+---
+- name: Data Collection for CIS checkpoint 6.2.3.3
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.3.3"
+    req_1: "Check if rsyslog is the preferred method for capturing logs"
+    req_2: "Verify journald is configured to forward logs to rsyslog using command: systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E '^ForwardToSyslog=yes'"
+    req_3: "OVERALL Verify: Ensure journald is configured to send logs to rsyslog"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    - name: Req 1 - Check if rsyslog is the preferred method
+      shell: |
+        enabled=$(systemctl is-enabled rsyslog 2>/dev/null)
+        active=$(systemctl is-active rsyslog 2>/dev/null)
+        if [ "$enabled" = "enabled" ] && [ "$active" = "active" ]; then
+          echo "rsyslog is the preferred method"
+        else
+          echo "rsyslog is not the preferred method"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Req 1 - Check if rsyslog is the preferred method"
+        task_1_cmd: "Check systemctl status of rsyslog service"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'rsyslog is the preferred method') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when rsyslog is the preferred method, FAIL otherwise' if (result_1.stdout | default('') | trim == 'rsyslog is the preferred method') else 'FAIL: rsyslog is not enabled and active') | trim }}"
+
+    - name: Req 2 - Verify journald is configured to forward logs to rsyslog
+      shell: |
+        systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E "^ForwardToSyslog=yes"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'PASS'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Req 2 - Verify journald is configured to forward logs to rsyslog"
+        task_2_cmd: "systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E '^ForwardToSyslog=yes'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {% if result_2.stdout | default('') | trim == 'ForwardToSyslog=yes' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {% if result_2.stdout | default('') | trim == 'ForwardToSyslog=yes' %}
+              PASS when the exact output line is ForwardToSyslog=yes, FAIL otherwise
+            {% else %}
+              FAIL: Expected ForwardToSyslog=yes, got {{ result_2.stdout | default('') | trim }}
+            {% endif %}
+          {% else %}
+            Not applicable because rsyslog is not the preferred method (requirement 1 failed)
+          {% endif %}
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Req 3 - OVERALL Verify"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "req_1={{ status_1 | default('UNKNOWN') }}, req_2={{ status_2 | default('UNKNOWN') }}"
+        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL: One or more requirements failed') | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.2.3.3"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,142 @@
+---
+- name: Data Collection for CIS 6.3.2.4
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.4"
+    req_1: |
+      Verify space_left_action parameter in /etc/audit/auditd.conf using command: `grep -P -- '^\\h*space_left_action\\h*=\\h*(email|exec|single|halt)\\b' /etc/audit/auditd.conf`. Rationale: PASS when the extracted value is exactly 'email', 'exec', 'single', or 'halt', FAIL otherwise.
+    req_2: |
+      Verify admin_space_left_action parameter in /etc/audit/auditd.conf using command: `grep -P -- '^\\h*admin_space_left_action\\h*=\\h*(single|halt)\\b' /etc/audit/auditd.conf`. Rationale: PASS when the extracted value is exactly 'single' or 'halt', FAIL otherwise.
+    req_3: "OVERALL Verify: Ensure system warns when audit logs are low on space. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise."
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    - name: Req 1 - Check space_left_action
+      shell: |
+        grep -P -- '^\h*space_left_action\h*=\h*(email|exec|single|halt)\b' /etc/audit/auditd.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check space_left_action"
+        task_1_cmd: |
+          grep -P -- '^\\h*space_left_action\\h*=\\h*(email|exec|single|halt)\\b' /etc/audit/auditd.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+
+    - name: Set requirement 1 status and rationale
+      set_fact:
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim).endswith((' = email', ' = exec', ' = single', ' = halt')) else 'FAIL') if (result_1.rc == 0 and (result_1.stdout | default('') | trim) != '') else 'FAIL' }}"
+        rationale_1: >-
+          {% set data_1_val = result_1.stdout | default('') | trim %}
+          {% set rc_val = result_1.rc | default(-1) %}
+          {% if rc_val == 0 and data_1_val != '' %}
+            {% if (data_1_val.endswith(' = email') or data_1_val.endswith(' = exec') or data_1_val.endswith(' = single') or data_1_val.endswith(' = halt')) %}
+              PASS: Found expected value
+            {% else %}
+              FAIL: Expected space_left_action=email|exec|single|halt, got: {{ data_1_val }}
+            {% endif %}
+          {% else %}
+            FAIL: Expected space_left_action=email|exec|single|halt, got: {{ '(empty)' if data_1_val == '' else data_1_val }}
+          {% endif %}
+
+    - name: Req 2 - Check admin_space_left_action
+      shell: |
+        grep -P -- '^\h*admin_space_left_action\h*=\h*(single|halt)\b' /etc/audit/auditd.conf
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check admin_space_left_action"
+        task_2_cmd: |
+          grep -P -- '^\\h*admin_space_left_action\\h*=\\h*(single|halt)\\b' /etc/audit/auditd.conf
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+
+    - name: Set requirement 2 status and rationale
+      set_fact:
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim).endswith((' = single', ' = halt')) else 'FAIL') if (result_2.rc == 0 and (result_2.stdout | default('') | trim) != '') else 'FAIL' }}"
+        rationale_2: >-
+          {% set data_2_val = result_2.stdout | default('') | trim %}
+          {% set rc_val = result_2.rc | default(-1) %}
+          {% if rc_val == 0 and data_2_val != '' %}
+            {% if (data_2_val.endswith(' = single') or data_2_val.endswith(' = halt')) %}
+              PASS: Found expected value
+            {% else %}
+              FAIL: Expected admin_space_left_action=single|halt, got: {{ data_2_val }}
+            {% endif %}
+          {% else %}
+            FAIL: Expected admin_space_left_action=single|halt, got: {{ '(empty)' if data_2_val == '' else data_2_val }}
+          {% endif %}
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "Combined check of both parameters"
+        task_3_rc: 0
+        data_3: "space_left_action: {{ data_1 | default('(not found)') }}, admin_space_left_action: {{ data_2 | default('(not found)') }}"
+
+    - name: Set requirement 3 status and rationale
+      set_fact:
+        status_3: "{{ 'PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL' }}"
+        rationale_3: "{{ 'PASS: Both parameters configured correctly' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: One or both parameters not configured correctly' }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.2.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

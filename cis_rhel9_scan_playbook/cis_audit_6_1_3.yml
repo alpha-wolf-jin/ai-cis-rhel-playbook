@@ -1,0 +1,165 @@
+---
+- name: Data Collection for CIS 6.1.3
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.3"
+    req_1: "Run the provided audit script to verify : Ensure cryptographic mechanisms are used to protect the integrity of audit tools (Automated)"
+    req_2: "OVERALL Verify: : Ensure cryptographic mechanisms are used to protect the integrity of audit tools (Automated)"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the provided audit script
+    - name: Req 1 - Create temporary audit script for CIS 6.1.3
+      copy:
+        dest: "/tmp/cis_audit_6.1.3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             a_output=(); a_output2=(); a_output3=()
+             a_audit_files=("auditctl" "auditd" "ausearch" "aureport" "autrace" "augenrules")
+             a_parlist=()
+             l_systemd_analyze="/usr/bin/systemd-analyze"
+             
+             f_parameter_chk()
+             {
+                for l_tool_file in "${!A_out[@]}"; do
+                   l_tool_line="$l_tool_file"
+                   l_config_file="${A_out[$l_tool_file]}"
+                   if [ -n "$l_tool_line" ]; then
+                      for l_item in "${a_items[@]}"; do
+                         if ! grep -Pq -- "\b$l_item\b" <<< "$l_tool_line"; then
+                            a_output2+=(" - Audit tool file \"$l_tool_file\" doesn't include option: \"$l_item\" in \"$l_config_file\"")
+                         else
+                            a_output+=(" - Audit tool file \"$l_tool_file\" includes option: \"$l_item\" in \"$l_config_file\"")
+                         fi
+                      done
+                   else
+                      a_output2+=(" - Audit tool file \"$l_tool_file\" doesn't exist in an AIDE configuration file")
+                   fi
+                done
+             }
+             
+             f_aide_conf()
+             {
+                l_config_file="$(whereis aide.conf | awk '{print $2}')"
+                if [ -f "$l_config_file" ]; then
+                   a_items=("p" "i" "n" "u" "g" "s" "b" "acl" "xattrs" "sha512")
+                   declare -A A_out
+                   while IFS= read -r l_out; do
+                      if grep -Pq -- '^\h*\#\h*\/[^#\n\r]+\.conf\b' <<< "$l_out"; then
+                         l_file="${l_out//# /}"
+                      else
+                         for i in "${a_parlist[@]}"; do
+                            grep -Pq -- '^\h*(\/usr)?\/sbin\/'"$i"'\b' <<< "$l_out" && A_out+=(["$l_out"]="$l_file")
+                         done
+                      fi
+                   done < <("$l_systemd_analyze" cat-config "$l_config_file" | grep -Pio '^\h*([^#\n\r]+|#\h*\/[^#\n\r\h]+\.conf\b)')
+                   
+                   if [ "${#A_out[@]}" -gt 0 ]; then
+                      f_parameter_chk
+                   else
+                      a_output2+=(" - No audit tool files are configured in an AIDE configuration file")
+                   fi
+                else
+                   a_output2+=(" - AIDE configuration file not found." "   Please verify AIDE is installed on the system")
+                fi
+             }
+             
+             for l_audit_file in "${a_audit_files[@]}"; do
+                if [ -f "$(readlink -f "/sbin/$l_audit_file")" ]; then
+                   a_parlist+=("$l_audit_file")
+                else
+                   a_output+=(" - Audit tool file \"$(readlink -f "/sbin/$l_audit_file")\" doesn't exist")
+                fi
+             done
+             
+             [ "${#a_parlist[@]}" -gt 0 ] && f_aide_conf
+             
+             if [ "${#a_output2[@]}" -le 0 ]; then
+                printf '%s\n' "" "- Audit Result:" "  ** PASS **" "${a_output[@]}"
+                [ "${#a_output3[@]}" -gt 0 ] && printf '%s\n' "" "  ** WARNING **" "${a_output3[@]}"
+             else
+                printf '%s\n' "" "- Audit Result:" "  ** FAIL **" "  * Reasons for audit failure *" "${a_output2[@]}" ""
+                [ "${#a_output3[@]}" -gt 0 ] && printf '%s\n' "" "  ** WARNING **" "${a_output3[@]}"
+                [ "${#a_output[@]}" -gt 0 ] && printf '%s\n' "- Correctly set:" "${a_output[@]}"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute CIS audit script for 6.1.3
+      shell: "/tmp/cis_audit_6.1.3.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_6.1.3.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Req 1 - Execute CIS audit script for 6.1.3"
+        task_1_cmd: "/tmp/cis_audit_6.1.3.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if '** PASS **' in (result_1.stdout | default('')) else 'FAIL') | trim }}"
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script shows '** FAIL **' or indicates non-compliance"
+
+    # Requirement 2: OVERALL Verify
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Req 2 - Overall compliance verification"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: ""
+        status_2: "{{ status_1 | default('FAIL') }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.1.3"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: Overall compliance determined by req_1 status. {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "========================================================"

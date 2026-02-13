@@ -1,0 +1,182 @@
+---
+- name: Data Collection for CIS 1.7.6
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.7.6"
+    req_1: "Check file permissions and ownership of /etc/issue.net"
+    req_2: "OVERALL Verify: Ensure access to /etc/issue.net is configured"
+    req_3: "Add comment referencing CIS RHEL 9 Benchmark v4.0.0, checkpoint 1.7.6"
+
+  tasks:
+    - name: Check OS compatibility
+      set_fact:
+        os_supported: "{{ ansible_distribution == 'RedHat' and ansible_distribution_major_version == '9' }}"
+        os_info: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_1: "Not collected"
+        data_2: "Not collected"
+        data_3: "Not collected"
+        status_1: "NA"
+        status_2: "NA"
+        status_3: "NA"
+        rationale_1: "Audit not performed - OS version mismatch"
+        rationale_2: "Audit not performed - OS version mismatch"
+        rationale_3: "Audit not performed - OS version mismatch"
+
+    # Requirement 1: Check file permissions and ownership of /etc/issue.net
+    - name: Req 1 - Check /etc/issue.net permissions and ownership
+      shell: |
+        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/issue.net
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+      when: os_supported
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check /etc/issue.net permissions and ownership"
+        task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/issue.net"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if not os_supported %}
+            NA
+          {% elif result_1.rc is defined and result_1.rc == 0 %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if output %}
+              {% set access_match = output | regex_search('Access: \\(0[0-7][0-5][0-4]') %}
+              {% set uid_match = output | regex_search('Uid: \\( 0/') %}
+              {% set gid_match = output | regex_search('Gid: \\( 0/') %}
+              {% if access_match and uid_match and gid_match %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% if not os_supported %}
+            Audit not performed - OS version mismatch
+          {% elif status_1 | trim == 'PASS' %}
+            PASS: File permissions are 0644 (≤ 0644) and owned by root:root
+          {% elif status_1 | trim == 'FAIL' %}
+            FAIL: File permissions or ownership incorrect
+          {% elif status_1 | trim == 'UNKNOWN' %}
+            UNKNOWN: Cannot determine from data (error collecting, ambiguous requirement)
+          {% else %}
+            NA
+          {% endif %}
+      when: os_supported
+
+    # Requirement 2: OVERALL Verify: Ensure access to /etc/issue.net is configured
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Overall verification"
+        task_2_cmd: "N/A (derived from requirement 1)"
+        task_2_rc: 0
+        data_2: "Derived from requirement 1"
+        status_2: >-
+          {% if not os_supported %}
+            NA
+          {% elif status_1 is defined and status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 is defined and status_1 | trim == 'FAIL' %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% if not os_supported %}
+            Audit not performed - OS version mismatch
+          {% elif status_2 | trim == 'PASS' %}
+            PASS: Requirement 1 passed - file has correct permissions and ownership
+          {% elif status_2 | trim == 'FAIL' %}
+            FAIL: Requirement 1 failed - file permissions or ownership incorrect
+          {% elif status_2 | trim == 'UNKNOWN' %}
+            UNKNOWN: Cannot determine from data (error collecting, ambiguous requirement)
+          {% else %}
+            NA
+          {% endif %}
+      when: os_supported
+
+    # Requirement 3: Add comment referencing CIS RHEL 9 Benchmark v4.0.0, checkpoint 1.7.6
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Add CIS reference comment"
+        task_3_cmd: "N/A (reference added to report)"
+        task_3_rc: 0
+        data_3: "{{ cis_reference }}"
+        status_3: >-
+          {% if not os_supported %}
+            NA
+          {% else %}
+            PASS
+          {% endif %}
+        rationale_3: >-
+          {% if not os_supported %}
+            Audit not performed - OS version mismatch
+          {% elif status_3 | trim == 'PASS' %}
+            PASS: CIS reference included in compliance report
+          {% else %}
+            NA
+          {% endif %}
+      when: os_supported
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.7.6"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "OS Detected: {{ os_info | default('Unknown') }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('Not collected') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,205 @@
+---
+- name: Data Collection for CIS checkpoint 5.1.19
+  hosts: all
+  become: yes
+  gather_facts: no
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19"
+    req_1: "Verify sshd PermitEmptyPasswords global setting using command: sshd -T | grep permitemptypasswords. Rationale: PASS when output is exactly 'permitemptypasswords no', FAIL otherwise"
+    req_2: "Verify sshd PermitEmptyPasswords in Match blocks (if they exist). Rationale: PASS when all Match block checks return 'permitemptypasswords no' or no Match blocks exist, FAIL otherwise"
+    req_3: "OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled. Rationale: PASS when req_1=PASS and req_2=PASS, FAIL otherwise"
+    # Default users to test if Match blocks exist
+    match_block_test_users: ['root']
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        match_blocks_exist: "false"
+        match_conditions_list: []
+
+    # Requirement 1: Verify sshd PermitEmptyPasswords global setting using command: sshd -T | grep permitemptypasswords. Rationale: PASS when output is exactly 'permitemptypasswords no', FAIL otherwise
+    - name: Req 1 - Check sshd PermitEmptyPasswords global setting
+      shell: |
+        sshd -T | grep permitemptypasswords
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check sshd PermitEmptyPasswords global setting"
+        task_1_cmd: "sshd -T | grep permitemptypasswords"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'permitemptypasswords no') else 'FAIL') | trim }}"
+        rationale_1: >-
+          {% if result_1.stdout | default('') | trim == 'permitemptypasswords no' %}
+            PASS when output is exactly "permitemptypasswords no", FAIL otherwise
+          {% else %}
+            FAIL: Expected "permitemptypasswords no", got {{ result_1.stdout | default('') | trim }}
+          {% endif %}
+
+    # Check if Match blocks exist in sshd_config
+    - name: Check for Match blocks in sshd_config
+      shell: |
+        if grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null; then
+          echo "true"
+        else
+          echo "false"
+        fi
+      args:
+        executable: /bin/bash
+      register: match_blocks_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set match_blocks_exist fact
+      set_fact:
+        match_blocks_exist: "{{ match_blocks_check.stdout | default('false') | trim }}"
+
+    # Requirement 2: Verify sshd PermitEmptyPasswords in Match blocks (if they exist)
+    - name: Req 2 - Check Match blocks for PermitEmptyPasswords setting
+      shell: |
+        # Set variables from Ansible facts
+        match_blocks_exist="{{ match_blocks_exist }}"
+        users_to_test="{{ match_block_test_users | join(' ') }}"
+        
+        {% raw %}
+        if [ "$match_blocks_exist" = "false" ]; then
+          echo "NO_MATCH_BLOCKS: No Match blocks found in sshd_config"
+          exit 0
+        fi
+        
+        all_pass=true
+        output=""
+        
+        for user in $users_to_test; do
+          result=$(sshd -T -C user="$user" | grep permitemptypasswords 2>/dev/null)
+          if [ $? -eq 0 ]; then
+            if [ "$result" = "permitemptypasswords no" ]; then
+              output="$output USER_${user}: PASS (permitemptypasswords no)"
+            else
+              output="$output USER_${user}: FAIL (got: $result)"
+              all_pass=false
+            fi
+          else
+            output="$output USER_${user}: ERROR (command failed or no output)"
+            all_pass=false
+          fi
+        done
+        
+        if [ "$all_pass" = "true" ]; then
+          echo "ALL_PASS: All Match block checks passed"
+          echo "$output"
+        else
+          echo "SOME_FAIL: Some Match block checks failed"
+          echo "$output"
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check sshd PermitEmptyPasswords in Match blocks"
+        task_2_cmd: "sshd -T -C user=<user> | grep permitemptypasswords (for users: {{ match_block_test_users | join(', ') }})"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if match_blocks_exist == 'false' %}
+            PASS
+          {% elif output is search('ALL_PASS') or output is search('NO_MATCH_BLOCKS') %}
+            PASS
+          {% elif output is search('SOME_FAIL') or result_2.rc | default(-1) != 0 %}
+            FAIL
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if match_blocks_exist == 'false' %}
+            PASS: No Match blocks found in sshd_config
+          {% elif output is search('ALL_PASS') %}
+            PASS: All Match block checks returned 'permitemptypasswords no'
+          {% elif output is search('NO_MATCH_BLOCKS') %}
+            PASS: No Match blocks found in sshd_config
+          {% elif output is search('SOME_FAIL') %}
+            FAIL: One or more Match block checks failed or returned incorrect value
+          {% else %}
+            FAIL: Unable to verify Match block settings
+          {% endif %}
+
+    # Requirement 3: OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled. Rationale: PASS when req_1=PASS and req_2=PASS, FAIL otherwise
+    - name: Req 3 - Overall verification
+      set_fact:
+        task_3_name: "Overall verification of sshd PermitEmptyPasswords setting"
+        task_3_cmd: "N/A - Derived from requirements 1 and 2"
+        task_3_rc: 0
+        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS and req_2=PASS, FAIL otherwise"
+
+    # Final report - MUST include Status and Rationale for each requirement
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.19"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

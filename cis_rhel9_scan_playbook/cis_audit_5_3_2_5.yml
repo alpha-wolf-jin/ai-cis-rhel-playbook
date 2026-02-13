@@ -1,0 +1,129 @@
+---
+# CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.5
+- name: Data Collection for CIS Checkpoint 5.3.2.5
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.5"
+    req_1: "Verify pam_unix.so module is enabled in /etc/pam.d/password-auth and /etc/pam.d/system-auth"
+    req_overall: "OVERALL Verify: Ensure pam_unix module is enabled"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_overall_name: "Not executed"
+        task_overall_cmd: "N/A"
+        task_overall_rc: -1
+        data_overall: ""
+        status_overall: "UNKNOWN"
+        rationale_overall: "Not evaluated"
+
+    # Requirement 1: Verify pam_unix.so module is enabled in /etc/pam.d/password-auth and /etc/pam.d/system-auth
+    - name: Req 1 - Check pam_unix.so in PAM files
+      shell: |
+        {% raw %}
+        grep -P -- '\bpam_unix\.so\b' /etc/pam.d/{password,system}-auth
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check pam_unix.so in PAM files"
+        task_1_cmd: |
+          grep -P -- '\bpam_unix\.so\b' /etc/pam.d/{password,system}-auth
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') %}
+          {% set lines = output.split('\n') | select('!=', '') | list %}
+          {% set required_files = ['/etc/pam.d/password-auth', '/etc/pam.d/system-auth'] %}
+          {% set required_controls = ['auth', 'account', 'password', 'session'] %}
+          {% set found_combinations = [] %}
+          
+          {% for line in lines %}
+            {% for file in required_files %}
+              {% for control in required_controls %}
+                {% if line is match('^' + file + ':' + control + '.*pam_unix\.so') %}
+                  {% set _ = found_combinations.append((file, control)) %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+          {% endfor %}
+          
+          {% set found_combinations = found_combinations | unique %}
+          {% if found_combinations | length == 8 %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') %}
+          {% set lines = output.split('\n') | select('!=', '') | list %}
+          {% set required_files = ['/etc/pam.d/password-auth', '/etc/pam.d/system-auth'] %}
+          {% set required_controls = ['auth', 'account', 'password', 'session'] %}
+          {% set found_combinations = [] %}
+          
+          {% for line in lines %}
+            {% for file in required_files %}
+              {% for control in required_controls %}
+                {% if line is match('^' + file + ':' + control + '.*pam_unix\.so') %}
+                  {% set _ = found_combinations.append((file, control)) %}
+                {% endif %}
+              {% endfor %}
+            {% endfor %}
+          {% endfor %}
+          
+          {% set found_combinations = found_combinations | unique %}
+          PASS when output contains at least one line for auth, account, password, and session control types in both files (total of 8 lines), FAIL otherwise. Found combinations: {{ found_combinations | length }}/8.
+
+    # Overall requirement: Ensure pam_unix module is enabled
+    - name: Store overall requirement details
+      set_fact:
+        task_overall_name: "Overall pam_unix verification"
+        task_overall_cmd: "N/A (aggregated from requirement 1)"
+        task_overall_rc: "{{ task_1_rc }}"
+        data_overall: "{{ data_1 }}"
+        status_overall: "{{ status_1 }}"
+        rationale_overall: "PASS when req_1=PASS, FAIL otherwise. Requirement 1 status: {{ status_1 }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.3.2.5"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.5"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_overall }}:"
+          - "  Task: {{ task_overall_name | default('Task not recorded') }}"
+          - "  Command: {{ task_overall_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_overall_rc | default(-1) }}"
+          - "  Data: {{ data_overall | default('') | trim }}"
+          - "  Status: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - "========================================================"

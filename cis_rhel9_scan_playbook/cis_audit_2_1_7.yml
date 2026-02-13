@@ -1,0 +1,177 @@
+---
+- name: Data Collection for CIS 2.1.7
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.7"
+    req_1: "Check if vsftpd package is installed using command: rpm -q vsftpd"
+    req_2: "If vsftpd package is installed, check if vsftpd.service is enabled using command: systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'"
+    req_3: "If vsftpd package is installed, check if vsftpd.service is active using command: systemctl is-active vsftpd.service 2>/dev/null | grep '^active'"
+    req_4: "OVERALL Verify: Ensure ftp server services are not in use"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if vsftpd package is installed
+    - name: Req 1 - Check vsftpd package installation
+      shell: rpm -q vsftpd
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check vsftpd package installation"
+        task_1_cmd: "rpm -q vsftpd"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package vsftpd is not installed') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly package vsftpd is not installed, FAIL otherwise' if (result_1.stdout | default('') | trim == 'package vsftpd is not installed') else 'FAIL when output is not exactly package vsftpd is not installed') | trim }}"
+
+    # Requirement 2: Check if vsftpd.service is enabled (only if package is installed)
+    - name: Req 2 - Check vsftpd.service enabled status
+      shell: systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check vsftpd.service enabled status"
+        task_2_cmd: "systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when command returns no output (i.e., service is not enabled), FAIL when output contains enabled' if (result_2.stdout | default('') | trim == '') else 'FAIL when output contains enabled') | trim }}"
+      when: status_1 | trim == 'FAIL'
+
+    - name: Set requirement 2 as NA when package not installed
+      set_fact:
+        task_2_name: "Check vsftpd.service enabled status"
+        task_2_cmd: "systemctl is-enabled vsftpd.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: -1
+        data_2: "N/A - Package not installed"
+        status_2: "NA"
+        rationale_2: "Package vsftpd is not installed, requirement not applicable"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 3: Check if vsftpd.service is active (only if package is installed)
+    - name: Req 3 - Check vsftpd.service active status
+      shell: systemctl is-active vsftpd.service 2>/dev/null | grep '^active'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check vsftpd.service active status"
+        task_3_cmd: "systemctl is-active vsftpd.service 2>/dev/null | grep '^active'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when command returns no output (i.e., service is not active), FAIL when output contains active' if (result_3.stdout | default('') | trim == '') else 'FAIL when output contains active') | trim }}"
+      when: status_1 | trim == 'FAIL'
+
+    - name: Set requirement 3 as NA when package not installed
+      set_fact:
+        task_3_name: "Check vsftpd.service active status"
+        task_3_cmd: "systemctl is-active vsftpd.service 2>/dev/null | grep '^active'"
+        task_3_rc: -1
+        data_3: "N/A - Package not installed"
+        status_3: "NA"
+        rationale_3: "Package vsftpd is not installed, requirement not applicable"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 4: Overall verification
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A - Calculated from previous results"
+        task_4_rc: 0
+        data_4: "Package check: {{ status_1 | trim }}, Service enabled: {{ status_2 | default('NA') | trim }}, Service active: {{ status_3 | default('NA') | trim }}"
+        status_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | default('FAIL') | trim == 'PASS' and status_3 | default('FAIL') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS when package is not installed
+          {% elif status_1 | trim == 'FAIL' and status_2 | default('FAIL') | trim == 'PASS' and status_3 | default('FAIL') | trim == 'PASS' %}
+            PASS when package is installed but service is not enabled and not active
+          {% else %}
+            FAIL when package is installed and service is enabled or active
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 2.1.7"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "========================================================"

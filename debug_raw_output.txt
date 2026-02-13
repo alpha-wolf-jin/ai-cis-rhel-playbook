@@ -1,0 +1,313 @@
+[0;34mansible-playbook [core 2.16.15][0m
+[0;34m  config file = /home/jin/ai/rhel-cis/ansible.cfg[0m
+[0;34m  configured module search path = ['/home/runner/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules'][0m
+[0;34m  ansible python module location = /usr/local/lib/python3.11/site-packages/ansible[0m
+[0;34m  ansible collection location = /home/runner/.ansible/collections:/usr/share/ansible/collections[0m
+[0;34m  executable location = /usr/local/bin/ansible-playbook[0m
+[0;34m  python version = 3.11.13 (main, Aug 21 2025, 00:00:00) [GCC 11.5.0 20240719 (Red Hat 11.5.0-11)] (/usr/bin/python3.11)[0m
+[0;34m  jinja version = 3.1.6[0m
+[0;34m  libyaml = True[0m
+[0;34mUsing /home/jin/ai/rhel-cis/ansible.cfg as config file[0m
+[0;34mParsed 192.168.122.57, inventory source with host_list plugin[0m
+[KeyJ1dWlkIjogIjU2NjY5MTIyLTU4MGUtNDM0ZC1hMWU4LWExNTdjMDg2NDJkYyJ9[64D[K[0;34mSkipping callback 'awx_display', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjdmZjM2ZTk0LWE4YjctNDQyZS1iYWVkLTQ4OTEwOTBhZDQ3MCJ9[64D[K[0;34mSkipping callback 'default', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjkzY2E2NjAwLTdjYjQtNDhkZS1hMWQ2LWNhZjMwZDhhN2JhNiJ9[64D[K[0;34mSkipping callback 'minimal', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU3ODE1ZmQ1LWRhNWYtNGU0YS05ZWFiLTJjNjlmZTU1OTE4MCJ9[64D[K[0;34mSkipping callback 'oneline', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjE3NmYyMjhlLWQ0MzUtNGZlZC04ZGM4LTAyNWQxOTlhNmI5YSJ9[64D[K
+PLAYBOOK: cis_audit_5_1_19.yml ************************************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImZkZjE2NzFmLWZkY2MtNDIzMC04NDA4LWY3Y2U1M2UyODM0YiJ9[64D[K[0;34m1 plays in /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for CIS checkpoint 5.1.19] ******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] **********************************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:15[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImJiYjc1NTQyLWM0NjItNDA2My04ZDM3LWFmY2Y0MmIyY2Y3OSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjRiYTViOWZkLTg4NTAtNGI2MS1hZWY1LTQ1NDZlYTJmODQxOSJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "ansible_facts": {[0m
+[0;32m        "data_1": "",[0m
+[0;32m        "data_2": "",[0m
+[0;32m        "data_3": "",[0m
+[0;32m        "match_blocks_exist": false,[0m
+[0;32m        "match_conditions_list": [],[0m
+[0;32m        "rationale_1": "Not evaluated",[0m
+[0;32m        "rationale_2": "Not evaluated",[0m
+[0;32m        "rationale_3": "Not evaluated",[0m
+[0;32m        "status_1": "UNKNOWN",[0m
+[0;32m        "status_2": "UNKNOWN",[0m
+[0;32m        "status_3": "UNKNOWN",[0m
+[0;32m        "task_1_cmd": "N/A",[0m
+[0;32m        "task_1_name": "Not executed",[0m
+[0;32m        "task_1_rc": -1,[0m
+[0;32m        "task_2_cmd": "N/A",[0m
+[0;32m        "task_2_name": "Not executed",[0m
+[0;32m        "task_2_rc": -1,[0m
+[0;32m        "task_3_cmd": "N/A",[0m
+[0;32m        "task_3_name": "Not executed",[0m
+[0;32m        "task_3_rc": -1[0m
+[0;32m    },[0m
+[0;32m    "changed": false[0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwNSJ9[64D[K
+TASK [Req 1 - Check sshd PermitEmptyPasswords global setting] *****************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:39[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImNhMzNlYTQ2LTVlNzMtNGI5Yi1iMTE2LTRmZTY0ZmJiYzEwMyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjc0ZjZlNDYwLTg1MzAtNGZlNy1hMmFiLWFiZWFmMWIzN2I4OSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImM2NWVjOWM5LTVhNGQtNGNmYi04NDE0LWI3YmI3MzQzNTI3OCJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'echo ~root && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRiMTQ0NzFjLTBiMGMtNGYyZi1hMDE2LTI0NDlhY2UzYWEyNSJ9[64D[K[0;34m<192.168.122.57> (0, b'/root\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImIyZjNjZGJlLWVkNzgtNDNkNy1iZjEyLTQ0ZDQxZDhkMmE2ZSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjVhOTAyNDk2LWM2MzUtNDNiMi05MWExLTUzNzg1ZWQ1NmZlYSJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'( umask 77 && mkdir -p "` echo /root/.ansible/tmp `"&& mkdir "` echo /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768 `" && echo ansible-tmp-1770865703.0006542-23-208777349768768="` echo /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768 `" ) && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjMxOGNjYmRlLTNhMTEtNDhkYy1hYjJmLWNmMzA4N2YwMmExMiJ9[64D[K[0;34m<192.168.122.57> (0, b'ansible-tmp-1770865703.0006542-23-208777349768768=/root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA3NWVkMWM4LTliMTMtNDJlNS1iNTRjLTgxMTgxNTA5NzM4NiJ9[64D[K[0;34m<192.168.122.57> Attempting python interpreter discovery[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI3YjhlNjJlLWNiZDgtNGFhNC05MTBhLTVhMmM5MGU1ZDNkNyJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjliOWZiODkzLWJlZTMtNDRiZi1iYmJhLTM4ZTBkYTNmNzI3ZiJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'echo PLATFORM; uname; echo FOUND; command -v '"'"'"'"'"'"'"'"'python3.12'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python3.11'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python3.10'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python3.9'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python3.8'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python3.7'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python3.6'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'/usr/bin/python3'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'/usr/libexec/platform-python'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python2.7'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'/usr/bin/python'"'"'"'"'"'"'"'"'; command -v '"'"'"'"'"'"'"'"'python'"'"'"'"'"'"'"'"'; echo ENDFOUND && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjAzZDMwYjExLTc0YjUtNGJiMS1hMjk3LWJkYzc5OGI0ZGViYSJ9[64D[K[0;34m<192.168.122.57> (0, b'PLATFORM\nLinux\nFOUND\n/usr/bin/python3.9\n/usr/bin/python3\n/usr/libexec/platform-python\n/usr/bin/python\n/usr/bin/python\nENDFOUND\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImUwZjg5MjI0LTRjMGMtNGY1NC04Y2JiLTFmM2Y2ZjU1NGEwZCJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjUyNWQ4NjIwLTFhMGYtNGY2MS1hZTM4LThkMjdmOGQ2N2Q4OCJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'/usr/bin/python3.9 && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY2YzVkZDY0LWExYzUtNDI4OS1iNWYxLTdjZGVkNGJhOTA1NCJ9[64D[K[0;34m<192.168.122.57> (0, b'{"platform_dist_result": [], "osrelease_content": "NAME=\\"Red Hat Enterprise Linux\\"\\nVERSION=\\"9.6 (Plow)\\"\\nID=\\"rhel\\"\\nID_LIKE=\\"fedora\\"\\nVERSION_ID=\\"9.6\\"\\nPLATFORM_ID=\\"platform:el9\\"\\nPRETTY_NAME=\\"Red Hat Enterprise Linux 9.6 (Plow)\\"\\nANSI_COLOR=\\"0;31\\"\\nLOGO=\\"fedora-logo-icon\\"\\nCPE_NAME=\\"cpe:/o:redhat:enterprise_linux:9::baseos\\"\\nHOME_URL=\\"https://www.redhat.com/\\"\\nDOCUMENTATION_URL=\\"https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/9\\"\\nBUG_REPORT_URL=\\"https://issues.redhat.com/\\"\\n\\nREDHAT_BUGZILLA_PRODUCT=\\"Red Hat Enterprise Linux 9\\"\\nREDHAT_BUGZILLA_PRODUCT_VERSION=9.6\\nREDHAT_SUPPORT_PRODUCT=\\"Red Hat Enterprise Linux\\"\\nREDHAT_SUPPORT_PRODUCT_VERSION=\\"9.6\\"\\n"}\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjI5MWQ3ZDQ4LTMxODEtNGI2Ni1hMzJlLWQwZGIwOGViODkwYyJ9[64D[K[0;34mUsing module file /usr/local/lib/python3.11/site-packages/ansible/modules/command.py[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImFlYmVkMWI3LWY1MTMtNGUzNC04NjA1LTBkZjBlNTM3NjdjMyJ9[64D[K[0;34m<192.168.122.57> PUT /home/runner/.ansible/tmp/ansible-local-19kx5tclvg/tmpefo7_qxx TO /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768/AnsiballZ_command.py[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjBhMTZkNGQyLTIzZjktNGYxMy05OGI2LTI4ODk0ZDVmMGYzMCJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC sftp -b - -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' '[192.168.122.57]'[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImZhMmNhZWQwLTU0NmEtNDhhOC05MjU0LWVlN2Y1MTU0M2IwNiJ9[64D[K[0;34m<192.168.122.57> (0, b'sftp> put /home/runner/.ansible/tmp/ansible-local-19kx5tclvg/tmpefo7_qxx /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768/AnsiballZ_command.py\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY1OWRiODNkLTk3ZjQtNDA0Ni1iNDEyLWI5NDUyZWZhNjIxMCJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQ5ZjJkYjNjLThkYjMtNGFlYy1iOWNjLWE4ODdjZmFlZGE0MiJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'chmod u+x /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768/ /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768/AnsiballZ_command.py && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjcxNGJkNjI3LTkzNDgtNGJmOC05NzJmLTQ5ZWRiZDA2YTMxOSJ9[64D[K[0;34m<192.168.122.57> (0, b'', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk3YjkwNjE2LWYzZDMtNGE0MC1hZWMzLTJiOGRkOTZjMDI5OSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlZWVkYWQ0LWJkMTItNDYwZS1hNzZkLTgwYTYyN2MwZDU0YyJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' -tt 192.168.122.57 '/bin/sh -c '"'"'/usr/bin/python3 /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768/AnsiballZ_command.py && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU0M2E0YmMyLWQyNWYtNGRkZC1hYTI0LThjZjk0NzA4MjE2OCJ9[64D[K[0;34m<192.168.122.57> (0, b'\r\n{"changed": true, "stdout": "permitemptypasswords no", "stderr": "", "rc": 0, "cmd": "sshd -T | grep permitemptypasswords\\n", "start": "2026-02-12 11:08:23.262584", "end": "2026-02-12 11:08:23.270679", "delta": "0:00:00.008095", "msg": "", "invocation": {"module_args": {"executable": "/bin/bash", "_raw_params": "sshd -T | grep permitemptypasswords\\n", "_uses_shell": true, "expand_argument_vars": true, "stdin_add_newline": true, "strip_empty_ends": true, "argv": null, "chdir": null, "creates": null, "removes": null, "stdin": null}}}\r\n', b'Shared connection to 192.168.122.57 closed.\r\n')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQzZGU5ZDFiLTk1NmYtNDMyNy1hZjVmLTlmYmNkZjVlNGFjNiJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImQyZDJmZmNjLTUyZTEtNGMzZi05M2RmLTFmNGM2OWM0ODRhYSJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'rm -f -r /root/.ansible/tmp/ansible-tmp-1770865703.0006542-23-208777349768768/ > /dev/null 2>&1 && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImU5NmY5MWFmLWU3NDktNGI2My1hMDYxLTNiYTE4MzRhZWUzYyJ9[64D[K[0;34m<192.168.122.57> (0, b'', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRkYjhhYThkLTk5MzEtNDUwOC1hMjhmLWQxZjRjNGQ4OGRjNiJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "ansible_facts": {[0m
+[0;32m        "discovered_interpreter_python": "/usr/bin/python3"[0m
+[0;32m    },[0m
+[0;32m    "changed": false,[0m
+[0;32m    "cmd": "sshd -T | grep permitemptypasswords\n",[0m
+[0;32m    "delta": "0:00:00.008095",[0m
+[0;32m    "end": "2026-02-12 11:08:23.270679",[0m
+[0;32m    "invocation": {[0m
+[0;32m        "module_args": {[0m
+[0;32m            "_raw_params": "sshd -T | grep permitemptypasswords\n",[0m
+[0;32m            "_uses_shell": true,[0m
+[0;32m            "argv": null,[0m
+[0;32m            "chdir": null,[0m
+[0;32m            "creates": null,[0m
+[0;32m            "executable": "/bin/bash",[0m
+[0;32m            "expand_argument_vars": true,[0m
+[0;32m            "removes": null,[0m
+[0;32m            "stdin": null,[0m
+[0;32m            "stdin_add_newline": true,[0m
+[0;32m            "strip_empty_ends": true[0m
+[0;32m        }[0m
+[0;32m    },[0m
+[0;32m    "msg": "",[0m
+[0;32m    "rc": 0,[0m
+[0;32m    "start": "2026-02-12 11:08:23.262584",[0m
+[0;32m    "stderr": "",[0m
+[0;32m    "stderr_lines": [],[0m
+[0;32m    "stdout": "permitemptypasswords no",[0m
+[0;32m    "stdout_lines": [[0m
+[0;32m        "permitemptypasswords no"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwNiJ9[64D[K
+TASK [Store requirement 1 details] ********************************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:48[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjYxZmU2ZTljLWYwZTctNDVmYy1iNTNiLWYzZDc3ZDRiMmIwMyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImE5ZTYwMzZmLWY0MjMtNDBjOC04MzMzLTYyZGMxZjZjOWJhMCJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "ansible_facts": {[0m
+[0;32m        "data_1": "permitemptypasswords no",[0m
+[0;32m        "rationale_1": "  PASS when output is exactly \"permitemptypasswords no\", FAIL otherwise\n",[0m
+[0;32m        "status_1": "PASS",[0m
+[0;32m        "task_1_cmd": "sshd -T | grep permitemptypasswords",[0m
+[0;32m        "task_1_name": "Check sshd PermitEmptyPasswords global setting",[0m
+[0;32m        "task_1_rc": "0"[0m
+[0;32m    },[0m
+[0;32m    "changed": false[0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwNyJ9[64D[K
+TASK [Check for Match blocks in sshd_config] **********************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:63[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImI3MjFmOTJmLTFhZTktNDJiOS04MDk3LWNiMTMwM2MyYmU3NyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjhmNWU1MjgwLWVjYWYtNDM3MS05MzQ3LTQ5MzhjMzAyOTMxOSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjYxNDI4NzYxLTlmN2QtNGVmMS05NjIzLTZmMDk0ZjE1MmFjOCJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'echo ~root && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjQzYWNhYTk0LTJjNTAtNDIxMi1iNzdmLWU4YjdiNDUxNTlkMyJ9[64D[K[0;34m<192.168.122.57> (0, b'/root\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjljNDIzYmFkLTAyMTktNGNhNC05Yzg2LTFiNDUzNTU5MzgxNSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjFhOWQzMDc3LTFjNTQtNDQ2MC05YzFjLTU5YzkzODg2MzI0NyJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'( umask 77 && mkdir -p "` echo /root/.ansible/tmp `"&& mkdir "` echo /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289 `" && echo ansible-tmp-1770865703.3437839-37-247824442866289="` echo /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289 `" ) && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY3ZmVkMGIwLWI3MmYtNDhlMi04M2Y5LTkwMTU4YzI4ODI2YSJ9[64D[K[0;34m<192.168.122.57> (0, b'ansible-tmp-1770865703.3437839-37-247824442866289=/root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImZhMjg5MjQzLWVjYjgtNGUwZC1iNjFmLTEwMjg2OGQ1ZTc4ZSJ9[64D[K[0;34mUsing module file /usr/local/lib/python3.11/site-packages/ansible/modules/command.py[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY0OGEyODFlLTAzNjQtNGNlMy05NjA2LTU1ZDlkYTRkNzYzZCJ9[64D[K[0;34m<192.168.122.57> PUT /home/runner/.ansible/tmp/ansible-local-19kx5tclvg/tmp15srsr0_ TO /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289/AnsiballZ_command.py[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjRlMzgxMDNkLTgzMjEtNGYzZC1hYzk4LTRiMmViZWFhY2FjNCJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC sftp -b - -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' '[192.168.122.57]'[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjBlMDRkYmMyLWJhMTYtNDA1NS05NTAzLTdlOTQ2NGQxMWUxZCJ9[64D[K[0;34m<192.168.122.57> (0, b'sftp> put /home/runner/.ansible/tmp/ansible-local-19kx5tclvg/tmp15srsr0_ /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289/AnsiballZ_command.py\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjAwZjQxNjgzLWI2YWEtNDYzMC05MThiLTQ5OTNiYTM0N2Y5ZCJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjBjZGMyNWQ3LWE5MmYtNDg1YS05MWZjLWU2NTg0MGMwNWRmYSJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'chmod u+x /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289/ /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289/AnsiballZ_command.py && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjYzODkxYWFiLTlhMTgtNDc2Ni04ZTViLTBmMDBjY2U5MmE2MiJ9[64D[K[0;34m<192.168.122.57> (0, b'', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImMzZTMwMWYwLWE5NzYtNDUzMS1iODJmLWNkZmI1MTBjZGJhNyJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZmODQ5OGQ0LWNkNjMtNDM1ZC05NDFjLWUwMzlkNDU5ZWYzMiJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' -tt 192.168.122.57 '/bin/sh -c '"'"'/usr/bin/python3 /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289/AnsiballZ_command.py && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImJlZDBjMWU1LTNkZGMtNGQ3My05ZGQ4LTg3Zjg2MTJjZTExNiJ9[64D[K[0;34m<192.168.122.57> (0, b'\r\n{"changed": true, "stdout": "false", "stderr": "", "rc": 0, "cmd": "if grep -q \\"^Match\\" /etc/ssh/sshd_config 2>/dev/null; then\\n  echo \\"true\\"\\nelse\\n  echo \\"false\\"\\nfi\\n", "start": "2026-02-12 11:08:23.486285", "end": "2026-02-12 11:08:23.488552", "delta": "0:00:00.002267", "msg": "", "invocation": {"module_args": {"executable": "/bin/bash", "_raw_params": "if grep -q \\"^Match\\" /etc/ssh/sshd_config 2>/dev/null; then\\n  echo \\"true\\"\\nelse\\n  echo \\"false\\"\\nfi\\n", "_uses_shell": true, "expand_argument_vars": true, "stdin_add_newline": true, "strip_empty_ends": true, "argv": null, "chdir": null, "creates": null, "removes": null, "stdin": null}}}\r\n', b'Shared connection to 192.168.122.57 closed.\r\n')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImJkY2ZhY2UyLTRiMzgtNGEyZC05NTJhLWNhYmYwZDUxNTNmZCJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjY5MDU2YzA5LWUxNGYtNDk2NC1hNDJjLTI5MjE2NzE3YTM3MSJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'rm -f -r /root/.ansible/tmp/ansible-tmp-1770865703.3437839-37-247824442866289/ > /dev/null 2>&1 && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjM3ZTllNjU2LWFmMzgtNDYwYS05OGZkLTEyNWFmNTkxNjJjMiJ9[64D[K[0;34m<192.168.122.57> (0, b'', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjcwZDFlODAzLTU1NDctNDZhMi04M2MwLTYyMDJiYWRhYmFhMCJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "changed": false,[0m
+[0;32m    "cmd": "if grep -q \"^Match\" /etc/ssh/sshd_config 2>/dev/null; then\n  echo \"true\"\nelse\n  echo \"false\"\nfi\n",[0m
+[0;32m    "delta": "0:00:00.002267",[0m
+[0;32m    "end": "2026-02-12 11:08:23.488552",[0m
+[0;32m    "invocation": {[0m
+[0;32m        "module_args": {[0m
+[0;32m            "_raw_params": "if grep -q \"^Match\" /etc/ssh/sshd_config 2>/dev/null; then\n  echo \"true\"\nelse\n  echo \"false\"\nfi\n",[0m
+[0;32m            "_uses_shell": true,[0m
+[0;32m            "argv": null,[0m
+[0;32m            "chdir": null,[0m
+[0;32m            "creates": null,[0m
+[0;32m            "executable": "/bin/bash",[0m
+[0;32m            "expand_argument_vars": true,[0m
+[0;32m            "removes": null,[0m
+[0;32m            "stdin": null,[0m
+[0;32m            "stdin_add_newline": true,[0m
+[0;32m            "strip_empty_ends": true[0m
+[0;32m        }[0m
+[0;32m    },[0m
+[0;32m    "msg": "",[0m
+[0;32m    "rc": 0,[0m
+[0;32m    "start": "2026-02-12 11:08:23.486285",[0m
+[0;32m    "stderr": "",[0m
+[0;32m    "stderr_lines": [],[0m
+[0;32m    "stdout": "false",[0m
+[0;32m    "stdout_lines": [[0m
+[0;32m        "false"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwOCJ9[64D[K
+TASK [Set match_blocks_exist fact] ********************************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:76[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjk2ZmJiNDZkLWI2NDEtNGM1Yi1iNDEwLTdhMDhmYWRkYTZhOSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjk5M2VkOWM1LWIxYzYtNDg2Zi1hYzgyLWI5YTZlMTJjYmY0MyJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "ansible_facts": {[0m
+[0;32m        "match_blocks_exist": false[0m
+[0;32m    },[0m
+[0;32m    "changed": false[0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwOSJ9[64D[K
+TASK [Req 2 - Check Match blocks for PermitEmptyPasswords setting] ************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:81[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjgwYjVmZmZkLWRlYTctNDhlOC1iZmI3LTRjODVlODAwNTg4YyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImI4MjdlNDQxLWIwOTEtNDY3ZC1hOTlmLTgzNDdiMWJlMjEzOCJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImQxODUyMjk4LWRiZmMtNDJiMy04NDY1LWQ2MjBmMGM2MDVmMCJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'echo ~root && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjBkZGQ2NTFiLTczNGMtNDIxNy1iYmMzLWFmYzc5MjJlY2JmMyJ9[64D[K[0;34m<192.168.122.57> (0, b'/root\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjkyZGZjZjVlLWQzM2UtNGJkNC1iMzAyLWE2MDZjMzQ0M2I4MyJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImZlNzY1MzRjLTRkOWItNDk0YS1hNGU0LWRhZWI5YjJmZDAzYSJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'( umask 77 && mkdir -p "` echo /root/.ansible/tmp `"&& mkdir "` echo /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313 `" && echo ansible-tmp-1770865703.5598123-46-69235891795313="` echo /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313 `" ) && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjEwYTdmNGNkLWM5ZmEtNGU0ZC1iYjAzLTk2MDg3YTcxNGEwNyJ9[64D[K[0;34m<192.168.122.57> (0, b'ansible-tmp-1770865703.5598123-46-69235891795313=/root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjAzM2MwNDBmLWNhODktNDc4MC1hM2MyLTQ5MjM1ZWY0ZjYyOSJ9[64D[K[0;34mUsing module file /usr/local/lib/python3.11/site-packages/ansible/modules/command.py[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZjZDc4MGM0LTk4MmYtNDI2Yi1hZDNhLWIwNTg5MjdjNmQyNiJ9[64D[K[0;34m<192.168.122.57> PUT /home/runner/.ansible/tmp/ansible-local-19kx5tclvg/tmpk3vnbv1m TO /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313/AnsiballZ_command.py[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImY1ODExZTMzLTUzYjYtNDkwYy1iYzQxLTM5ZTQ0NzE2OTc4NSJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC sftp -b - -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' '[192.168.122.57]'[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjA1NzRjZDU3LTkzMzItNGQwNi04Nzg5LTE1ZGMyMzhlNTFiNSJ9[64D[K[0;34m<192.168.122.57> (0, b'sftp> put /home/runner/.ansible/tmp/ansible-local-19kx5tclvg/tmpk3vnbv1m /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313/AnsiballZ_command.py\n', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjkwNjEzOTAzLWUzZmYtNDY0MC1iNGQwLTQ2ODJhMTJkY2ZhMyJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjRkYzViZDEwLTdlNmUtNDJkYS1hODczLWQ3MGI3NmRhMzE4ZiJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'chmod u+x /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313/ /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313/AnsiballZ_command.py && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjkxMGVkODZlLWExZmItNDU0ZS04Y2RjLWFjNTYzMTI5ZDQ2NSJ9[64D[K[0;34m<192.168.122.57> (0, b'', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImNkODA3MGMwLTM5ZTItNGFhOS1iNDhjLTg5M2UyZmMwYjAyYSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImM1MDljOGViLWU4NjItNDJjMS04MTgyLWYxNDQ3NmQzY2QwYyJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' -tt 192.168.122.57 '/bin/sh -c '"'"'/usr/bin/python3 /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313/AnsiballZ_command.py && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZjNmRhYjhmLWY2ZmYtNDBhYy04ODU4LWIxMjM2Mjk5NjdhMSJ9[64D[K[0;34m<192.168.122.57> (0, b'\r\n{"changed": true, "stdout": "ALL_PASS: All Match block checks passed\\n USER_root: PASS (permitemptypasswords no)", "stderr": "", "rc": 0, "cmd": "# Set variables from Ansible facts\\nmatch_blocks_exist=\\"False\\"\\nusers_to_test=\\"root\\"\\n\\n\\nif [ \\"$match_blocks_exist\\" = \\"false\\" ]; then\\n  echo \\"NO_MATCH_BLOCKS: No Match blocks found in sshd_config\\"\\n  exit 0\\nfi\\n\\nall_pass=true\\noutput=\\"\\"\\n\\nfor user in $users_to_test; do\\n  result=$(sshd -T -C user=\\"$user\\" | grep permitemptypasswords 2>/dev/null)\\n  if [ $? -eq 0 ]; then\\n    if [ \\"$result\\" = \\"permitemptypasswords no\\" ]; then\\n      output=\\"$output USER_${user}: PASS (permitemptypasswords no)\\"\\n    else\\n      output=\\"$output USER_${user}: FAIL (got: $result)\\"\\n      all_pass=false\\n    fi\\n  else\\n    output=\\"$output USER_${user}: ERROR (command failed or no output)\\"\\n    all_pass=false\\n  fi\\ndone\\n\\nif [ \\"$all_pass\\" = \\"true\\" ]; then\\n  echo \\"ALL_PASS: All Match block checks passed\\"\\n  echo \\"$output\\"\\nelse\\n  echo \\"SOME_FAIL: Some Match block checks failed\\"\\n  echo \\"$output\\"\\n  exit 1\\nfi\\n", "start": "2026-02-12 11:08:23.709287", "end": "2026-02-12 11:08:23.717643", "delta": "0:00:00.008356", "msg": "", "invocation": {"module_args": {"executable": "/bin/bash", "_raw_params": "# Set variables from Ansible facts\\nmatch_blocks_exist=\\"False\\"\\nusers_to_test=\\"root\\"\\n\\n\\nif [ \\"$match_blocks_exist\\" = \\"false\\" ]; then\\n  echo \\"NO_MATCH_BLOCKS: No Match blocks found in sshd_config\\"\\n  exit 0\\nfi\\n\\nall_pass=true\\noutput=\\"\\"\\n\\nfor user in $users_to_test; do\\n  result=$(sshd -T -C user=\\"$user\\" | grep permitemptypasswords 2>/dev/null)\\n  if [ $? -eq 0 ]; then\\n    if [ \\"$result\\" = \\"permitemptypasswords no\\" ]; then\\n      output=\\"$output USER_${user}: PASS (permitemptypasswords no)\\"\\n    else\\n      output=\\"$output USER_${user}: FAIL (got: $result)\\"\\n      all_pass=false\\n    fi\\n  else\\n    output=\\"$output USER_${user}: ERROR (command failed or no output)\\"\\n    all_pass=false\\n  fi\\ndone\\n\\nif [ \\"$all_pass\\" = \\"true\\" ]; then\\n  echo \\"ALL_PASS: All Match block checks passed\\"\\n  echo \\"$output\\"\\nelse\\n  echo \\"SOME_FAIL: Some Match block checks failed\\"\\n  echo \\"$output\\"\\n  exit 1\\nfi\\n", "_uses_shell": true, "expand_argument_vars": true, "stdin_add_newline": true, "strip_empty_ends": true, "argv": null, "chdir": null, "creates": null, "removes": null, "stdin": null}}}\r\n', b'Shared connection to 192.168.122.57 closed.\r\n')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImI5YzkwNzhlLTQzMTctNGFlNS1hMzA4LWNlNjRjNzdjZmJjOSJ9[64D[K[0;34m<192.168.122.57> ESTABLISH SSH CONNECTION FOR USER: root[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjc1OWRlYTlmLWZlYTQtNGQxYi1hZmNlLTFhYjUzNjQ0ODBmMiJ9[64D[K[0;34m<192.168.122.57> SSH: EXEC ssh -C -o ControlMaster=auto -o ControlPersist=60s -o StrictHostKeyChecking=no -o KbdInteractiveAuthentication=no -o PreferredAuthentications=gssapi-with-mic,gssapi-keyex,hostbased,publickey -o PasswordAuthentication=no -o 'User="root"' -o ConnectTimeout=10 -o 'ControlPath="/home/runner/.ansible/cp/b4c1fbe511"' 192.168.122.57 '/bin/sh -c '"'"'rm -f -r /root/.ansible/tmp/ansible-tmp-1770865703.5598123-46-69235891795313/ > /dev/null 2>&1 && sleep 0'"'"''[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjdhYWQyZGI5LTE1NTItNDM0ZC1hOWRmLTk5ODg0ODFkNGM3MyJ9[64D[K[0;34m<192.168.122.57> (0, b'', b'')[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImVlODFjZDI2LWMzMDYtNDY1OC1hNjU0LTkzNTk3ZWZjNjRkMSJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "changed": false,[0m
+[0;32m    "cmd": "# Set variables from Ansible facts\nmatch_blocks_exist=\"False\"\nusers_to_test=\"root\"\n\n\nif [ \"$match_blocks_exist\" = \"false\" ]; then\n  echo \"NO_MATCH_BLOCKS: No Match blocks found in sshd_config\"\n  exit 0\nfi\n\nall_pass=true\noutput=\"\"\n\nfor user in $users_to_test; do\n  result=$(sshd -T -C user=\"$user\" | grep permitemptypasswords 2>/dev/null)\n  if [ $? -eq 0 ]; then\n    if [ \"$result\" = \"permitemptypasswords no\" ]; then\n      output=\"$output USER_${user}: PASS (permitemptypasswords no)\"\n    else\n      output=\"$output USER_${user}: FAIL (got: $result)\"\n      all_pass=false\n    fi\n  else\n    output=\"$output USER_${user}: ERROR (command failed or no output)\"\n    all_pass=false\n  fi\ndone\n\nif [ \"$all_pass\" = \"true\" ]; then\n  echo \"ALL_PASS: All Match block checks passed\"\n  echo \"$output\"\nelse\n  echo \"SOME_FAIL: Some Match block checks failed\"\n  echo \"$output\"\n  exit 1\nfi\n",[0m
+[0;32m    "delta": "0:00:00.008356",[0m
+[0;32m    "end": "2026-02-12 11:08:23.717643",[0m
+[0;32m    "invocation": {[0m
+[0;32m        "module_args": {[0m
+[0;32m            "_raw_params": "# Set variables from Ansible facts\nmatch_blocks_exist=\"False\"\nusers_to_test=\"root\"\n\n\nif [ \"$match_blocks_exist\" = \"false\" ]; then\n  echo \"NO_MATCH_BLOCKS: No Match blocks found in sshd_config\"\n  exit 0\nfi\n\nall_pass=true\noutput=\"\"\n\nfor user in $users_to_test; do\n  result=$(sshd -T -C user=\"$user\" | grep permitemptypasswords 2>/dev/null)\n  if [ $? -eq 0 ]; then\n    if [ \"$result\" = \"permitemptypasswords no\" ]; then\n      output=\"$output USER_${user}: PASS (permitemptypasswords no)\"\n    else\n      output=\"$output USER_${user}: FAIL (got: $result)\"\n      all_pass=false\n    fi\n  else\n    output=\"$output USER_${user}: ERROR (command failed or no output)\"\n    all_pass=false\n  fi\ndone\n\nif [ \"$all_pass\" = \"true\" ]; then\n  echo \"ALL_PASS: All Match block checks passed\"\n  echo \"$output\"\nelse\n  echo \"SOME_FAIL: Some Match block checks failed\"\n  echo \"$output\"\n  exit 1\nfi\n",[0m
+[0;32m            "_uses_shell": true,[0m
+[0;32m            "argv": null,[0m
+[0;32m            "chdir": null,[0m
+[0;32m            "creates": null,[0m
+[0;32m            "executable": "/bin/bash",[0m
+[0;32m            "expand_argument_vars": true,[0m
+[0;32m            "removes": null,[0m
+[0;32m            "stdin": null,[0m
+[0;32m            "stdin_add_newline": true,[0m
+[0;32m            "strip_empty_ends": true[0m
+[0;32m        }[0m
+[0;32m    },[0m
+[0;32m    "msg": "",[0m
+[0;32m    "rc": 0,[0m
+[0;32m    "start": "2026-02-12 11:08:23.709287",[0m
+[0;32m    "stderr": "",[0m
+[0;32m    "stderr_lines": [],[0m
+[0;32m    "stdout": "ALL_PASS: All Match block checks passed\n USER_root: PASS (permitemptypasswords no)",[0m
+[0;32m    "stdout_lines": [[0m
+[0;32m        "ALL_PASS: All Match block checks passed",[0m
+[0;32m        " USER_root: PASS (permitemptypasswords no)"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwYSJ9[64D[K
+TASK [Store requirement 2 details] ********************************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:126[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImUyMzdlYTVhLWQyMmEtNGYxMS1hYzMzLWIwN2FkY2VhMDI5YyJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImVlMzY3YWYxLWNmNmEtNDYwYi1hYzNkLWI3M2ZjOTA1ZjY0OSJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "ansible_facts": {[0m
+[0;32m        "data_2": "ALL_PASS: All Match block checks passed\n USER_root: PASS (permitemptypasswords no)",[0m
+[0;32m        "rationale_2": "   PASS: All Match block checks returned 'permitemptypasswords no'\n",[0m
+[0;32m        "status_2": "   PASS\n",[0m
+[0;32m        "task_2_cmd": "sshd -T -C user=<user> | grep permitemptypasswords (for users: root)",[0m
+[0;32m        "task_2_name": "Check sshd PermitEmptyPasswords in Match blocks",[0m
+[0;32m        "task_2_rc": "0"[0m
+[0;32m    },[0m
+[0;32m    "changed": false[0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwYiJ9[64D[K
+TASK [Req 3 - Overall verification] *******************************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:158[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImI5MjJjYjcyLTcyNzEtNGM4Mi1hY2RkLWY5ZTM5ZmQ5MGIyNiJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogIjMyZjhmMzEyLTcxM2EtNGFkMC04NDA2LWIxYjQ5NzI4MDg3ZCJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "ansible_facts": {[0m
+[0;32m        "data_3": "Requirement 1 status: PASS, Requirement 2 status:    PASS\n",[0m
+[0;32m        "rationale_3": "PASS when req_1=PASS and req_2=PASS, FAIL otherwise",[0m
+[0;32m        "status_3": "PASS",[0m
+[0;32m        "task_3_cmd": "N/A - Derived from requirements 1 and 2",[0m
+[0;32m        "task_3_name": "Overall verification of sshd PermitEmptyPasswords setting",[0m
+[0;32m        "task_3_rc": 0[0m
+[0;32m    },[0m
+[0;32m    "changed": false[0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwYyJ9[64D[K
+TASK [Generate compliance report] *********************************************************************************************************************************************************************************
+[1;30mtask path: /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml:168[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogImRhMzBhMWFiLWNjYzMtNGE4NS1iYzNmLTY5MmMyY2NjMjQ0ZSJ9[64D[K[Ke30=[4D[K[KeyJ1dWlkIjogImU2MTE5ODExLWI4YjctNGViZC04YWZjLWRkYzk4Y2JiZTgyOSJ9[64D[K[0;32mok: [192.168.122.57] => {[0m
+[0;32m    "msg": [[0m
+[0;32m        "========================================================",[0m
+[0;32m        "        COMPLIANCE REPORT - CIS 5.1.19",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 1 - Verify sshd PermitEmptyPasswords global setting using command: sshd -T | grep permitemptypasswords. Rationale: PASS when output is exactly 'permitemptypasswords no', FAIL otherwise:",[0m
+[0;32m        "  Task: Check sshd PermitEmptyPasswords global setting",[0m
+[0;32m        "  Command: sshd -T | grep permitemptypasswords",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: permitemptypasswords no",[0m
+[0;32m        "  Status: PASS",[0m
+[0;32m        "  Rationale: PASS when output is exactly \"permitemptypasswords no\", FAIL otherwise",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 2 - Verify sshd PermitEmptyPasswords in Match blocks (if they exist). Rationale: PASS when all Match block checks return 'permitemptypasswords no' or no Match blocks exist, FAIL otherwise:",[0m
+[0;32m        "  Task: Check sshd PermitEmptyPasswords in Match blocks",[0m
+[0;32m        "  Command: sshd -T -C user=<user> | grep permitemptypasswords (for users: root)",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: ALL_PASS: All Match block checks passed\n USER_root: PASS (permitemptypasswords no)",[0m
+[0;32m        "  Status: PASS",[0m
+[0;32m        "  Rationale: PASS: All Match block checks returned 'permitemptypasswords no'",[0m
+[0;32m        "",[0m
+[0;32m        "REQUIREMENT 3 - OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled. Rationale: PASS when req_1=PASS and req_2=PASS, FAIL otherwise:",[0m
+[0;32m        "  Task: Overall verification of sshd PermitEmptyPasswords setting",[0m
+[0;32m        "  Command: N/A - Derived from requirements 1 and 2",[0m
+[0;32m        "  Exit code: 0",[0m
+[0;32m        "  Data: Requirement 1 status: PASS, Requirement 2 status:    PASS",[0m
+[0;32m        "  Status: PASS",[0m
+[0;32m        "  Rationale: PASS when req_1=PASS and req_2=PASS, FAIL otherwise",[0m
+[0;32m        "",[0m
+[0;32m        "========================================================",[0m
+[0;32m        "OVERALL COMPLIANCE:",[0m
+[0;32m        "  Result: PASS",[0m
+[0;32m        "  Rationale: PASS when req_1=PASS and req_2=PASS, FAIL otherwise",[0m
+[0;32m        "========================================================"[0m
+[0;32m    ][0m
+[0;32m}[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjAyYzdmY2RkLTdlNDktNDlkMS1iZTNkLTcyYTk3NTk2NzdlOCJ9[64D[K
+PLAY RECAP ********************************************************************************************************************************************************************************************************
+[0;32m192.168.122.57[0m             : [0;32mok=9   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K

@@ -1,0 +1,98 @@
+---
+- name: Data Collection for CIS checkpoint 6.3.4.8
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.4.8"
+    req_1: "Run script to verify audit tools are mode 0755 or more restrictive"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+
+    # Requirement 1: Run script to verify audit tools are mode 0755 or more restrictive
+    - name: Req 1 - Execute CIS audit script for audit tools mode
+      copy:
+        dest: "/tmp/cis_audit_6.3.4.8.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output="" l_output2="" l_perm_mask="0022"
+             l_maxperm="$( printf '%o' $(( 0777 & ~$l_perm_mask )) )"
+             a_audit_tools=("/sbin/auditctl" "/sbin/aureport" "/sbin/ausearch" "/sbin/autrace" "/sbin/auditd" "/sbin/augenrules")
+             for l_audit_tool in "${a_audit_tools[@]}"; do
+                l_mode="$(stat -Lc '%#a' "$l_audit_tool")"
+                if [ $(( "$l_mode" & "$l_perm_mask" )) -gt 0 ]; then
+                   l_output2="$l_output2\n - Audit tool \"$l_audit_tool\" is mode: \"$l_mode\" and should be mode: \"$l_maxperm\" or more restrictive"
+                else
+                   l_output="$l_output\n - Audit tool \"$l_audit_tool\" is correctly configured to mode: \"$l_mode\""
+                fi
+             done
+             if [ -z "$l_output2" ]; then
+                echo -e "\n- Audit Result:\n  ** PASS **\n - * Correctly configured * :$l_output"
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - * Reasons for audit failure * :$l_output2\n"
+                [ -n "$l_output" ] && echo -e "\n - * Correctly configured * :\n$l_output\n"
+             fi
+             unset a_audit_tools
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_6.3.4.8.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_6.3.4.8.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS audit script for audit tools mode"
+        task_1_cmd: "/tmp/cis_audit_6.3.4.8.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if '** PASS **' in (result_1.stdout | default('')) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when script output shows ** PASS **, FAIL when script shows ** FAIL ** or indicates non-compliance') | trim }}"
+
+    - name: Set overall compliance
+      set_fact:
+        overall_status: "{{ status_1 | trim }}"
+        overall_rationale: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 6.3.4.8"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

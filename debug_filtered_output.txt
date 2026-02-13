@@ -1,0 +1,34 @@
+[0;34mansible-playbook [core 2.16.15][0m
+[0;34m  config file = /home/jin/ai/rhel-cis/ansible.cfg[0m
+[0;34m  configured module search path = ['/home/runner/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules'][0m
+[0;34m  ansible python module location = /usr/local/lib/python3.11/site-packages/ansible[0m
+[0;34m  ansible collection location = /home/runner/.ansible/collections:/usr/share/ansible/collections[0m
+[0;34m  executable location = /usr/local/bin/ansible-playbook[0m
+[0;34m  python version = 3.11.13 (main, Aug 21 2025, 00:00:00) [GCC 11.5.0 20240719 (Red Hat 11.5.0-11)] (/usr/bin/python3.11)[0m
+[0;34m  jinja version = 3.1.6[0m
+[0;34m  libyaml = True[0m
+[0;34mUsing /home/jin/ai/rhel-cis/ansible.cfg as config file[0m
+[0;34mParsed 192.168.122.57, inventory source with host_list plugin[0m
+[KeyJ1dWlkIjogIjU2NjY5MTIyLTU4MGUtNDM0ZC1hMWU4LWExNTdjMDg2NDJkYyJ9[64D[K[0;34mSkipping callback 'awx_display', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjdmZjM2ZTk0LWE4YjctNDQyZS1iYWVkLTQ4OTEwOTBhZDQ3MCJ9[64D[K[0;34mSkipping callback 'default', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjkzY2E2NjAwLTdjYjQtNDhkZS1hMWQ2LWNhZjMwZDhhN2JhNiJ9[64D[K[0;34mSkipping callback 'minimal', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjU3ODE1ZmQ1LWRhNWYtNGU0YS05ZWFiLTJjNjlmZTU1OTE4MCJ9[64D[K[0;34mSkipping callback 'oneline', as we already have a stdout callback.[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjE3NmYyMjhlLWQ0MzUtNGZlZC04ZGM4LTAyNWQxOTlhNmI5YSJ9[64D[K
+PLAYBOOK: cis_audit_5_1_19.yml ************************************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogImZkZjE2NzFmLWZkY2MtNDIzMC04NDA4LWY3Y2U1M2UyODM0YiJ9[64D[K[0;34m1 plays in /home/jin/ai/rhel-cis/cis_audit_5_1_19.yml[0m
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwMiJ9[64D[K
+PLAY [Data Collection for CIS checkpoint 5.1.19] ******************************************************************************************************************************************************************
+[Ke30=[4D[K[KeyJ1dWlkIjogIjZlYTdjZGM2LWI0NDgtYjU2MC05ZmY0LTAwMDAwMDAwMDAwNCJ9[64D[K
+TASK [Initialize data variables] **********************************************************************************************************************************************************************************
+TASK [Req 1 - Check sshd PermitEmptyPasswords global setting] *****************************************************************************************************************************************************
+TASK [Store requirement 1 details] ********************************************************************************************************************************************************************************
+TASK [Check for Match blocks in sshd_config] **********************************************************************************************************************************************************************
+TASK [Set match_blocks_exist fact] ********************************************************************************************************************************************************************************
+TASK [Req 2 - Check Match blocks for PermitEmptyPasswords setting] ************************************************************************************************************************************************
+TASK [Store requirement 2 details] ********************************************************************************************************************************************************************************
+TASK [Req 3 - Overall verification] *******************************************************************************************************************************************************************************
+TASK [Generate compliance report] *********************************************************************************************************************************************************************************
+PLAY RECAP ********************************************************************************************************************************************************************************************************
+[0;32m192.168.122.57[0m             : [0;32mok=9   [0m changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+[Ke30=[4D[K

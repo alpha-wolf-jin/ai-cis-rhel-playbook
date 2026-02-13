@@ -1,0 +1,150 @@
+---
+- name: Data Collection for CIS 3.1.3 - Ensure bluetooth services are not in use
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.1.3"
+    req_1: "Check if bluez package is installed using command: rpm -q bluez"
+    req_2: "If bluez package is installed, check if bluetooth.service is enabled using command: systemctl is-enabled bluetooth.service 2>/dev/null | grep 'enabled'"
+    req_3: "If bluez package is installed, check if bluetooth.service is active using command: systemctl is-active bluetooth.service 2>/dev/null | grep '^active'"
+    req_4: "OVERALL Verify: Ensure bluetooth services are not in use"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if bluez package is installed
+    - name: Req 1 - Check bluez package installation
+      shell: rpm -q bluez
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check bluez package installation"
+        task_1_cmd: "rpm -q bluez"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package bluez is not installed') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is exactly 'package bluez is not installed', FAIL otherwise"
+
+    # Requirement 2: Check if bluetooth.service is enabled (only if bluez is installed)
+    - name: Req 2 - Check bluetooth.service enabled status
+      shell: systemctl is-enabled bluetooth.service 2>/dev/null | grep 'enabled'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check bluetooth.service enabled status"
+        task_2_cmd: "systemctl is-enabled bluetooth.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when command returns no output (empty), FAIL when it returns any output containing 'enabled'"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 3: Check if bluetooth.service is active (only if bluez is installed)
+    - name: Req 3 - Check bluetooth.service active status
+      shell: systemctl is-active bluetooth.service 2>/dev/null | grep '^active'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == 'FAIL'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check bluetooth.service active status"
+        task_3_cmd: "systemctl is-active bluetooth.service 2>/dev/null | grep '^active'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_3: "PASS when command returns no output (empty), FAIL when it returns any output starting with 'active'"
+      when: status_1 | trim == 'FAIL'
+
+    # Requirement 4: Overall verification
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A - Calculated from previous results"
+        task_4_rc: 0
+        data_4: "Package check: {{ status_1 }}, Service enabled: {{ status_2 | default('NA') }}, Service active: {{ status_3 | default('NA') }}"
+        status_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | default('FAIL') | trim == 'PASS' and status_3 | default('FAIL') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 3.1.3"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('NA') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not applicable - bluez not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('NA') | trim }}"
+          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not applicable - bluez not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "========================================================"

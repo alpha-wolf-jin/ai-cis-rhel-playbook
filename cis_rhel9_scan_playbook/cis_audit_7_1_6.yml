@@ -1,0 +1,85 @@
+---
+- name: Data Collection for CIS Checkpoint 7.1.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.6"
+    req_1: "Verify permissions, ownership, and group of /etc/shadow- using command: `stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'  /etc/shadow-`. Rationale: PASS when output shows Access: (0/----------) AND Uid: ( 0/ root) AND Gid: ( 0/ root), FAIL otherwise"
+    req_2: "OVERALL Verify: Ensure permissions on /etc/shadow- are configured. Rationale: PASS when req_1=PASS, FAIL otherwise"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+
+    - name: "Req 1 - Verify permissions on /etc/shadow-"
+      shell: |
+        {% raw %}
+        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'  /etc/shadow-
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Verify permissions on /etc/shadow-"
+        task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'  /etc/shadow-"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS: Output matches expected format' if (result_1.stdout | default('') | trim == 'Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)') else 'FAIL: Output does not match expected format. Expected: Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)') | trim }}"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "OVERALL Verify permissions on /etc/shadow-"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: "N/A"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "{{ ('PASS: All requirements passed' if (status_1 | trim == 'PASS') else 'FAIL: Not all requirements passed') | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 7.1.6"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
+          - "========================================================"

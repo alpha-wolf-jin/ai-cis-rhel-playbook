@@ -1,0 +1,121 @@
+---
+- name: Data Collection for CIS Checkpoint 7.1.11
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.11"
+    req_1: "Run script to verify no world writable files exist and no world writable directories without sticky bit exist"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+
+    - name: Req 1 - Execute CIS audit script for world writable files/directories
+      copy:
+        dest: "/tmp/cis_audit_7.1.11.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output=""
+             l_output2=""
+             
+             a_file=()
+             a_dir=()
+             
+             a_path=(! -path "/run/user/*" -a ! -path "/proc/*" -a ! -path "*/containerd/*" -a ! -path "*/kubelet/pods/*" -a ! -path "*/kubelet/plugins/*" -a ! -path "/sys/*" -a ! -path "/snap/*")
+             
+             while IFS= read -r l_mount; do
+                while IFS= read -r -d $'\0' l_file; do
+                   if [ -e "$l_file" ]; then
+                      l_mode="$(stat -Lc '%#a' "$l_file")"
+                      if [ -f "$l_file" ]; then
+                         a_file+=("$l_file")
+                      elif [ -d "$l_file" ]; then
+                         l_smask='01000'
+                         if [ ! $(( $l_mode & $l_smask )) -gt 0 ]; then
+                            a_dir+=("$l_file")
+                         fi
+                      fi
+                   fi
+                done < <(find "$l_mount" -xdev \( "${a_path[@]}" \) \( -type f -o -type d \) -perm -0002 -print0 2> /dev/null)
+             done < <(findmnt -Dkerno fstype,target | awk '($1 !~ /^\s*(nfs|proc|smb|vfat|iso9660|efivarfs|selinuxfs)/ && $2 !~ /^(\/run\/user\/|\/tmp|\/var\/tmp)/){print $2}')
+             
+             if [ ${#a_file[@]} -eq 0 ]; then
+                l_output="$l_output\n - There are no World writable files on the local filesystem."
+             else
+                l_output2="$l_output2\n - There are \"$(printf '%s' "${#a_file[@]}")\" World writable files on the system.\n   - The following is a list of World writable files:\n$(printf '%s\n' "${a_file[@]}")\n   - end of list\n"
+             fi
+             
+             if [ ${#a_dir[@]} -eq 0 ]; then
+                l_output="$l_output\n - There are no World writable directories without the sticky bit on the local filesystem."
+             else
+                l_output2="$l_output2\n - There are \"$(printf '%s' "${#a_dir[@]}")\" World writable directories without the sticky bit on the system.\n   - The following is a list of World writable directories without the sticky bit:\n$(printf '%s\n' "${a_dir[@]}")\n   - end of list\n"
+             fi
+             
+             unset a_path; unset a_arr; unset a_file; unset a_dir
+             
+             if [ -z "$l_output2" ]; then
+                echo -e "\n- Audit Result:\n  ** PASS **\n - * Correctly configured * :\n$l_output\n"
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - * Reasons for audit failure * :\n$l_output2"
+                [ -n "$l_output" ] && echo -e "- * Correctly configured * :\n$l_output\n"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_7.1.11.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_7.1.11.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS audit script for world writable files/directories"
+        task_1_cmd: "/tmp/cis_audit_7.1.11.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if ('** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when script output shows ** PASS **, FAIL when script shows ** FAIL ** or indicates non-compliance' if ('** PASS **' in result_1.stdout) else 'FAIL: Script indicates non-compliance or shows ** FAIL **') | trim }}"
+
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 7.1.11"
+          - "========================================================"
+          - "Reference: {{ cis_checkpoint }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ ('PASS when script output shows ** PASS **, FAIL when script shows ** FAIL ** or indicates non-compliance' if status_1 == 'PASS' else 'FAIL: Script indicates non-compliance or shows ** FAIL **') | trim }}"
+          - "========================================================"

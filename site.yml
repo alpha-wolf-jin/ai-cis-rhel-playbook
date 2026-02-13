@@ -1,0 +1,61 @@
+---
+- name: Dynamic CIS Task Filter
+  hosts: all
+  gather_facts: false
+  vars:
+    # Adding trim filter here to catch any accidental spaces in the input string
+    index: "6.3.3.12,1.1.2.1."
+    index: "1.1.2.1."
+    index: "6.3.3.12"
+    audit_result: []
+
+  tasks:
+    - name: Load the master index list
+      include_vars:
+        file: rhel9_index.yml
+        name: master_data
+
+    - name: Process input and filter indexes
+      set_fact:
+        # Using | from YAML to keep it as a list and stripping whitespace inside the loop
+        filtered_indexes: >-
+          {% set final_list = [] -%}
+          {% set input_list = index.replace(' ', '').split(',') -%}
+          {% for query in input_list -%}
+            {% if query.endswith('.') -%}
+              {% for idx in master_data.indexes -%}
+                {% if idx.startswith(query) -%}
+                  {% set _ = final_list.append(idx.strip()) -%}
+                {% endif -%}
+              {% endfor -%}
+            {% elif query | length > 0 -%}
+              {% if query in master_data.indexes -%}
+                {% set _ = final_list.append(query.strip()) -%}
+              {% endif -%}
+            {% endif -%}
+          {% endfor -%}
+          {{ final_list | unique }}
+
+    - name: Convert filtered indexes to file paths
+      set_fact:
+        audit_task_playbook: "{{ filtered_indexes | map('replace', '.', '_') | map('regex_replace', '^(.*)$', 'tasks/cis_audit_\\1.yml') | list }}"
+        audit_result_var: "{{ filtered_indexes | map('replace', '.', '_') | map('regex_replace', '^(.*)$', 'status_\\1') | list }}"
+
+    - name: Show final task list
+      debug:
+        var: audit_task_playbook
+
+    - name: Show final var list
+      debug:
+        var: audit_result_var
+
+    - name: Trigger the audit tasks
+      include_tasks: "{{ item }}"
+      loop: "{{ audit_task_playbook | list }}"
+      loop_control:
+        label: "Running: {{ item }}"
+      ignore_errors: yes
+
+    - name: Show final result
+      debug:
+        var: audit_result

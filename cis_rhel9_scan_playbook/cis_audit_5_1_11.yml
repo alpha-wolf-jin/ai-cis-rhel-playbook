@@ -1,0 +1,239 @@
+---
+- name: Data Collection for CIS 5.1.11
+  hosts: all
+  become: yes
+  gather_facts: yes
+  vars:
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.11"
+    req_1: "Verify sshd GSSAPIAuthentication setting in the main configuration"
+    req_2: "If Match blocks are used, verify GSSAPIAuthentication setting for each applicable connection parameter set"
+    req_3: "OVERALL Verify: Ensure sshd GSSAPIAuthentication is disabled"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        match_blocks_tested: []
+        match_blocks_results: []
+
+    # Requirement 1: Verify sshd GSSAPIAuthentication setting in the main configuration
+    - name: Req 1 - Check main sshd configuration for GSSAPIAuthentication
+      shell: !unsafe |
+        sshd -T | grep gssapiauthentication
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check main sshd configuration for GSSAPIAuthentication"
+        task_1_cmd: "sshd -T | grep gssapiauthentication"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'gssapiauthentication no') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is exactly 'gssapiauthentication no', FAIL otherwise"
+
+    # Requirement 2: If Match blocks are used, verify GSSAPIAuthentication setting for each applicable connection parameter set
+    - name: Req 2 - Check if Match blocks exist in sshd configuration
+      shell: !unsafe |
+        grep -i '^Match' /etc/ssh/sshd_config 2>/dev/null || echo "No Match blocks found"
+      args:
+        executable: /bin/bash
+      register: match_blocks_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Parse Match blocks to extract connection parameters
+      set_fact:
+        match_blocks_present: "{{ 'No Match blocks found' not in match_blocks_check.stdout }}"
+        match_blocks_raw: "{{ match_blocks_check.stdout_lines | default([]) }}"
+      when: match_blocks_check is defined
+
+    - name: Extract all connection parameters from Match blocks
+      set_fact:
+        match_parameters: []
+      when: match_blocks_present
+
+    - name: Find all connection parameters in Match blocks
+      shell: !unsafe |
+        # Extract all connection parameters from Match blocks
+        awk '
+        /^Match/ {
+          match_block=1
+          # Reset parameter tracking for this block
+          delete params
+        }
+        match_block && /^[[:space:]]*(User|Address|Host|LocalAddress|LocalPort|RDomain)[[:space:]]+/ {
+          param_name=tolower($1)
+          # Handle different parameter names
+          if (param_name == "address") param_name="addr"
+          if (param_name == "localaddress") param_name="laddr"
+          if (param_name == "localport") param_name="lport"
+          if (param_name == "rdomain") param_name="rdomain"
+          if (param_name == "user") param_name="user"
+          if (param_name == "host") param_name="host"
+          
+          # Extract value (everything after the parameter name)
+          value=$0
+          sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+/, "", value)
+          # Remove comments
+          sub(/#.*$/, "", value)
+          value=trim(value)
+          
+          if (value != "") {
+            # Store unique parameter=value combinations
+            key=param_name "=" value
+            if (!(key in seen)) {
+              print key
+              seen[key]=1
+            }
+          }
+        }
+        /^[^[:space:]#]/ && !/^Match/ {
+          match_block=0
+        }
+        function trim(s) {
+          sub(/^[[:space:]]+/, "", s)
+          sub(/[[:space:]]+$/, "", s)
+          return s
+        }
+        ' /etc/ssh/sshd_config 2>/dev/null | sort -u
+      args:
+        executable: /bin/bash
+      register: extracted_parameters
+      ignore_errors: true
+      changed_when: false
+      when: match_blocks_present
+
+    - name: Set parameters list from extraction
+      set_fact:
+        match_parameters: "{{ extracted_parameters.stdout_lines | default([]) }}"
+      when: match_blocks_present and extracted_parameters is defined
+
+    - name: Test GSSAPIAuthentication for each connection parameter in Match blocks
+      shell: !unsafe |
+        sshd -T -C {{ item }} | grep gssapiauthentication
+      args:
+        executable: /bin/bash
+      register: "parameter_test_result"
+      ignore_errors: true
+      changed_when: false
+      loop: "{{ match_parameters }}"
+      when: match_blocks_present and match_parameters | length > 0
+
+    - name: Collect parameter test results
+      set_fact:
+        match_blocks_tested: "{{ match_blocks_tested + [item] }}"
+        match_blocks_results: "{{ match_blocks_results + [parameter_test_result.results[ansible_loop.index0].stdout | default('') | trim] }}"
+      loop: "{{ match_parameters }}"
+      loop_control:
+        index_var: ansible_loop.index0
+      when: match_blocks_present and match_parameters | length > 0
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check GSSAPIAuthentication for Match blocks"
+        task_2_cmd: >-
+          {% if match_blocks_present and match_parameters | length > 0 %}
+            Tested {{ match_parameters | length }} parameter(s) with: sshd -T -C <parameter=value> | grep gssapiauthentication
+          {% else %}
+            grep -i '^Match' /etc/ssh/sshd_config
+          {% endif %}
+        task_2_rc: "{{ match_blocks_check.rc | default(-1) }}"
+        data_2: >-
+          {% if match_blocks_present %}
+            {% if match_parameters | length > 0 %}
+              Match blocks found. Tested parameters: {{ match_blocks_tested | join(', ') }}. Results: {{ match_blocks_results | join('; ') }}
+            {% else %}
+              Match blocks found but no connection parameters detected
+            {% endif %}
+          {% else %}
+            {{ match_blocks_check.stdout | default('') | trim }}
+          {% endif %}
+        status_2: >-
+          {% if not match_blocks_present %}
+            NA
+          {% elif match_parameters | length == 0 %}
+            PASS
+          {% else %}
+            {% set all_pass = true %}
+            {% for result in match_blocks_results %}
+              {% if result != 'gssapiauthentication no' %}
+                {% set all_pass = false %}
+              {% endif %}
+            {% endfor %}
+            {{ 'PASS' if all_pass else 'FAIL' }}
+          {% endif %}
+        rationale_2: >-
+          {% if not match_blocks_present %}
+            NA when no Match blocks found
+          {% elif match_parameters | length == 0 %}
+            PASS when Match blocks exist but no connection parameters to test
+          {% else %}
+            PASS when all tested Match blocks return 'gssapiauthentication no', FAIL otherwise
+          {% endif %}
+
+    # Requirement 3: OVERALL Verify: Ensure sshd GSSAPIAuthentication is disabled
+    - name: Req 3 - Determine overall compliance
+      set_fact:
+        task_3_name: "Determine overall compliance from requirements 1 and 2"
+        task_3_cmd: "N/A (calculated from previous results)"
+        task_3_rc: 0
+        data_3: "Main config: {{ data_1 }}, Match blocks: {{ data_2 }}"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.11"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"
