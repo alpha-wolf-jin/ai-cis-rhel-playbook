@@ -1,15 +1,16 @@
 ---
-- name: Data Collection for CIS 5.1.8
+- name: Data Collection for CIS 5.1.8 - Ensure sshd Banner is configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.8"
-    req_1: "Verify sshd Banner configuration in default context"
-    req_2: "If Match block configurations are used, verify sshd Banner configuration for relevant user context"
-    req_3: "Verify the configured Banner file exists"
-    req_4: "Verify the content of the configured Banner file matches site policy and does not contain specific prohibited strings"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.8"
+    req_1: "Verify sshd Banner parameter is configured"
+    req_2: "If Match blocks are used, verify Banner parameter for specific user context"
+    req_3: "Verify configured Banner file exists and display contents"
+    req_4: "Verify Banner file does not contain escape sequences or OS identification"
     req_5: "OVERALL Verify: Ensure sshd Banner is configured"
+    test_user: "root"
 
   tasks:
     - name: Initialize data variables
@@ -27,9 +28,9 @@
         task_4_cmd: "N/A"
         task_4_rc: -1
 
-    # Requirement 1: Verify sshd Banner configuration in default context
-    - name: Req 1 - Check default sshd Banner configuration
-      shell: !unsafe |
+    # Requirement 1: Verify sshd Banner parameter is configured
+    - name: Req 1 - Check sshd Banner configuration
+      shell: |
         sshd -T | grep -Pi -- '^banner\h+\/\H+'
       args:
         executable: /bin/bash
@@ -39,169 +40,169 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check default sshd Banner configuration"
+        task_1_name: "Check sshd Banner configuration"
         task_1_cmd: |
           sshd -T | grep -Pi -- '^banner\h+\/\H+'
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: |
-          PASS when command returns a line matching pattern '^banner\h+\/\H+' (indicating a Banner directive with a file path is set), FAIL when no output is returned.
+        rationale_1: "{{ ('PASS when command returns a line starting with banner followed by whitespace and absolute file path, FAIL when no output returned' if (result_1.stdout | default('') | trim != '') else 'FAIL: No banner configuration found') | trim }}"
 
-    # Requirement 2: If Match block configurations are used, verify sshd Banner configuration for relevant user context
-    # Note: This requirement is conditional - we'll check if there are any Match blocks in sshd_config
+    # Requirement 2: If Match blocks are used, verify Banner parameter for specific user context
     - name: Req 2 - Check for Match blocks in sshd_config
-      shell: !unsafe |
-        grep -q '^Match' /etc/ssh/sshd_config && echo "Match blocks found" || echo "No Match blocks found"
+      shell: |
+        grep -q '^Match' /etc/ssh/sshd_config && echo "true" || echo "false"
       args:
         executable: /bin/bash
-      register: match_check
+      register: match_blocks_check
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0
 
-    - name: Req 2 - Check sshd Banner for users if Match blocks exist
-      shell: !unsafe |
-        # This is a simplified check - in production, you would need to extract actual usernames from Match blocks
-        # For this minimal playbook, we'll check for a common user 'root' as an example
-        sshd -T -C user=root | grep -Pi -- '^banner\h+\/\H+'
+    - name: Req 2 - Check Banner with user context if Match blocks exist
+      shell: |
+        {% raw %}
+        if [ "$match_blocks_exist" = "true" ]; then
+          sshd -T -C user={{ test_user }} | grep -Pi -- '^banner\h+\/\H+'
+        else
+          echo "No Match blocks to test"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: "'Match blocks found' in match_check.stdout"
+      vars:
+        match_blocks_exist: "{{ match_blocks_check.stdout | default('false') | trim }}"
 
-    - name: Store requirement 2 details (when Match blocks exist)
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sshd Banner for users with Match blocks"
+        task_2_name: "Check Banner with user context if Match blocks exist"
         task_2_cmd: |
-          sshd -T -C user=root | grep -Pi -- '^banner\h+\/\H+'
+          {% if match_blocks_check.stdout | default('false') | trim == 'true' %}sshd -T -C user={{ test_user }} | grep -Pi -- '^banner\h+\/\H+'{% else %}No Match blocks found{% endif %}
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_2: |
-          PASS when command returns a line matching pattern '^banner\h+\/\H+' OR if no Match blocks are used (skip this step), FAIL when command returns no output but Match blocks for users are configured.
-      when: "'Match blocks found' in match_check.stdout"
+        status_2: >-
+          {% set match_blocks = match_blocks_check.stdout | default('false') | trim %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if match_blocks == 'false' %}
+            PASS
+          {% elif match_blocks == 'true' and output != '' and output != 'No Match blocks to test' %}
+            PASS
+          {% elif match_blocks == 'true' and output == '' %}
+            FAIL
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set match_blocks = match_blocks_check.stdout | default('false') | trim %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if match_blocks == 'false' %}
+            PASS: No Match blocks found in sshd_config
+          {% elif match_blocks == 'true' and output != '' and output != 'No Match blocks to test' %}
+            PASS: Banner path found for user context
+          {% elif match_blocks == 'true' and output == '' %}
+            FAIL: No banner configuration found for user context while Match blocks exist
+          {% else %}
+            FAIL: Unknown condition
+          {% endif %}
 
-    - name: Store requirement 2 details (when no Match blocks)
-      set_fact:
-        task_2_name: "Check sshd Banner for users with Match blocks"
-        task_2_cmd: "N/A - No Match blocks found"
-        task_2_rc: 0
-        data_2: "No Match blocks found in sshd_config"
-        status_2: "PASS"
-        rationale_2: |
-          PASS when command returns a line matching pattern '^banner\h+\/\H+' OR if no Match blocks are used (skip this step), FAIL when command returns no output but Match blocks for users are configured.
-      when: "'No Match blocks found' in match_check.stdout"
-
-    # Requirement 3: Verify the configured Banner file exists
-    # Only execute if Requirement 1 passed (banner is configured)
-    - name: Req 3 - Execute Banner file existence check script
+    # Requirement 3: Verify configured Banner file exists and display contents
+    - name: Req 3 - Create script to check Banner file existence and contents
       copy:
-        dest: "/tmp/cis_check_banner_file.sh"
+        dest: "/tmp/check_banner_file.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
-          banner_file="$(sshd -T | awk '$1 == "banner" {print $2}')"
+          banner_file=$(sshd -T | awk '$1 == "banner" {print $2}')
           if [ -e "$banner_file" ]; then
-            echo "Banner file exists: $banner_file"
-          else
-            echo "Banner file does not exist or is not set."
+              cat "$banner_file"
           fi
           {% endraw %}
       register: script_create_3
       ignore_errors: true
-      when: data_1 | length > 0
 
-    - name: Req 3 - Execute the audit script
-      shell: "/tmp/cis_check_banner_file.sh"
+    - name: Req 3 - Execute Banner file check script
+      shell: "/tmp/check_banner_file.sh"
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0
 
-    - name: Req 3 - Remove temporary audit script
+    - name: Req 3 - Remove temporary script
       file:
-        path: "/tmp/cis_check_banner_file.sh"
+        path: "/tmp/check_banner_file.sh"
         state: absent
       ignore_errors: true
-      when: data_1 | length > 0
 
-    - name: Store requirement 3 details (when banner is configured)
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Verify the configured Banner file exists"
-        task_3_cmd: "Check if banner file from sshd -T exists"
+        task_3_name: "Verify configured Banner file exists and display contents"
+        task_3_cmd: "Check if banner file exists and display contents"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if ('Banner file exists:' in result_3.stdout) else 'FAIL') | trim }}"
-        rationale_3: "PASS when the script confirms the Banner file exists, FAIL when the script reports the file does not exist or is not set."
-      when: data_1 | length > 0
+        status_3: "{{ ('PASS' if (result_3.rc | default(1) == 0 and result_3.stdout | default('') != '') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when banner file exists and contents can be displayed' if (result_3.rc | default(1) == 0 and result_3.stdout | default('') != '') else 'FAIL: Banner file does not exist or cannot be read') | trim }}"
 
-    - name: Store requirement 3 details (when banner is not configured)
-      set_fact:
-        task_3_name: "Verify the configured Banner file exists"
-        task_3_cmd: "N/A - Banner not configured"
-        task_3_rc: 0
-        data_3: "Banner not configured in sshd"
-        status_3: "FAIL"
-        rationale_3: "PASS when the script confirms the Banner file exists, FAIL when the script reports the file does not exist or is not set."
-      when: data_1 | length == 0
+    # Requirement 4: Verify Banner file does not contain escape sequences or OS identification
+    - name: Req 4 - Create script to check Banner file for escape sequences
+      copy:
+        dest: "/tmp/check_banner_escape.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          banner_file=$(sshd -T | awk '$1 == "banner" {print $2}')
+          os_id=$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')
+          grep -Psi -- "(\\\v|\\\r|\\\m|\\\s|\b$os_id\b)" "$banner_file"
+          {% endraw %}
+      register: script_create_4
+      ignore_errors: true
 
-    # Requirement 4: Verify the content of the configured Banner file
-    # Only execute if Requirement 1 passed (banner is configured)
-    - name: Req 4 - Check Banner file content for prohibited strings
-      shell: !unsafe |
-        grep -Psi -- "(\\v|\\r|\\m|\\s|\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g')\b)" "$(sshd -T | awk '$1 == "banner" {print $2}')"
+    - name: Req 4 - Execute escape sequence check script
+      shell: "/tmp/check_banner_escape.sh"
       args:
         executable: /bin/bash
       register: result_4
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0
 
-    - name: Store requirement 4 details (when banner is configured)
+    - name: Req 4 - Remove temporary script
+      file:
+        path: "/tmp/check_banner_escape.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Verify Banner file content for prohibited strings"
-        task_4_cmd: |
-          grep -Psi -- \"(\\v|\\r|\\m|\\s|\b$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/\"//g')\b)\" \"$(sshd -T | awk '$1 == \"banner\" {print $2}')\"
+        task_4_name: "Verify Banner file does not contain escape sequences or OS identification"
+        task_4_cmd: "Check banner file for escape sequences and OS identification"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_4: "PASS when the command returns no results (no prohibited escape sequences or OS ID found), FAIL when any matches are found."
-      when: data_1 | length > 0
+        status_4: "{{ ('PASS' if (result_4.stdout | default('') == '') else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS when no escape sequences or OS ID found in banner file' if (result_4.stdout | default('') == '') else 'FAIL: Escape sequences or OS ID found in banner file') | trim }}"
 
-    - name: Store requirement 4 details (when banner is not configured)
-      set_fact:
-        task_4_name: "Verify Banner file content for prohibited strings"
-        task_4_cmd: "N/A - Banner not configured"
-        task_4_rc: 0
-        data_4: "Banner not configured in sshd"
-        status_4: "FAIL"
-        rationale_4: "PASS when the command returns no results (no prohibited escape sequences or OS ID found), FAIL when any matches are found."
-      when: data_1 | length == 0
-
-    # Requirement 5: Overall verification (calculated status)
-    - name: Calculate overall compliance status
+    # Requirement 5: OVERALL Verify
+    - name: Store requirement 5 details
       set_fact:
         status_5: >-
-          {% set s1 = status_1 | default('FAIL') | trim %}
-          {% set s2 = status_2 | default('PASS') | trim %}
-          {% set s3 = status_3 | default('FAIL') | trim %}
-          {% set s4 = status_4 | default('FAIL') | trim %}
-          {% if s1 == 'PASS' and s3 == 'PASS' and s4 == 'PASS' %}
-            {% if s2 == 'PASS' or "'No Match blocks found' in match_check.stdout" %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+          {% if status_1 | default('FAIL') == 'PASS' and 
+                status_3 | default('FAIL') == 'PASS' and 
+                status_4 | default('FAIL') == 'PASS' %}
+            PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_5: "PASS when req_1=PASS AND req_3=PASS AND req_4=PASS AND (req_2 is not applicable OR req_2=PASS), FAIL otherwise."
+        rationale_5: >-
+          {% if status_1 | default('FAIL') == 'PASS' and 
+                status_3 | default('FAIL') == 'PASS' and 
+                status_4 | default('FAIL') == 'PASS' %}
+            PASS: req_1=PASS AND req_3=PASS AND req_4=PASS
+          {% else %}
+            FAIL: One or more requirements failed (req_1: {{ status_1 | default('FAIL') }}, req_3: {{ status_3 | default('FAIL') }}, req_4: {{ status_4 | default('FAIL') }})
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -210,7 +211,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.8"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

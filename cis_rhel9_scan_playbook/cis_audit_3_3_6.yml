@@ -2,11 +2,11 @@
 - name: Data Collection for CIS 3.3.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.6"
-    req_1: "Run the provided audit script to verify : Ensure secure icmp redirects are not accepted (Automated)"
-    req_2: "OVERALL Verify: : Ensure secure icmp redirects are not accepted (Automated)"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.6"
+    req_1: "Run the provided CIS audit script to verify Ensure secure icmp redirects are not accepted. Run the following script to verify the following kernel parameters are set in the running configuration and correctly loaded from a kernel parameter configuration file: • net.ipv4.conf.all.secure_redirects is set to 0 • net.ipv4.conf.default.secure_redirects is set to 0"
+    req_2: "Ensure secure icmp redirects are not accepted"
 
   tasks:
     - name: Initialize data variables
@@ -18,8 +18,8 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Run the provided audit script
-    - name: Req 1 - Execute CIS audit script for secure ICMP redirects
+    # Requirement 1: Execute CIS audit script
+    - name: Req 1 - Create temporary CIS audit script for 3.3.6
       copy:
         dest: "/tmp/cis_audit_3.3.6.sh"
         mode: '0700'
@@ -28,15 +28,12 @@
           #!/usr/bin/env bash
           {
              l_output="" l_output2="" l_ipv6_disabled="" # Clear output variables
-             a_parlist=("net.ipv4.conf.all.secure_redirects=0"
-          "net.ipv4.conf.default.secure_redirects=0")
-             l_ufwscf="$([ -f /etc/default/ufw ] && awk -F= '/^\s*IPT_SYSCTL=/ {print
-          $2}' /etc/default/ufw)"
+             a_parlist=("net.ipv4.conf.all.secure_redirects=0" "net.ipv4.conf.default.secure_redirects=0")
+             l_ufwscf="$([ -f /etc/default/ufw ] && awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
              f_ipv6_chk()
              {
                 l_ipv6_disabled=""
-                ! grep -Pqs -- '^\h*0\b' /sys/module/ipv6/parameters/disable &&
-          l_ipv6_disabled="yes"
+                ! grep -Pqs -- '^\h*0\b' /sys/module/ipv6/parameters/disable && l_ipv6_disabled="yes"
                 if sysctl net.ipv6.conf.all.disable_ipv6 | grep -Pqs -- "^\h*net\.ipv6\.conf\.all\.disable_ipv6\h*=\h*1\b" && \
                    sysctl net.ipv6.conf.default.disable_ipv6 | grep -Pqs -- "^\h*net\.ipv6\.conf\.default\.disable_ipv6\h*=\h*1\b"; then
                    l_ipv6_disabled="yes"
@@ -47,12 +44,9 @@
              {
                 l_krp="$(sysctl "$l_kpname" | awk -F= '{print $2}' | xargs)"
                 if [ "$l_krp" = "$l_kpvalue" ]; then
-                   l_output="$l_output\n - \"$l_kpname\" is correctly set to \"$l_krp\"
-          in the running configuration"
+                   l_output="$l_output\n - \"$l_kpname\" is correctly set to \"$l_krp\" in the running configuration"
                 else
-                   l_output2="$l_output2\n - \"$l_kpname\" is incorrectly set to
-          \"$l_krp\" in the running configuration and should have a value of:
-          \"$l_kpvalue\""
+                   l_output2="$l_output2\n - \"$l_kpname\" is incorrectly set to \"$l_krp\" in the running configuration and should have a value of: \"$l_kpvalue\""
                 fi
                 unset A_out; declare -A A_out # Check durable setting (files)
                 while read -r l_out; do
@@ -64,10 +58,8 @@
                          [ "$l_kpar" = "$l_kpname" ] && A_out+=(["$l_kpar"]="$l_file")
                       fi
                    fi
-                done < <(/usr/lib/systemd/systemd-sysctl --cat-config | grep -Po
-          '^\h*([^#\n\r]+|#\h*\/[^#\n\r\h]+\.conf\b)')
-                if [ -n "$l_ufwscf" ]; then # Account for systems with UFW (Not covered
-          by systemd-sysctl --cat-config)
+                done < <(/usr/lib/systemd/systemd-sysctl --cat-config | grep -Po '^\h*([^#\n\r]+|#\h*\/[^#\n\r\h]+\.conf\b)')
+                if [ -n "$l_ufwscf" ]; then # Account for systems with UFW (Not covered by systemd-sysctl --cat-config)
                    l_kpar="$(grep -Po "^\h*$l_kpname\b" "$l_ufwscf" | xargs)"
                    l_kpar="${l_kpar//\//.}"
                    [ "$l_kpar" = "$l_kpname" ] && A_out+=(["$l_kpar"]="$l_ufwscf")
@@ -78,15 +70,11 @@
                       if [ "$l_fkpvalue" = "$l_kpvalue" ]; then
                          l_output="$l_output\n - \"$l_kpname\" is correctly set to \"$l_fkpvalue\" in \"$(printf '%s' "${A_out[@]}")\"\n"
                       else
-                         l_output2="$l_output2\n - \"$l_kpname\" is incorrectly set to
-          \"$l_fkpvalue\" in \"$(printf '%s' "${A_out[@]}")\" and should have a value
-          of: \"$l_kpvalue\"\n"
+                         l_output2="$l_output2\n - \"$l_kpname\" is incorrectly set to \"$l_fkpvalue\" in \"$(printf '%s' "${A_out[@]}")\" and should have a value of: \"$l_kpvalue\"\n"
                       fi
                    done < <(grep -Po -- "^\h*$l_kpname\h*=\h*\H+" "${A_out[@]}")
                 else
-                   l_output2="$l_output2\n - \"$l_kpname\" is not set in an included
-          file\n   ** Note: \"$l_kpname\" May be set in a file that's ignored by load
-          procedure **\n"
+                   l_output2="$l_output2\n - \"$l_kpname\" is not set in an included file\n   ** Note: \"$l_kpname\" May be set in a file that's ignored by load procedure **\n"
                 fi
              }
              while IFS="=" read -r l_kpname l_kpvalue; do # Assess and check parameters
@@ -94,8 +82,7 @@
                 if grep -q '^net.ipv6.' <<< "$l_kpname"; then
                    [ -z "$l_ipv6_disabled" ] && f_ipv6_chk
                    if [ "$l_ipv6_disabled" = "yes" ]; then
-                      l_output="$l_output\n - IPv6 is disabled on the system,
-          \"$l_kpname\" is not applicable"
+                      l_output="$l_output\n - IPv6 is disabled on the system, \"$l_kpname\" is not applicable"
                    else
                       f_kernel_parameter_chk
                    fi
@@ -103,14 +90,12 @@
                    f_kernel_parameter_chk
                 fi
              done < <(printf '%s\n' "${a_parlist[@]}")
-             l_ufwscf="$([ -f /etc/default/ufw ] && awk -F= '/^\s*IPT_SYSCTL=/ {print
-          $2}' /etc/default/ufw)"
+             l_ufwscf="$([ -f /etc/default/ufw ] && awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
              unset a_parlist; unset A_out # unset arrays
              if [ -z "$l_output2" ]; then # Provide output from checks
                 echo -e "\n- Audit Result:\n  ** PASS **\n$l_output\n"
              else
-                echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit
-          failure:\n$l_output2\n"
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
                 [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
              fi
           }
@@ -118,50 +103,13 @@
       register: script_create_1
       ignore_errors: true
 
-    - name: Req 1 - Verify script exists and is executable
-      stat:
-        path: "/tmp/cis_audit_3.3.6.sh"
-      register: script_stat_1
-      ignore_errors: true
-      changed_when: false
-
-    - name: Req 1 - Validate script permissions
-      file:
-        path: "/tmp/cis_audit_3.3.6.sh"
-        mode: '0755'
-      when: script_stat_1.stat.exists | default(false)
-      ignore_errors: true
-
-    - name: Req 1 - Test script syntax
-      shell: /bin/bash -n "/tmp/cis_audit_3.3.6.sh"
-      register: script_syntax_1
-      ignore_errors: true
-      changed_when: false
-      when: script_stat_1.stat.exists | default(false)
-
-    - name: Req 1 - Execute the audit script
+    - name: Req 1 - Execute the CIS audit script
       shell: "/tmp/cis_audit_3.3.6.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
-      when: script_stat_1.stat.exists | default(false)
-
-    - name: Req 1 - Check kernel parameters directly (fallback)
-      shell: !unsafe |
-        for param in net.ipv4.conf.all.secure_redirects net.ipv4.conf.default.secure_redirects; do
-          sysctl "$param" 2>/dev/null || echo "$param: not found"
-        done
-      args:
-        executable: /bin/bash
-      register: sysctl_fallback
-      ignore_errors: true
-      changed_when: false
-      when: >
-        (script_stat_1.stat.exists | default(false) == false) or
-        (result_1.rc | default(-1) != 0) or
-        (script_syntax_1.rc | default(-1) != 0)
 
     - name: Req 1 - Remove temporary audit script
       file:
@@ -171,81 +119,22 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for secure ICMP redirects"
-        task_1_cmd: "/tmp/cis_audit_3.3.6.sh"
+        task_1_name: "Execute CIS audit script for secure icmp redirects"
+        task_1_cmd: "bash /tmp/cis_audit_3.3.6.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
-        data_1: >-
-          {% if result_1.rc | default(-1) == 0 %}
-            {{ result_1.stdout | default('') | trim }}
-          {% elif sysctl_fallback.stdout | default('') | trim != '' %}
-            Fallback sysctl check output: {{ sysctl_fallback.stdout | default('') | trim }}
-          {% else %}
-            Script execution failed (exit code {{ result_1.rc | default(-1) }})
-          {% endif %}
-        status_1: >-
-          {% if result_1.rc | default(-1) == 0 %}
-            {% if '** PASS **' in result_1.stdout %}
-              PASS
-            {% elif '** FAIL **' in result_1.stdout %}
-              FAIL
-            {% else %}
-              UNKNOWN
-            {% endif %}
-          {% elif sysctl_fallback.stdout | default('') | trim != '' %}
-            {% set fallback_output = sysctl_fallback.stdout | default('') %}
-            {% if 'net.ipv4.conf.all.secure_redirects = 0' in fallback_output and
-                  'net.ipv4.conf.default.secure_redirects = 0' in fallback_output %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_1: >-
-          {% if result_1.rc | default(-1) == 0 %}
-            {% if '** PASS **' in result_1.stdout %}
-              PASS when script output shows '** PASS **' or indicates compliance
-            {% elif '** FAIL **' in result_1.stdout %}
-              FAIL when script shows '** FAIL **' or indicates non-compliance
-            {% else %}
-              Cannot determine compliance from script output
-            {% endif %}
-          {% elif sysctl_fallback.stdout | default('') | trim != '' %}
-            {% set fallback_output = sysctl_fallback.stdout | default('') %}
-            {% if 'net.ipv4.conf.all.secure_redirects = 0' in fallback_output and
-                  'net.ipv4.conf.default.secure_redirects = 0' in fallback_output %}
-              PASS when both kernel parameters are set to 0 (secure ICMP redirects not accepted)
-            {% else %}
-              FAIL when either kernel parameter is not set to 0 (secure ICMP redirects may be accepted)
-            {% endif %}
-          {% else %}
-            Script execution failed (exit code {{ result_1.rc | default(-1) }}), cannot determine compliance
-          {% endif %}
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout | default('') else 'FAIL') | trim }}"
+        rationale_1: '{{ ("PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance") | trim }}'
 
     # Requirement 2: OVERALL Verify
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification based on requirement 1"
-        task_2_cmd: "N/A - derived from requirement 1"
+        task_2_name: "OVERALL Verify - Ensure secure icmp redirects are not accepted"
+        task_2_cmd: "N/A (depends on requirement 1)"
         task_2_rc: 0
-        data_2: "Derived from requirement 1"
-        status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' %}
-            FAIL
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when req_1=PASS
-          {% elif status_1 | trim == 'FAIL' %}
-            FAIL when req_1=FAIL
-          {% else %}
-            UNKNOWN when req_1=UNKNOWN
-          {% endif %}
+        data_2: ""
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
 
     # Final report
     - name: Generate compliance report
@@ -254,7 +143,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.6"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -275,6 +164,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | default('FAIL') | trim }}"
+          - "  Rationale: Overall compliance matches requirement 2 status which is PASS when requirement 1 passes, FAIL otherwise"
           - "========================================================"

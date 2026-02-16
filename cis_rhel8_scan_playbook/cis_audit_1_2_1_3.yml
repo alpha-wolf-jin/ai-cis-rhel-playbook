@@ -1,140 +1,91 @@
 ---
-- name: Data Collection for CIS 1.2.1.3
+- name: Data Collection for CIS checkpoint 1.2.1.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.2.1.3"
-    req_1: "Verify repo_gpgcheck is set to 1 in the global DNF configuration"
-    req_2: "Verify no configured repositories (excluding fedoraproject.org) have repo_gpgcheck disabled"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.2.1.3"
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Check global repo_gpgcheck setting using command: grep ^repo_gpgcheck /etc/dnf/dnf.conf"
+    req_2: "Check for repositories that explicitly disable repo_gpgcheck using script"
     req_3: "OVERALL Verify: Ensure repo_gpgcheck is globally activated"
 
   tasks:
     - name: Initialize data variables
       set_fact:
         data_1: ""
+        data_2: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        data_2: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        data_3: ""
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify repo_gpgcheck is set to 1 in the global DNF configuration
-    - name: "Req 1 - Check global repo_gpgcheck setting"
-      shell: >
+    # Requirement 1: Check global repo_gpgcheck setting
+    - name: Req 1 - Check global repo_gpgcheck setting
+      shell: |
         grep ^repo_gpgcheck /etc/dnf/dnf.conf
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global repo_gpgcheck setting"
+        task_1_name: "Check global repo_gpgcheck in /etc/dnf/dnf.conf"
         task_1_cmd: "grep ^repo_gpgcheck /etc/dnf/dnf.conf"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'repo_gpgcheck=1') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'repo_gpgcheck=1', FAIL otherwise"
+        rationale_1: "{{ ('PASS when output is repo_gpgcheck=1, FAIL otherwise' if (result_1.stdout | default('') | trim == 'repo_gpgcheck=1') else 'FAIL: Expected repo_gpgcheck=1, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: Verify no configured repositories (excluding fedoraproject.org) have repo_gpgcheck disabled
-    # Only execute if Requirement 1 found repo_gpgcheck in global config (CIS procedure: "no further audit steps are required" if nothing returned)
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Check for repositories that explicitly disable repo_gpgcheck
+    - name: Req 2 - Create script to check for repo_gpgcheck=0
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_check_repo_gpgcheck.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           REPO_URL="fedoraproject.org"
-          for repo in $(grep -l "repo_gpgcheck=0" /etc/yum.repos.d/* 2>/dev/null); do
-            if ! grep "${REPO_URL}" "${repo}" &>/dev/null; then
-              echo "${repo}"
+          for repo in $(grep -l "repo_gpgcheck=0" /etc/yum.repos.d/* ); do if ! grep "${REPO_URL}" "${repo}" &>/dev/null; then echo "${repo}"
             fi
           done
           {% endraw %}
-      register: script_created_2
-      when: data_1 | trim != ''
+      register: script_create_2
       ignore_errors: true
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_check_repo_gpgcheck.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim != ''
 
-    - name: "Req 2 - Remove temporary audit script"
+    - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_check_repo_gpgcheck.sh"
         state: absent
       ignore_errors: true
-      when: data_1 | trim != ''
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check repositories with repo_gpgcheck disabled"
-        task_2_cmd: |
-          REPO_URL="fedoraproject.org"
-          for repo in $(grep -l "repo_gpgcheck=0" /etc/yum.repos.d/*); do
-            if ! grep "${REPO_URL}" "${repo}" &>/dev/null; then
-              echo "${repo}"
-            fi
-          done
+        task_2_name: "Check for repositories with repo_gpgcheck=0"
+        task_2_cmd: "Execute script to find repos with repo_gpgcheck=0 excluding fedoraproject.org"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when script output is empty (no repositories found), FAIL when any repository file is listed"
-      when: data_1 | trim != ''
+        rationale_2: "{{ ('PASS when script output is empty (no repos with repo_gpgcheck=0), FAIL otherwise' if (result_2.stdout | default('') | trim == '') else 'FAIL: Found repositories with repo_gpgcheck=0: ' + (result_2.stdout | default('') | trim)) | trim }}"
 
-    # Handle Requirement 2 when Requirement 1 fails (global setting not found)
-    - name: Set Requirement 2 as NA when global setting not found
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_2_name: "Check repositories with repo_gpgcheck disabled"
-        task_2_cmd: "N/A - Skipped per CIS procedure"
-        task_2_rc: -1
-        data_2: "Skipped - repo_gpgcheck not found in global configuration"
-        status_2: "NA"
-        rationale_2: "Skipped per CIS procedure: 'no further audit steps are required' when global setting not found"
-      when: data_1 | trim == ''
-
-    # Requirement 3: OVERALL Verify
-    - name: "Req 3 - Determine overall compliance"
-      set_fact:
-        task_3_name: "Overall compliance determination"
-        task_3_cmd: "N/A"
-        task_3_rc: 0
-        data_3: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}"
-        # CIS logic: If global setting not found (Requirement 1 FAIL), overall is FAIL regardless of Requirement 2
-        # If global setting found (Requirement 1 PASS), then check Requirement 2
-        status_3: >-
-          {{ 
-            ('FAIL' if status_1 == 'FAIL' else
-            ('PASS' if status_2 == 'PASS' else 'FAIL')) | trim 
-          }}
-        rationale_3: >-
-          {{ 
-            ('FAIL when global repo_gpgcheck setting is missing (Requirement 1 FAIL)' if status_1 == 'FAIL' else
-            'PASS when repo_gpgcheck is globally activated AND no repositories have it disabled (Requirement 1 PASS AND Requirement 2 PASS)' if status_2 == 'PASS' else
-            'FAIL when repositories have repo_gpgcheck disabled (Requirement 2 FAIL)') | trim 
-          }}
+        req_3: "OVERALL Verify: Ensure repo_gpgcheck is globally activated"
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL: Global repo_gpgcheck not activated or some repositories have repo_gpgcheck=0') | trim }}"
 
     # Final report
     - name: Generate compliance report
@@ -143,35 +94,27 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.2.1.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.2.1.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
-          - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

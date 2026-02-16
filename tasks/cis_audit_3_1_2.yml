@@ -1,0 +1,143 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.1.2
+    req_1: 'Run the provided CIS audit script to verify Ensure wireless interfaces are disabled. Run the following script to verify no wireless interfaces are active on the system: Execute the COMPLETE script as-is'
+    req_2: Ensure wireless interfaces are disabled
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+
+- name: Req 1 - Execute CIS audit script for wireless interfaces
+  copy:
+    dest: "/tmp/cis_audit_3.1.2.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+      {
+         l_output="" l_output2=""
+         module_chk()
+         {
+            # Check how module will be loaded
+            l_loadable="$(modprobe -n -v "$l_mname")"
+            if grep -Pq -- '^\h*install \/bin\/(true|false)' <<< "$l_loadable"; then
+               l_output="$l_output\n - module: \"$l_mname\" is not loadable: \"$l_loadable\""
+            else
+               l_output2="$l_output2\n - module: \"$l_mname\" is loadable: \"$l_loadable\""
+            fi
+            # Check is the module currently loaded
+            if ! lsmod | grep "$l_mname" > /dev/null 2>&1; then
+               l_output="$l_output\n - module: \"$l_mname\" is not loaded"
+            else
+               l_output2="$l_output2\n - module: \"$l_mname\" is loaded"
+            fi
+            # Check if the module is deny listed
+            if modprobe --showconfig | grep -Pq -- "^\h*blacklist\h+$l_mname\b"; then
+               l_output="$l_output\n - module: \"$l_mname\" is deny listed in: \"$(grep -Pl -- "^\h*blacklist\h+$l_mname\b" /etc/modprobe.d/*)\""
+            else
+               l_output2="$l_output2\n - module: \"$l_mname\" is not deny listed"
+            fi
+         }
+         if [ -n "$(find /sys/class/net/*/ -type d -name wireless)" ]; then
+            l_dname=$(for driverdir in $(find /sys/class/net/*/ -type d -name wireless | xargs -0 dirname); do basename "$(readlink -f "$driverdir"/device/driver/module)";done | sort -u)
+            for l_mname in $l_dname; do
+               module_chk
+            done
+         fi
+         # Report results. If no failures output in l_output2, we pass
+         if [ -z "$l_output2" ]; then
+            echo -e "\n- Audit Result:\n  ** PASS **"
+            if [ -z "$l_output" ]; then
+               echo -e "\n - System has no wireless NICs installed"
+            else
+               echo -e "\n$l_output\n"
+            fi
+         else
+            echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
+            [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
+         fi
+      }
+      {% endraw %}
+  register: script_create_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Execute the audit script
+  shell: "/tmp/cis_audit_3.1.2.sh"
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_3.1.2.sh"
+    state: absent
+  ignore_errors: true
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Execute CIS audit script for wireless interfaces"
+    task_1_cmd: "/tmp/cis_audit_3.1.2.sh"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+    rationale_1: '{{ ("PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance") | trim }}'
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Overall verification of wireless interfaces"
+    task_2_cmd: "N/A"
+    task_2_rc: "N/A"
+    data_2: "N/A"
+    status_2: "{{ status_1 | trim }}"
+    rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 3.1.2"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | trim }}"
+    - '  Rationale: Overall compliance is determined by requirement 2 status, which is based on requirement 1 audit result.'
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_3_1_2'': status_2 | trim }] }}'

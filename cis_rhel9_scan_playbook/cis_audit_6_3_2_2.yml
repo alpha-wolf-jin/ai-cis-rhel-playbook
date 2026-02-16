@@ -1,11 +1,11 @@
 ---
-- name: Data Collection for CIS 6.3.2.2
+- name: Data Collection for CIS Checkpoint 6.3.2.2
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.2"
-    req_1: "Check the max_log_file_action setting in /etc/audit/auditd.conf"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.2"
+    req_1: "Check the auditd configuration for max_log_file_action using command: grep max_log_file_action /etc/audit/auditd.conf"
     req_2: "OVERALL Verify: Ensure audit logs are not automatically deleted"
 
   tasks:
@@ -14,18 +14,12 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_2: ""
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
 
-    # Requirement 1: Check the max_log_file_action setting in /etc/audit/auditd.conf
-    - name: "Req 1 - Check max_log_file_action setting"
+    # Requirement 1: Check the auditd configuration for max_log_file_action
+    - name: "Req 1 - Check max_log_file_action in auditd.conf"
       shell: |
         grep max_log_file_action /etc/audit/auditd.conf
       args:
@@ -36,22 +30,22 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check max_log_file_action setting"
+        task_1_name: "Check max_log_file_action in auditd.conf"
         task_1_cmd: "grep max_log_file_action /etc/audit/auditd.conf"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'max_log_file_action = keep_logs') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is exactly max_log_file_action = keep_logs, FAIL otherwise' if (result_1.stdout | default('') | trim == 'max_log_file_action = keep_logs') else 'FAIL: Expected max_log_file_action = keep_logs, got ' + (result_1.stdout | default('') | trim)) | trim }}"
+        rationale_1: "{{ ('PASS when the exact output is ''max_log_file_action = keep_logs'', FAIL otherwise' if (result_1.stdout | default('') | trim == 'max_log_file_action = keep_logs') else 'FAIL: Expected ''max_log_file_action = keep_logs'', got ''' + (result_1.stdout | default('') | trim) + '''') | trim }}"
 
-    # Requirement 2: Overall verification
-    - name: Store requirement 2 details
+    # Requirement 2: OVERALL Verify
+    - name: "Req 2 - Determine overall compliance"
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A"
-        task_2_rc: "0"
-        data_2: "Based on requirement 1"
-        status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | default('') | trim == 'PASS') else 'FAIL: Requirement 1 did not pass') | trim }}"
+        task_2_name: "Determine overall compliance"
+        task_2_cmd: "N/A (determined from requirement 1 result)"
+        task_2_rc: 0
+        data_2: "{{ data_1 }}"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | trim == 'PASS') else 'FAIL: Requirement 1 failed') | trim }}"
 
     # Final report
     - name: Generate compliance report
@@ -60,10 +54,10 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.3.2.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.2"
           - "========================================================"
           - ""
-          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "REQUIREMENT 1 - Check the auditd configuration for max_log_file_action using command: grep max_log_file_action /etc/audit/auditd.conf:"
           - "  Task: {{ task_1_name | default('Task not recorded') }}"
           - "  Command: {{ task_1_cmd | default('N/A') }}"
           - "  Exit code: {{ task_1_rc | default(-1) }}"
@@ -71,7 +65,7 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "REQUIREMENT 2 - OVERALL Verify: Ensure audit logs are not automatically deleted:"
           - "  Task: {{ task_2_name | default('Task not recorded') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
@@ -82,5 +76,5 @@
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Rationale: Overall compliance is determined by requirement 1. If requirement 1 passes (max_log_file_action is set to keep_logs), then audit logs are not automatically deleted and overall status is PASS. Otherwise, overall status is FAIL."
           - "========================================================"

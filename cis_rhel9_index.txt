@@ -1,2 +1,1 @@
-7.1.4 Ensure permissions on /etc/group- are configured (Automated)
 7.1.9 Ensure permissions on /etc/shells are configured (Automated)

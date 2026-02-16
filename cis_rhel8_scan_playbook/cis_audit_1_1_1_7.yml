@@ -1,44 +1,29 @@
 ---
-- name: Data Collection for CIS 1.1.1.7 - Ensure squashfs kernel module is not available
+- name: Data Collection for CIS checkpoint 1.1.1.7
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.7"
-    req_1: "Run the following script to verify the squashfs kernel module is NOT available in the filesystem"
-    req_2: "Verify the squashfs kernel module is NOT loaded using command: lsmod | grep 'squashfs'"
-    req_3: |
-      Verify the squashfs kernel module is blacklisted and configured to fail/true on load attempt using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+squashfs\b'
-    req_4: "OVERALL Verify: Ensure squashfs kernel module is not available"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.7"
+    req_1: "Run the provided CIS audit script to verify squashfs kernel module is not available"
+    req_2: "Verify the squashfs kernel module is not loaded and not loadable"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        data_4: "Not collected yet"
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        status_2: "NA"
-        rationale_2: "Requirement 2 skipped - module not available in filesystem (CIS procedure)"
-        status_3: "NA"
-        rationale_3: "Requirement 3 skipped - module not available in filesystem (CIS procedure)"
+        data_1: ""
+        data_2: ""
 
-    # Requirement 1: Run the following script to verify the squashfs kernel module is NOT available in the filesystem
-    - name: "Req 1 - Create temporary audit script for module availability check"
+    # Requirement 1: Run the provided CIS audit script
+    - name: Req 1 - Execute CIS audit script for squashfs module check
       copy:
-        dest: "/tmp/cis_audit_script_1.sh"
+        dest: "/tmp/cis_audit_1.1.1.7_req1.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -54,98 +39,116 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
+      ignore_errors: true
 
-    - name: "Req 1 - Execute audit script for module availability check"
-      shell: "/tmp/cis_audit_script_1.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_1.1.1.7_req1.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_1.sh"
+        path: "/tmp/cis_audit_1.1.1.7_req1.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if squashfs kernel module is available in filesystem"
-        task_1_cmd: "Complex bash script (see audit procedure)"
+        task_1_name: "Execute CIS audit script for squashfs module check"
+        task_1_cmd: "/tmp/cis_audit_1.1.1.7_req1.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ 'PASS when the script returns NO output (module not found as a loadable module), FAIL when any output is returned (module found)' | trim }}"
+        status_1: >-
+          {% if result_1.stdout is defined and result_1.stdout | trim == '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS if script returns nothing (squashfs module not available), FAIL if script returns any output (module available)"
 
-    # Requirement 2: Verify the squashfs kernel module is NOT loaded using command: lsmod | grep 'squashfs'
-    # Only execute if Requirement 1 returned output (module is available)
-    - name: "Req 2 - Check if squashfs module is loaded"
-      shell: |
-        lsmod | grep 'squashfs'
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim | length > 0
+    # Requirement 2: Only execute if requirement 1 returned output (module available)
+    - name: Req 2 - Check if squashfs module is loaded and loadable
+      block:
+        - name: Req 2a - Check if squashfs module is loaded
+          shell: lsmod | grep 'squashfs'
+          args:
+            executable: /bin/bash
+          register: result_2a
+          ignore_errors: true
+          changed_when: false
 
-    - name: Store requirement 2 details when executed
+        - name: Req 2b - Check if squashfs module is not loadable
+          shell: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+squashfs\b'
+          args:
+            executable: /bin/bash
+          register: result_2b
+          ignore_errors: true
+          changed_when: false
+
+        - name: Store requirement 2 details
+          set_fact:
+            task_2_name: "Check if squashfs module is loaded and loadable"
+            task_2_cmd: |
+              lsmod | grep 'squashfs'; modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+squashfs\b'
+            task_2_rc: "{{ result_2a.rc | default(-1) }},{{ result_2b.rc | default(-1) }}"
+            data_2: "lsmod output: {{ result_2a.stdout | default('') | trim }}; modprobe output: {{ result_2b.stdout | default('') | trim }}"
+            status_2: >-
+              {% set lsmod_output = result_2a.stdout | default('') | trim %}
+              {% set modprobe_output = result_2b.stdout | default('') | trim %}
+              {% if lsmod_output == '' and 
+                    'blacklist squashfs' in modprobe_output and 
+                    ('install squashfs /bin/false' in modprobe_output or 
+                     'install squashfs /bin/true' in modprobe_output) %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            rationale_2: "PASS if lsmod returns nothing AND modprobe output contains both 'blacklist squashfs' AND ('install squashfs /bin/false' OR 'install squashfs /bin/true'), FAIL otherwise"
+      when: data_1 | trim != ''
+
+    # Set default values for requirement 2 if not executed
+    - name: Set default for requirement 2 if not executed
       set_fact:
-        task_2_name: "Check if squashfs kernel module is loaded"
-        task_2_cmd: "lsmod | grep 'squashfs'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ 'PASS when the command returns NO output (module not loaded), FAIL when any output is returned (module loaded)' | trim }}"
-      when: data_1 | trim | length > 0
+        task_2_name: "Not executed - squashfs module not available"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: "Skipped - squashfs module not available per requirement 1"
+        status_2: "NA"
+        rationale_2: "Requirement 2 not executed because squashfs module is not available (requirement 1 PASS)"
+      when: data_1 | trim == ''
 
-    # Requirement 3: Verify the squashfs kernel module is blacklisted and configured to fail/true on load attempt
-    # Only execute if Requirement 1 returned output (module is available)
-    - name: "Req 3 - Check if squashfs module is blacklisted and configured to fail/true"
-      shell: |
-        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+squashfs\b'
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim | length > 0
-
-    - name: Store requirement 3 details when executed
+    # Overall compliance check - Fixed logic based on audit procedure
+    - name: Set overall compliance
       set_fact:
-        task_3_name: "Check if squashfs module is blacklisted and configured to fail/true"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\\b(install|blacklist)\\h+squashfs\\b'
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if ('blacklist squashfs' in result_3.stdout and ('install squashfs /bin/false' in result_3.stdout or 'install squashfs /bin/true' in result_3.stdout)) else 'FAIL') | trim }}"
-        rationale_3: |
-          {{ 'PASS when the output contains BOTH \"blacklist squashfs\" AND ( \"install squashfs /bin/false\" OR \"install squashfs /bin/true\" ), FAIL otherwise' | trim }}
-      when: data_1 | trim | length > 0
+        overall_status: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_2 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS - squashfs kernel module is not available on the system
+          {% elif status_2 | trim == 'PASS' %}
+            PASS - squashfs kernel module is available but not loaded and not loadable
+          {% else %}
+            FAIL - squashfs kernel module is available and either loaded or loadable
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify: Ensure squashfs kernel module is not available
-    - name: "Req 4 - Determine overall compliance"
-      set_fact:
-        task_4_name: "Overall verification"
-        task_4_cmd: "N/A - Calculated from previous results"
-        task_4_rc: 0
-        data_4: "Module availability: {{ status_1 }}, Module loaded: {{ status_2 }}, Module blacklisted: {{ status_3 }}"
-        status_4: "{{ ('PASS' if (status_1 == 'PASS' or (status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS')) else 'FAIL') | trim }}"
-        rationale_4: "{{ 'PASS when (req_1=PASS OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)), FAIL otherwise' | trim }}"
-
-    # Final report
+    # Generate compliance report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.7"
           - "========================================================"
-          - "Reference: {{ kcs_article }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.7"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -164,24 +167,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ overall_rationale | default('Not evaluated') | trim }}"
           - "========================================================"

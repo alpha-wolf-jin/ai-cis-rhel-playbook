@@ -1,0 +1,128 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.6
+    req_1: Check if cron is installed on the system
+    req_2: Verify permissions, ownership, and group of /etc/cron.monthly
+    req_3: 'OVERALL Verify: Ensure permissions on /etc/cron.monthly are configured'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+
+    # Requirement 1: Check if cron is installed on the system
+- name: Req 1 - Check cron installation
+  shell: rpm -q cronie
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check cron installation"
+    task_1_cmd: "rpm -q cronie"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if result_1.rc == 0 and 'is not installed' not in result_1.stdout else 'FAIL') | trim }}"
+        # FIX: Calculate rationale_1 without referencing status_1 in the same task
+    rationale_1: >-
+      {%- if result_1.rc == 0 and 'is not installed' not in result_1.stdout -%}
+      PASS when cronie package is installed (command returns a version string), FAIL when cronie is not installed
+      {%- else -%}
+      FAIL: cronie is not installed
+      {%- endif -%}
+
+    # Requirement 2: Verify permissions, ownership, and group of /etc/cron.monthly
+    # ONLY execute if cron is installed (status_1 == 'PASS') per audit procedure
+- name: Req 2 - Verify permissions of /etc/cron.monthly
+  shell: |
+    {% raw %}
+    stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.monthly/
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: status_1 == 'PASS'
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Verify permissions of /etc/cron.monthly"
+    task_2_cmd: "stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.monthly/"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{{ ('PASS' if (status_1 == 'PASS' and result_2.stdout|default('')|trim == 'Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root)') else 'FAIL') if status_1 == 'PASS' else 'NA' }}"
+    rationale_2: >-
+      {%- if status_1 == 'PASS' -%}
+      {%- set output = result_2.stdout | default('') | trim -%}
+      {%- set expected = 'Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root)' -%}
+      {{- ('PASS when output shows ' ~ expected ~ ', FAIL otherwise' if output == expected else 'FAIL: Expected ' ~ expected ~ ', got ' ~ output) -}}
+      {%- else -%}
+      Not applicable - cron is not installed
+      {%- endif -%}
+  when: status_1 is defined
+
+    # Requirement 3: OVERALL Verify - Ensure permissions on /etc/cron.monthly are configured
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Overall verification"
+    task_3_cmd: "N/A"
+    task_3_rc: 0
+    data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}"
+    status_3: "{{ ('PASS' if (status_1 == 'FAIL') or (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+    rationale_3: "{{ ('PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS), FAIL when req_1=PASS AND req_2=FAIL' if (status_1 == 'FAIL') or (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: cron is installed but permissions are incorrect') | trim }}"
+
+    # Final report - MUST include Status and Rationale for each requirement
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.4.1.6"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.6"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 }}"
+    - "  Status: {{ status_1 | trim }}"
+    - "  Rationale: {{ rationale_1 | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name }}"
+    - "  Command: {{ task_2_cmd }}"
+    - "  Exit code: {{ task_2_rc }}"
+    - "  Data: {{ data_2 }}"
+    - "  Status: {{ status_2 | trim }}"
+    - "  Rationale: {{ rationale_2 | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name }}"
+    - "  Command: {{ task_3_cmd }}"
+    - "  Exit code: {{ task_3_rc }}"
+    - "  Data: {{ data_3 }}"
+    - "  Status: {{ status_3 | trim }}"
+    - "  Rationale: {{ rationale_3 | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | trim }}"
+    - "  Rationale: {{ rationale_3 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_4_1_6'': status_3 | trim }] }}'

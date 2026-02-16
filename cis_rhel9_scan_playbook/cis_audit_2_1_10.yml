@@ -2,12 +2,12 @@
 - name: Data Collection for CIS 2.1.10
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.10"
-    req_1: "Verify ypserv package is not installed"
-    req_2: "If ypserv package is installed, verify ypserv.service is not enabled"
-    req_3: "If ypserv package is installed, verify ypserv.service is not active"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.10"
+    req_1: "Check if ypserv package is installed using command: rpm -q ypserv"
+    req_2: "If ypserv package is installed (req_1=FAIL), check if ypserv.service is enabled using command: systemctl is-enabled ypserv.service 2>/dev/null | grep 'enabled'"
+    req_3: "If ypserv package is installed (req_1=FAIL), check if ypserv.service is active using command: systemctl is-active ypserv.service 2>/dev/null | grep '^active'"
     req_4: "OVERALL Verify: Ensure nis server services are not in use"
 
   tasks:
@@ -22,12 +22,12 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
+        task_4_name: "Generate compliance report"
         task_4_cmd: "N/A"
-        task_4_rc: -1
+        task_4_rc: 0
 
-    # Requirement 1: Verify ypserv package is not installed
-    - name: Req 1 - Check if ypserv package is installed
+    # Requirement 1: Check if ypserv package is installed using command: rpm -q ypserv
+    - name: "Req 1 - Check ypserv package installation"
       shell: rpm -q ypserv
       args:
         executable: /bin/bash
@@ -37,111 +37,108 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if ypserv package is installed"
+        task_1_name: "Check ypserv package installation"
         task_1_cmd: "rpm -q ypserv"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package ypserv is not installed') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is "package ypserv is not installed", FAIL when package is installed' if (result_1.stdout | default('') | trim == 'package ypserv is not installed') else 'FAIL - package is installed') | trim }}"
+        rationale_1: "PASS when output is 'package ypserv is not installed', FAIL when any other output is returned (e.g., a package version)"
 
-    # Requirement 2: If ypserv package is installed, verify ypserv.service is not enabled
-    - name: Req 2 - Check if ypserv.service is enabled
+    # Requirement 2: If ypserv package is installed (req_1=FAIL), check if ypserv.service is enabled
+    - name: "Req 2 - Check ypserv.service enabled status"
       shell: systemctl is-enabled ypserv.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0 and data_1 != 'package ypserv is not installed'
+      when: status_1 == 'FAIL'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if ypserv.service is enabled"
+        task_2_name: "Check ypserv.service enabled status"
         task_2_cmd: "systemctl is-enabled ypserv.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if data_1 | trim == 'package ypserv is not installed' %}
-            NA
-          {% elif data_1 | length > 0 %}
+          {% if status_1 == 'FAIL' %}
             {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
           {% else %}
-            UNKNOWN
+            NA
           {% endif %}
         rationale_2: >-
-          {% if data_1 | trim == 'package ypserv is not installed' %}
-            NA - package not installed
-          {% elif data_1 | length > 0 %}
-            {{ ('PASS when command returns no output (empty), FAIL when "enabled" is found' if (result_2.stdout | default('') | trim == '') else 'FAIL - service is enabled') | trim }}
+          {% if status_1 == 'FAIL' %}
+            {% if result_2.stdout | default('') | trim == '' %}
+              PASS when command returns no output (empty), FAIL when 'enabled' is found in the output
+            {% else %}
+              FAIL: Service is enabled
+            {% endif %}
           {% else %}
-            Not evaluated - package check failed
+            Skipped - ypserv package is not installed
           {% endif %}
 
-    # Requirement 3: If ypserv package is installed, verify ypserv.service is not active
-    - name: Req 3 - Check if ypserv.service is active
+    # Requirement 3: If ypserv package is installed (req_1=FAIL), check if ypserv.service is active
+    - name: "Req 3 - Check ypserv.service active status"
       shell: systemctl is-active ypserv.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0 and data_1 != 'package ypserv is not installed'
+      when: status_1 == 'FAIL'
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if ypserv.service is active"
+        task_3_name: "Check ypserv.service active status"
         task_3_cmd: "systemctl is-active ypserv.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: >-
-          {% if data_1 | trim == 'package ypserv is not installed' %}
-            NA
-          {% elif data_1 | length > 0 %}
+          {% if status_1 == 'FAIL' %}
             {{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}
           {% else %}
-            UNKNOWN
+            NA
           {% endif %}
         rationale_3: >-
-          {% if data_1 | trim == 'package ypserv is not installed' %}
-            NA - package not installed
-          {% elif data_1 | length > 0 %}
-            {{ ('PASS when command returns no output (empty), FAIL when "active" is found' if (result_3.stdout | default('') | trim == '') else 'FAIL - service is active') | trim }}
+          {% if status_1 == 'FAIL' %}
+            {% if result_3.stdout | default('') | trim == '' %}
+              PASS when command returns no output (empty), FAIL when 'active' is found in the output
+            {% else %}
+              FAIL: Service is active
+            {% endif %}
           {% else %}
-            Not evaluated - package check failed
+            Skipped - ypserv package is not installed
           {% endif %}
 
     # Requirement 4: OVERALL Verify: Ensure nis server services are not in use
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Overall compliance check"
-        task_4_cmd: "N/A - calculated from previous checks"
-        task_4_rc: 0
-        data_4: "Package check: {{ status_1 | trim }}, Service enabled: {{ status_2 | default('NA') | trim }}, Service active: {{ status_3 | default('NA') | trim }}"
+        data_4: "N/A"
         status_4: >-
-          {% if status_1 | trim == 'PASS' %}
+          {% if status_1 == 'PASS' %}
             PASS
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('FAIL') | trim == 'PASS' and status_3 | default('FAIL') | trim == 'PASS' %}
+          {% elif status_2 == 'PASS' and status_3 == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS - package not installed
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('FAIL') | trim == 'PASS' and status_3 | default('FAIL') | trim == 'PASS' %}
-            PASS - package installed but service not enabled and not active
+          {% if status_1 == 'PASS' %}
+            PASS - ypserv package is not installed
+          {% elif status_2 == 'PASS' and status_3 == 'PASS' %}
+            PASS - ypserv package is installed but service is not enabled and not active
           {% else %}
-            FAIL - package installed and service is either enabled or active
+            FAIL - ypserver service is either enabled or active
           {% endif %}
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.1.10"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.10"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

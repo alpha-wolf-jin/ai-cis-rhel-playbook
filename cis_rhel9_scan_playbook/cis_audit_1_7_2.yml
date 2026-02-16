@@ -1,13 +1,14 @@
 ---
-- name: Data Collection for CIS 1.7.2
+- name: Data Collection for CIS 1.7.2 - Local Login Warning Banner
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.7.2"
-    req_1: "Check the contents of the local login warning banner file using command: cat /etc/issue"
-    req_2: "Check that the local login warning banner does not contain prohibited information using script"
-    req_3: "OVERALL Verify: Ensure local login warning banner is configured properly"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.2"
+    req_1: "Check the contents of the local login warning banner file using command: `cat /etc/issue`. Rationale: PASS when the contents match the organization's site policy (e.g., contain a legal warning, organization name, and monitoring policy notice, and do NOT contain OS or patch level information), FAIL otherwise."
+    req_2: |
+      Verify the local login warning banner does not contain prohibited information using command: `grep -E -i \"(\\\\v|\\\\r|\\\\m|\\\\s|\\\$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/\"//g'))\" /etc/issue`. Rationale: PASS when the command returns no output (exit code 1), indicating the banner does NOT contain escape sequences (\v, \r, \m, \s) or the OS distribution name, FAIL when any output is returned (exit code 0).
+    req_3: "OVERALL Verify: Ensure local login warning banner is configured properly. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise."
 
   tasks:
     - name: Initialize data variables
@@ -18,13 +19,10 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
-    # Requirement 1: Check /etc/issue contents
     - name: Req 1 - Check /etc/issue contents
-      shell: cat /etc/issue
+      shell: |
+        cat /etc/issue
       args:
         executable: /bin/bash
       register: result_1
@@ -37,113 +35,91 @@
         task_1_cmd: "cat /etc/issue"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        # ENHANCED: Check for basic banner requirements - must exist, have content, and not contain OS info
+
+    - name: Set requirement 1 status and rationale
+      set_fact:
         status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if result_1.rc == 0 and output != '' %}
-            {% set os_info_check = result_1.stdout | regex_search('(\\v|\\r|\\m|\\s|redhat|rhel|centos|fedora|ubuntu|debian|suse)', ignorecase=true) %}
-            {% if not os_info_check %}
-              PASS
-            {% else %}
+          {% set banner_content = result_1.stdout | default('') | trim %}
+          {% if banner_content != '' %}
+            {% set banner_lower = banner_content | lower %}
+            {% if 'linux' in banner_lower or 'red hat' in banner_lower or 'centos' in banner_lower or
+                  'fedora' in banner_lower or 'ubuntu' in banner_lower or 'debian' in banner_lower or
+                  'suse' in banner_lower or 'kernel' in banner_lower or 'release' in banner_lower or
+                  'patch' in banner_lower or 'update' in banner_lower or 'security' in banner_lower or
+                  banner_lower | regex_search('\\d+\\.\\d+') %}
               FAIL
+            {% else %}
+              PASS
             {% endif %}
           {% else %}
             FAIL
           {% endif %}
         rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if result_1.rc == 0 and output != '' %}
-            {% set os_info_check = result_1.stdout | regex_search('(\\v|\\r|\\m|\\s|redhat|rhel|centos|fedora|ubuntu|debian|suse)', ignorecase=true) %}
-            {% if not os_info_check %}
-              PASS - File exists with content and does not contain obvious OS information (manual review needed for full site policy compliance)
+          {% set banner_content = result_1.stdout | default('') | trim %}
+          {% if banner_content != '' %}
+            {% set banner_lower = banner_content | lower %}
+            {% if 'linux' in banner_lower or 'red hat' in banner_lower or 'centos' in banner_lower or
+                  'fedora' in banner_lower or 'ubuntu' in banner_lower or 'debian' in banner_lower or
+                  'suse' in banner_lower or 'kernel' in banner_lower or 'release' in banner_lower or
+                  'patch' in banner_lower or 'update' in banner_lower or 'security' in banner_lower or
+                  banner_lower | regex_search('\\d+\\.\\d+') %}
+              FAIL: Banner contains OS/patch information
             {% else %}
-              FAIL - Banner contains OS or escape sequence information: {{ os_info_check }}
+              PASS: Banner exists and does not contain obvious OS/patch information (manual review required for site policy compliance)
             {% endif %}
-          {% elif result_1.rc != 0 %}
-            FAIL - Command failed with exit code {{ result_1.rc | default(-1) }}
           {% else %}
-            FAIL - File is empty or not readable
+            FAIL: Banner empty or file does not exist
           {% endif %}
 
-    # Requirement 2: Check for prohibited information in /etc/issue
-    # ENHANCED: Use the MANDATORY PATTERN for complex bash scripts
-    - name: Req 2 - Create audit script for prohibited information check
+    - name: Req 2 - Create script to check for prohibited content
       copy:
-        dest: "/tmp/cis_audit_1.7.2_req2.sh"
+        dest: "/tmp/cis_1.7.2_req2.sh"
         mode: '0700'
         content: |
-          {% raw %}
           #!/usr/bin/env bash
-          grep -E -i "(\\\v|\\\r|\\\m|\\\s|\$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/"//g'))" /etc/issue
-          {% endraw %}
+          grep -E -i "(\\\\v|\\\\r|\\\\m|\\\\s|\$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/\"//g'))" /etc/issue
       register: script_create_2
       ignore_errors: true
 
-    - name: Req 2 - Execute audit script for prohibited information check
-      shell: "/tmp/cis_audit_1.7.2_req2.sh"
+    - name: Req 2 - Execute script to check for prohibited content
+      shell: "/tmp/cis_1.7.2_req2.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
 
-    - name: Req 2 - Remove temporary audit script
+    - name: Req 2 - Remove temporary script
       file:
-        path: "/tmp/cis_audit_1.7.2_req2.sh"
+        path: "/tmp/cis_1.7.2_req2.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check for prohibited information in /etc/issue"
-        # Store the exact command from audit procedure
+        task_2_name: "Check for prohibited content in /etc/issue"
         task_2_cmd: |
-          grep -E -i \"(\\\\v|\\\\r|\\\\m|\\\\s|\\$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/\"//g'))\" /etc/issue
+          grep -E -i \"(\\\\v|\\\\r|\\\\m|\\\\s|\\\$(grep '^ID=' /etc/os-release | cut -d= -f2 | sed -e 's/\"//g'))\" /etc/issue
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == '' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == '' %}
-            PASS - No prohibited information found in banner
-          {% else %}
-            FAIL - Banner contains prohibited information: {{ output }}
-          {% endif %}
 
-    # Requirement 3: Overall verification
-    - name: Store requirement 3 details
+    - name: Set requirement 2 status and rationale
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Req1: {{ status_1 }}, Req2: {{ status_2 }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS - Both requirements passed: banner exists with content and contains no prohibited information
-          {% else %}
-            FAIL - One or more requirements failed
-          {% endif %}
+        status_2: "{{ ('PASS' if (result_2.rc == 1 and result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: '{{ ("PASS: No prohibited content (escape sequences or OS distribution name) found" if (result_2.rc == 1 and result_2.stdout | default("") | trim == "") else "FAIL: Prohibited content found or command failed") | trim }}'
 
-    # Final report
+    - name: Store overall compliance details
+      set_fact:
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: '{{ ("PASS: Both requirements met - banner exists without OS/patch info and contains no prohibited content" if (status_1 == "PASS" and status_2 == "PASS") else "FAIL: One or both requirements failed") | trim }}'
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.7.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -162,16 +138,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

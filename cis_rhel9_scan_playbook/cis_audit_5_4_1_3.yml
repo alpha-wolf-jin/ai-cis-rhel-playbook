@@ -2,11 +2,11 @@
 - name: Data Collection for CIS 5.4.1.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.1.3"
-    req_1: "Verify PASS_WARN_AGE is configured in /etc/login.defs"
-    req_2: "Verify all user passwords have a PASS_WARN_AGE of 7 or more"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.1.3"
+    req_1: "Check PASS_WARN_AGE setting in /etc/login.defs"
+    req_2: "Check all user password warning ages in /etc/shadow"
     req_3: "OVERALL Verify: Ensure password expiration warning days is configured"
 
   tasks:
@@ -22,12 +22,10 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify PASS_WARN_AGE is configured in /etc/login.defs
-    - name: Req 1 - Check PASS_WARN_AGE in login.defs
+    # Requirement 1: Check PASS_WARN_AGE setting in /etc/login.defs
+    - name: "Req 1 - Check PASS_WARN_AGE in login.defs"
       shell: |
-        {% raw %}
         grep -Pi -- '^\h*PASS_WARN_AGE\h+\d+\b' /etc/login.defs
-        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -43,11 +41,9 @@
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% if output | regex_search('PASS_WARN_AGE\s+([0-9]+)') %}
-            {% set match = output | regex_search('PASS_WARN_AGE\s+([0-9]+)') %}
-            {% set value_str = match | regex_replace('.*PASS_WARN_AGE\s+([0-9]+).*', '\\1') %}
-            {% set value = value_str | int %}
-            {% if value >= 7 %}
+          {% if output %}
+            {% set pass_warn_age = output | regex_replace('.*PASS_WARN_AGE\\s+(\\d+).*', '\\1') | int %}
+            {% if pass_warn_age >= 7 %}
               PASS
             {% else %}
               FAIL
@@ -57,25 +53,21 @@
           {% endif %}
         rationale_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% if output | regex_search('PASS_WARN_AGE\s+([0-9]+)') %}
-            {% set match = output | regex_search('PASS_WARN_AGE\s+([0-9]+)') %}
-            {% set value_str = match | regex_replace('.*PASS_WARN_AGE\s+([0-9]+).*', '\\1') %}
-            {% set value = value_str | int %}
-            {% if value >= 7 %}
-              PASS: PASS_WARN_AGE is set to {{ value }} (7 or more required)
+          {% if output %}
+            {% set pass_warn_age = output | regex_replace('.*PASS_WARN_AGE\\s+(\\d+).*', '\\1') | int %}
+            {% if pass_warn_age >= 7 %}
+              PASS when the extracted numeric value ({{ pass_warn_age }}) is >= 7, FAIL otherwise
             {% else %}
-              FAIL: PASS_WARN_AGE found but value ({{ value }}) is less than 7
+              FAIL when the extracted numeric value ({{ pass_warn_age }}) is >= 7, FAIL otherwise
             {% endif %}
           {% else %}
-            FAIL: PASS_WARN_AGE not found in /etc/login.defs
+            FAIL: No PASS_WARN_AGE setting found in /etc/login.defs
           {% endif %}
 
-    # Requirement 2: Verify all user passwords have a PASS_WARN_AGE of 7 or more
-    - name: Req 2 - Check PASS_WARN_AGE in shadow file
+    # Requirement 2: Check all user password warning ages in /etc/shadow
+    - name: "Req 2 - Check PASS_WARN_AGE for all users in shadow"
       shell: |
-        {% raw %}
         awk -F: '($2~/^\$.+\$/) {if($6 < 7)print "User: " $1 " PASS_WARN_AGE: " $6}' /etc/shadow
-        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
@@ -84,9 +76,9 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check PASS_WARN_AGE in shadow file"
+        task_2_name: "Check PASS_WARN_AGE for all users in shadow"
         task_2_cmd: |
-          awk -F: '($2~/^\$.+\$/) {if($6 < 7)print \"User: \" $1 \" PASS_WARN_AGE: \" $6}' /etc/shadow
+          awk -F: '($2~/^\\$.+\\$/) {if($6 < 7)print \"User: \" $1 \" PASS_WARN_AGE: \" $6}' /etc/shadow
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
@@ -99,29 +91,33 @@
         rationale_2: >-
           {% set output = result_2.stdout | default('') | trim %}
           {% if output == '' %}
-            PASS: No users found with PASS_WARN_AGE < 7
+            PASS when the command returns no output (i.e., no user has a PASS_WARN_AGE < 7), FAIL otherwise
           {% else %}
-            FAIL: Found users with PASS_WARN_AGE < 7: {{ output }}
+            FAIL when the command returns no output (i.e., no user has a PASS_WARN_AGE < 7), FAIL otherwise
           {% endif %}
 
     # Requirement 3: OVERALL Verify
     - name: Store requirement 3 details
       set_fact:
         task_3_name: "Overall compliance check"
-        task_3_cmd: "N/A - Combined check"
+        task_3_cmd: "N/A - computed from requirements 1 and 2"
         task_3_rc: 0
-        data_3: "Combined result of requirements 1 and 2"
+        data_3: "N/A"
         status_3: >-
-          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('FAIL') | trim %}
+          {% if s1 == 'PASS' and s2 == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_3: >-
-          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
-            PASS: Both requirements 1 and 2 are compliant
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('FAIL') | trim %}
+          {% if s1 == 'PASS' and s2 == 'PASS' %}
+            PASS when req_1=PASS AND req_2=PASS, FAIL otherwise
           {% else %}
-            FAIL: One or more requirements failed (req_1={{ status_1 | default('FAIL') }}, req_2={{ status_2 | default('FAIL') }})
+            FAIL when req_1=PASS AND req_2=PASS, FAIL otherwise
           {% endif %}
 
     # Final report
@@ -131,7 +127,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.4.1.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -160,6 +156,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

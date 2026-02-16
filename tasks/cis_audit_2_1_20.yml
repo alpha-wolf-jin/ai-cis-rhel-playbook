@@ -1,0 +1,66 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.20
+    req_1: 'Verify X Windows Server is not installed using command: rpm -q xorg-x11-server-common'
+    req_overall: Ensure X window server services are not in use
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    status_overall: "UNKNOWN"
+    rationale_overall: "Not evaluated"
+
+- name: Req 1 - Check X Windows Server package
+  shell: rpm -q xorg-x11-server-common
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check X Windows Server package"
+    task_1_cmd: "rpm -q xorg-x11-server-common"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package xorg-x11-server-common is not installed') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when output is exactly package xorg-x11-server-common is not installed, FAIL otherwise' if (result_1.stdout | default('') | trim == 'package xorg-x11-server-common is not installed') else 'FAIL: Package xorg-x11-server-common appears to be installed or command failed') | trim }}"
+
+- name: Store overall compliance
+  set_fact:
+    status_overall: "{{ status_1 | trim }}"
+    rationale_overall: "{{ ('PASS when req_1=PASS, FAIL otherwise' if status_1 == 'PASS' else 'FAIL: req_1 is not PASS') | trim }}"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.1.20"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_1_20'': status_1 | trim }] }}'

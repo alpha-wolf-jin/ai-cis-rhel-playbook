@@ -2,13 +2,13 @@
 - name: Data Collection for CIS 6.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.2"
-    req_1: "Check for cron job running AIDE integrity check"
-    req_2: "Check if aidecheck.service is enabled using systemd"
-    req_3: "Check if aidecheck.timer is enabled using systemd"
-    req_4: "Check status of aidecheck.timer using systemd"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.2"
+    req_1: "Check for a cron job configured to run AIDE integrity check"
+    req_2: "Check if the aidecheck.service systemd unit is enabled"
+    req_3: "Check if the aidecheck.timer systemd unit is enabled"
+    req_4: "Check the status of the aidecheck.timer systemd unit"
     req_5: "OVERALL Verify: Ensure filesystem integrity is regularly checked"
 
   tasks:
@@ -41,11 +41,10 @@
         task_4_cmd: "N/A"
         task_4_rc: -1
 
-    # Requirement 1: Check for cron job running AIDE integrity check
-    - name: Req 1 - Check for AIDE cron job
+    - name: "Req 1 - Check for AIDE cron job"
       shell: |
         {% raw %}
-        grep -Ers '^([^#]+\s+)?(\/usr\/s?bin\/|^\s*)aide(\.wrapper)?\s(--?\S+\s)*(\-\-(check|update)|\$AIDEARGS)\b' /etc/cron.* /etc/crontab /var/spool/cron/
+        grep -Ers '^([^#]+\s+)?(\/usr\/s?bin\/|^\s*)aide(\.wrapper)?\s(--?\S+\s)*((--(check|update)|\$AIDEARGS))\b' /etc/cron.* /etc/crontab /var/spool/cron/
         {% endraw %}
       args:
         executable: /bin/bash
@@ -57,14 +56,13 @@
       set_fact:
         task_1_name: "Check for AIDE cron job"
         task_1_cmd: |
-          grep -Ers '^([^#]+\s+)?(\/usr\/s?bin\/|^\s*)aide(\.wrapper)?\s(--?\S+\s)*(\-\-(check|update)|\$AIDEARGS)\b' /etc/cron.* /etc/crontab /var/spool/cron/
+          grep -Ers '^([^#]+\\s+)?(\\/usr\\/s?bin\\/|^\\s*)aide(\\.wrapper)?\\s(--?\\S+\\s)*((--(check|update)|\\$AIDEARGS))\\b' /etc/cron.* /etc/crontab /var/spool/cron/
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when a cron job is returned that is in compliance with site policy (i.e., a cron job entry for AIDE check or update exists), FAIL when no cron job is found"
+        rationale_1: "{{ ('PASS when the command returns at least one cron job entry that complies with the site''s policy for running AIDE checks, FAIL when no such entry is found' if (result_1.stdout | default('') | trim != '') else 'FAIL: No cron job found for AIDE integrity check') | trim }}"
 
-    # Requirement 2: Check if aidecheck.service is enabled using systemd
-    - name: Req 2 - Check aidecheck.service enabled status
+    - name: "Req 2 - Check aidecheck.service status"
       shell: |
         systemctl is-enabled aidecheck.service
       args:
@@ -75,15 +73,14 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check aidecheck.service enabled status"
+        task_2_name: "Check aidecheck.service status"
         task_2_cmd: "systemctl is-enabled aidecheck.service"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'enabled' or result_2.stdout | default('') | trim == 'static') else 'FAIL') | trim }}"
-        rationale_2: "PASS when output is 'enabled' or 'static' (static indicates enabled indirectly by another unit), FAIL when output is 'disabled' or 'masked'"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'enabled' or result_2.stdout | default('') | trim == 'enabled-runtime') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when the command output is ''enabled'' or ''enabled-runtime'', FAIL otherwise' if (result_2.stdout | default('') | trim == 'enabled' or result_2.stdout | default('') | trim == 'enabled-runtime') else 'FAIL: aidecheck.service is not enabled (got: ' + (result_2.stdout | default('') | trim) + ')') | trim }}"
 
-    # Requirement 3: Check if aidecheck.timer is enabled using systemd
-    - name: Req 3 - Check aidecheck.timer enabled status
+    - name: "Req 3 - Check aidecheck.timer status"
       shell: |
         systemctl is-enabled aidecheck.timer
       args:
@@ -94,15 +91,14 @@
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check aidecheck.timer enabled status"
+        task_3_name: "Check aidecheck.timer status"
         task_3_cmd: "systemctl is-enabled aidecheck.timer"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == 'enabled') else 'FAIL') | trim }}"
-        rationale_3: "PASS when output is 'enabled', FAIL when output is 'disabled' or 'masked'"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == 'enabled' or result_3.stdout | default('') | trim == 'enabled-runtime') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when the command output is ''enabled'' or ''enabled-runtime'', FAIL otherwise' if (result_3.stdout | default('') | trim == 'enabled' or result_3.stdout | default('') | trim == 'enabled-runtime') else 'FAIL: aidecheck.timer is not enabled (got: ' + (result_3.stdout | default('') | trim) + ')') | trim }}"
 
-    # Requirement 4: Check status of aidecheck.timer using systemd
-    - name: Req 4 - Check aidecheck.timer status
+    - name: "Req 4 - Check aidecheck.timer unit status"
       shell: |
         systemctl status aidecheck.timer
       args:
@@ -113,34 +109,32 @@
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check aidecheck.timer status"
+        task_4_name: "Check aidecheck.timer unit status"
         task_4_cmd: "systemctl status aidecheck.timer"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: |
-          {{ ('PASS' if (result_4.stdout | default('') | regex_search('Active: active \\((waiting|elapsed)\\)')) else 'FAIL') | trim }}
-        rationale_4: "PASS when the output indicates the timer is active (e.g., 'Active: active (waiting)' or 'Active: active (elapsed)'), FAIL when it indicates inactive or failed"
+        status_4: "{{ ('PASS' if ('active (waiting)' in (result_4.stdout | default('')) or 'active (elapsed)' in (result_4.stdout | default(''))) else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS when the command output indicates the timer unit is ''active (waiting)'' or ''active (elapsed)'', FAIL otherwise' if ('active (waiting)' in (result_4.stdout | default('')) or 'active (elapsed)' in (result_4.stdout | default(''))) else 'FAIL: aidecheck.timer is not active') | trim }}"
 
-    # Requirement 5: OVERALL Verify
-    - name: Determine overall compliance
+    - name: Calculate overall compliance
       set_fact:
-        status_5: >-
-          {% if status_1 | trim == 'PASS' or
-                (status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') %}
-            PASS
+        status_5: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_5: >-
+          {% if status_1 | trim == 'PASS' %}
+          PASS when req_1=PASS (cron job found)
+          {% elif status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+          PASS when req_2=PASS AND req_3=PASS AND req_4=PASS (systemd timer enabled and active)
           {% else %}
-            FAIL
+          FAIL: Neither cron job nor systemd timer is properly configured
           {% endif %}
-        rationale_5: "PASS when (req_1=PASS) OR (req_2=PASS AND req_3=PASS AND req_4=PASS), FAIL otherwise"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.1.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -176,8 +170,8 @@
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Task: Determine overall compliance"
-          - "  Command: N/A (calculated)"
+          - "  Task: Calculate overall compliance"
+          - "  Command: N/A (calculated from previous results)"
           - "  Exit code: N/A"
           - "  Data: N/A"
           - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"

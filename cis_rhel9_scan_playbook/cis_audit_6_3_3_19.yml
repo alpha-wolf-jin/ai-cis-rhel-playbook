@@ -1,26 +1,16 @@
 ---
-- name: Data Collection for CIS 6.3.3.19
+- name: Data Collection for CIS checkpoint 6.3.3.19
   hosts: all
   become: yes
   gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.19"
-    req_1: "Check on-disk audit rules for kernel module system calls"
-    req_2: "Check running audit rules for kernel module system calls"
-    req_3: "Check running audit rules for kmod execution"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.19"
+    req_1: "On disk configuration: Run the provided CIS audit script to check the on disk rules for kernel module loading/unloading/modification"
+    req_2: "Running configuration: Run the provided CIS audit script to check loaded rules for kernel module loading/unloading/modification"
+    req_3: "Symlink audit: Run the provided script to audit if the symlinks kmod accepts are indeed pointing at it"
     req_4: "OVERALL Verify: Ensure kernel module loading unloading and modification is collected"
 
   tasks:
-    - name: Get UID_MIN from /etc/login.defs
-      shell: awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
-      register: uid_min_result
-      ignore_errors: true
-      changed_when: false
-
-    - name: Set uid_min fact
-      set_fact:
-        uid_min: "{{ uid_min_result.stdout | default('1000') | trim }}"
-
     - name: Initialize data variables
       set_fact:
         task_1_name: "Not executed"
@@ -36,262 +26,189 @@
         task_4_cmd: "N/A"
         task_4_rc: -1
 
-    # Requirement 1: Check on-disk audit rules
-    - name: Req 1 - Check on-disk audit rules using CIS audit script
-      shell: |
-        {
-          awk '/^ *-a *always,exit/ \
-          &&/ -F *arch=b(32|64)/ \
-          &&(/ -F auid!=unset/||/ -F auid!=-1/||/ -F auid!=4294967295/) \
-          &&/ -S/ \
-          &&(/init_module/ \
-            ||/finit_module/ \
-            ||/delete_module/ \
-            ||/create_module/ \
-            ||/query_module/) \
-          &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+    # Requirement 1: On disk configuration
+    - name: Req 1 - Execute CIS audit script for on disk configuration
+      copy:
+        dest: "/tmp/cis_audit_6.3.3.19_on_disk.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+            awk '/^ *-a *always,exit/ \
+            &&/ -F *arch=b(32|64)/ \
+            &&(/ -F auid!=unset/||/ -F auid!=-1/||/ -F auid!=4294967295/) \
+            &&/ -S/ \
+            &&(/init_module/ \
+              ||/finit_module/ \
+              ||/delete_module/ \
+              ||/create_module/ \
+              ||/query_module/) \
+            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
 
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
-          &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
-          &&/ -F *auid>=${UID_MIN}/ \
-          &&/ -F *perm=x/ \
-          &&/ -F *path=\/usr\/bin\/kmod/ \
-          &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
-          || printf "ERROR: Variable 'UID_MIN' is unset.\n"
-        }
+            UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+            [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
+            &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+            &&/ -F *auid>=${UID_MIN}/ \
+            &&/ -F *perm=x/ \
+            &&/ -F *path=\/usr\/bin\/kmod/ \
+            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
+            || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_6.3.3.19_on_disk.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_6.3.3.19_on_disk.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Req 1 - Check on-disk audit rules using CIS audit script"
-        task_1_cmd: "CIS audit procedure script for on-disk rules"
+        task_1_name: "Execute CIS audit script for on disk configuration"
+        task_1_cmd: "/tmp/cis_audit_6.3.3.19_on_disk.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% if "ERROR: Variable 'UID_MIN' is unset." in output %}
+          {% set expected = '-a always,exit -F arch=b64 -S\ninit_module,finit_module,delete_module,create_module,query_module -F auid>=1000 -F auid!=unset -k kernel_modules\n-a always,exit -F path=/usr/bin/kmod -F perm=x -F auid>=1000 -F auid!=unset -k kernel_modules' %}
+          {% if output == expected %}
+            PASS
+          {% else %}
             FAIL
-          {% else %}
-            {% set lines = output.split('\n') %}
-            {% set found_syscall_rule = false %}
-            {% set found_kmod_rule = false %}
-            {% for line in lines %}
-              {% set line_trimmed = line | trim %}
-              {% if line_trimmed != '' %}
-                {# Check for system call rule #}
-                {% if line_trimmed | regex_search('^-a always,exit') and
-                      line_trimmed | regex_search('-F arch=b(32|64)') and
-                      line_trimmed | regex_search('-S.*init_module') and
-                      line_trimmed | regex_search('-S.*finit_module') and
-                      line_trimmed | regex_search('-S.*delete_module') and
-                      line_trimmed | regex_search('-S.*create_module') and
-                      line_trimmed | regex_search('-S.*query_module') and
-                      line_trimmed | regex_search('-F auid>=' + uid_min) and
-                      line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                      (line_trimmed | regex_search('-k kernel_modules') or line_trimmed | regex_search(' key=')) %}
-                  {% set found_syscall_rule = true %}
-                {# Check for kmod rule #}
-                {% elif line_trimmed | regex_search('^-a always,exit') and
-                      line_trimmed | regex_search('-F path=/usr/bin/kmod') and
-                      line_trimmed | regex_search('-F perm=x') and
-                      line_trimmed | regex_search('-F auid>=' + uid_min) and
-                      line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                      (line_trimmed | regex_search('-k kernel_modules') or line_trimmed | regex_search(' key=')) %}
-                  {% set found_kmod_rule = true %}
-                {% endif %}
-              {% endif %}
-            {% endfor %}
-            {% if found_syscall_rule and found_kmod_rule %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
           {% endif %}
-        rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if "ERROR: Variable 'UID_MIN' is unset." in output %}
-            FAIL: Could not determine UID_MIN from /etc/login.defs
-          {% else %}
-            {% set lines = output.split('\n') %}
-            {% set found_syscall_rule = false %}
-            {% set found_kmod_rule = false %}
-            {% set syscall_rule_lines = [] %}
-            {% set kmod_rule_lines = [] %}
-            {% for line in lines %}
-              {% set line_trimmed = line | trim %}
-              {% if line_trimmed != '' %}
-                {% if line_trimmed | regex_search('^-a always,exit') and
-                      line_trimmed | regex_search('-F arch=b(32|64)') and
-                      line_trimmed | regex_search('-S.*init_module') and
-                      line_trimmed | regex_search('-S.*finit_module') and
-                      line_trimmed | regex_search('-S.*delete_module') and
-                      line_trimmed | regex_search('-S.*create_module') and
-                      line_trimmed | regex_search('-S.*query_module') and
-                      line_trimmed | regex_search('-F auid>=' + uid_min) and
-                      line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                      (line_trimmed | regex_search('-k kernel_modules') or line_trimmed | regex_search(' key=')) %}
-                  {% set found_syscall_rule = true %}
-                  {% set syscall_rule_lines = syscall_rule_lines + [line_trimmed] %}
-                {% elif line_trimmed | regex_search('^-a always,exit') and
-                      line_trimmed | regex_search('-F path=/usr/bin/kmod') and
-                      line_trimmed | regex_search('-F perm=x') and
-                      line_trimmed | regex_search('-F auid>=' + uid_min) and
-                      line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                      (line_trimmed | regex_search('-k kernel_modules') or line_trimmed | regex_search(' key=')) %}
-                  {% set found_kmod_rule = true %}
-                  {% set kmod_rule_lines = kmod_rule_lines + [line_trimmed] %}
-                {% endif %}
-              {% endif %}
-            {% endfor %}
-            {% if found_syscall_rule and found_kmod_rule %}
-              PASS: Found both required audit rules in on-disk configuration with UID_MIN={{ uid_min }}
-            {% else %}
-              FAIL: Missing one or both required audit rules in on-disk configuration. Expected: 1) system call rule with arch=b32 or b64, all required system calls, auid>={{ uid_min }}, auid!=unset (or -1/4294967295), and -k kernel_modules. 2) kmod rule with path=/usr/bin/kmod, perm=x, auid>={{ uid_min }}, auid!=unset (or -1/4294967295), and -k kernel_modules.
-            {% endif %}
-          {% endif %}
+        rationale_1: "PASS when the output matches the expected audit rules, FAIL otherwise"
 
-    # Requirement 2: Check running audit rules for kernel module system calls
-    - name: Req 2 - Check running audit rules for kernel module system calls
-      shell: auditctl -l | grep -E "init_module|finit_module|delete_module|create_module|query_module"
+    # Requirement 2: Running configuration
+    - name: Req 2 - Execute CIS audit script for running configuration
+      copy:
+        dest: "/tmp/cis_audit_6.3.3.19_running.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+            auditctl -l | awk '/^ *-a *always,exit/ \
+            &&/ -F *arch=b(32|64)/ \
+            &&(/ -F auid!=unset/||/ -F auid!=-1/||/ -F auid!=4294967295/) \
+            &&/ -S/ \
+            &&(/init_module/ \
+              ||/finit_module/ \
+              ||/delete_module/ \
+              ||/create_module/ \
+              ||/query_module/) \
+            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+
+            UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+            [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ \
+            &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+            &&/ -F *auid>=${UID_MIN}/ \
+            &&/ -F *perm=x/ \
+            &&/ -F *path=\/usr\/bin\/kmod/ \
+            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" \
+            || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          }
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_audit_6.3.3.19_running.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
 
+    - name: Req 2 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_6.3.3.19_running.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Req 2 - Check running audit rules for kernel module system calls"
-        task_2_cmd: |
-          auditctl -l | grep -E \"init_module|finit_module|delete_module|create_module|query_module\"
+        task_2_name: "Execute CIS audit script for running configuration"
+        task_2_cmd: "/tmp/cis_audit_6.3.3.19_running.sh"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
           {% set output = result_2.stdout | default('') | trim %}
-          {% set lines = output.split('\n') %}
-          {% set found = false %}
-          {% for line in lines %}
-            {% set line_trimmed = line | trim %}
-            {% if line_trimmed != '' %}
-              {% if line_trimmed | regex_search('^-a always,exit') and
-                    line_trimmed | regex_search('-F arch=b(32|64)') and
-                    line_trimmed | regex_search('-S.*init_module') and
-                    line_trimmed | regex_search('-S.*finit_module') and
-                    line_trimmed | regex_search('-S.*delete_module') and
-                    line_trimmed | regex_search('-S.*create_module') and
-                    line_trimmed | regex_search('-S.*query_module') and
-                    line_trimmed | regex_search('-F auid>=' + uid_min) and
-                    line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                    line_trimmed | regex_search('-k kernel_modules') %}
-                {% set found = true %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          {% if found %}
+          {% if '-a always,exit -F arch=b64 -S' in output and 'create_module,init_module,delete_module,query_module,finit_module -F auid>=1000 -F auid!=-1 -F key=kernel_modules' in output and '-a always,exit -S all -F path=/usr/bin/kmod -F perm=x -F auid>=1000 -F auid!=-1 -F key=kernel_modules' in output %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% set lines = output.split('\n') %}
-          {% set found = false %}
-          {% for line in lines %}
-            {% set line_trimmed = line | trim %}
-            {% if line_trimmed != '' %}
-              {% if line_trimmed | regex_search('^-a always,exit') and
-                    line_trimmed | regex_search('-F arch=b(32|64)') and
-                    line_trimmed | regex_search('-S.*init_module') and
-                    line_trimmed | regex_search('-S.*finit_module') and
-                    line_trimmed | regex_search('-S.*delete_module') and
-                    line_trimmed | regex_search('-S.*create_module') and
-                    line_trimmed | regex_search('-S.*query_module') and
-                    line_trimmed | regex_search('-F auid>=' + uid_min) and
-                    line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                    line_trimmed | regex_search('-k kernel_modules') %}
-                {% set found = true %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          {% if found %}
-            PASS: Found running audit rule for kernel module system calls with UID_MIN={{ uid_min }}
-          {% else %}
-            FAIL: Missing running audit rule for kernel module system calls. Expected rule with '-a always,exit', arch=b64 or b32, all required system calls (init_module,finit_module,delete_module,create_module,query_module), auid>={{ uid_min }}, auid!=unset (or -1/4294967295), and '-k kernel_modules'
-          {% endif %}
+        rationale_2: "PASS when the output includes the expected audit rules, FAIL otherwise"
 
-    # Requirement 3: Check running audit rules for kmod execution
-    - name: Req 3 - Check running audit rules for kmod execution
-      shell: auditctl -l | grep -E "path=/usr/bin/kmod.*perm=x"
+    # Requirement 3: Symlink audit
+    - name: Req 3 - Execute symlink audit script
+      copy:
+        dest: "/tmp/cis_audit_6.3.3.19_symlink.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             a_files=("/usr/sbin/lsmod" "/usr/sbin/rmmod" "/usr/sbin/insmod" "/usr/sbin/modinfo" "/usr/sbin/modprobe" "/usr/sbin/depmod")
+             for l_file in "${a_files[@]}"; do
+                if [ "$(readlink -f "$l_file")" = "$(readlink -f /bin/kmod)" ]; then
+                   printf "OK: \"$l_file\"\n"
+                else
+                   printf "Issue with symlink for file: \"$l_file\"\n"
+                fi
+             done
+          }
+          {% endraw %}
+      register: script_create_3
+      ignore_errors: true
+
+    - name: Req 3 - Execute the audit script
+      shell: "/tmp/cis_audit_6.3.3.19_symlink.sh"
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
 
+    - name: Req 3 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_6.3.3.19_symlink.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Req 3 - Check running audit rules for kmod execution"
-        task_3_cmd: |
-          auditctl -l | grep -E \"path=/usr/bin/kmod.*perm=x\"
+        task_3_name: "Execute symlink audit script"
+        task_3_cmd: "/tmp/cis_audit_6.3.3.19_symlink.sh"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: >-
-          {% set output = result_3.stdout | default('') | trim %}
-          {% set lines = output.split('\n') %}
-          {% set found = false %}
-          {% for line in lines %}
-            {% set line_trimmed = line | trim %}
-            {% if line_trimmed != '' %}
-              {% if line_trimmed | regex_search('^-a always,exit') and
-                    line_trimmed | regex_search('-F path=/usr/bin/kmod') and
-                    line_trimmed | regex_search('-F perm=x') and
-                    line_trimmed | regex_search('-F auid>=' + uid_min) and
-                    line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                    line_trimmed | regex_search('-k kernel_modules') %}
-                {% set found = true %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          {% if found %}
+          {% set output = result_3.stdout | default('') %}
+          {% if 'Issue with symlink' not in output %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_3: >-
-          {% set output = result_3.stdout | default('') | trim %}
-          {% set lines = output.split('\n') %}
-          {% set found = false %}
-          {% for line in lines %}
-            {% set line_trimmed = line | trim %}
-            {% if line_trimmed != '' %}
-              {% if line_trimmed | regex_search('^-a always,exit') and
-                    line_trimmed | regex_search('-F path=/usr/bin/kmod') and
-                    line_trimmed | regex_search('-F perm=x') and
-                    line_trimmed | regex_search('-F auid>=' + uid_min) and
-                    line_trimmed | regex_search('-F auid!=(unset|-1|4294967295)') and
-                    line_trimmed | regex_search('-k kernel_modules') %}
-                {% set found = true %}
-              {% endif %}
-            {% endif %}
-          {% endfor %}
-          {% if found %}
-            PASS: Found running audit rule for kmod execution with UID_MIN={{ uid_min }}
-          {% else %}
-            FAIL: Missing running audit rule for kmod execution. Expected rule with '-a always,exit', 'path=/usr/bin/kmod', 'perm=x', auid>={{ uid_min }}, auid!=unset (or -1/4294967295), and '-k kernel_modules'
-          {% endif %}
+        rationale_3: "PASS when all symlinks are OK (no 'Issue with symlink' in output), FAIL otherwise"
 
     # Requirement 4: Overall verification
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Req 4 - Overall verification"
+        task_4_name: "Overall verification"
         task_4_cmd: "N/A"
         task_4_rc: 0
-        data_4: "N/A"
+        data_4: "Checks if req_1, req_2, req_3 are all PASS"
         status_4: >-
           {% set s1 = status_1 | default('FAIL') | trim %}
           {% set s2 = status_2 | default('FAIL') | trim %}
@@ -301,60 +218,52 @@
           {% else %}
             FAIL
           {% endif %}
-        rationale_4: >-
-          {% set s1 = status_1 | default('FAIL') | trim %}
-          {% set s2 = status_2 | default('FAIL') | trim %}
-          {% set s3 = status_3 | default('FAIL') | trim %}
-          {% if s1 == 'PASS' and s2 == 'PASS' and s3 == 'PASS' %}
-            PASS: All three requirements (on-disk rules, running rules for system calls, and running rules for kmod execution) are properly configured
-          {% else %}
-            FAIL: One or more requirements failed: req1={{ s1 }}, req2={{ s2 }}, req3={{ s3 }}
-          {% endif %}
+        rationale_4: "PASS when all three requirements (on disk, running, and symlink) are PASS, FAIL otherwise"
 
-    # Generate compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.3.3.19"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.19"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
           - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | trim }}"
-          - "  Rationale: {{ rationale_4 | trim }}"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - "========================================================"

@@ -1,0 +1,128 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_checkpoint: 7.1.9
+    cis_benchmark: CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.9
+    req_1: Verify /etc/shells file permissions, ownership, and group
+    req_2: 'OVERALL Verify: Ensure permissions on /etc/shells are configured'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+
+    # Requirement 1: Verify /etc/shells file permissions, ownership, and group
+- name: "Req 1 - Verify /etc/shells permissions"
+  shell: |
+    {% raw %}
+    stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/shells
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Parse requirement 1 details
+  set_fact:
+    task_1_name: "Verify /etc/shells permissions"
+    task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/shells"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == '' %}
+        FAIL
+      {% else %}
+        {% set mode_str = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') %}
+        {% set uid_str = output | regex_replace('.*Uid: \(\s*([0-9]+)/.*', '\1') %}
+        {% set gid_str = output | regex_replace('.*Gid: \(\s*([0-9]+)/.*', '\1') %}
+        {% if mode_str != '' and uid_str != '' and gid_str != '' %}
+          {% set mode_num = mode_str | int(base=8) %}
+          {% set uid_num = uid_str | int %}
+          {% set gid_num = gid_str | int %}
+          {% if mode_num <= 420 and uid_num == 0 and gid_num == 0 %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        {% else %}
+          FAIL
+        {% endif %}
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == '' %}
+        FAIL: No output from stat command
+      {% else %}
+        {% set mode_str = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') %}
+        {% set uid_str = output | regex_replace('.*Uid: \(\s*([0-9]+)/.*', '\1') %}
+        {% set gid_str = output | regex_replace('.*Gid: \(\s*([0-9]+)/.*', '\1') %}
+        {% if mode_str != '' and uid_str != '' and gid_str != '' %}
+          {% set mode_num = mode_str | int(base=8) %}
+          {% set uid_num = uid_str | int %}
+          {% set gid_num = gid_str | int %}
+          {% if mode_num <= 420 and uid_num == 0 and gid_num == 0 %}
+            PASS: File mode is {{ mode_str }} ({{ mode_num }} in decimal, which is <= 420), Uid is {{ uid_str }}, Gid is {{ gid_str }}
+          {% else %}
+            FAIL: Expected mode <= 0644 (420 in decimal), Uid 0, Gid 0. Got mode={{ mode_str }} ({{ mode_num }} in decimal), uid={{ uid_str }}, gid={{ gid_str }}
+          {% endif %}
+        {% else %}
+          FAIL: Could not parse stat output: {{ output }}
+        {% endif %}
+      {% endif %}
+
+    # Requirement 2: OVERALL Verify
+- name: "Req 2 - Overall verification"
+  set_fact:
+    task_2_name: "Overall verification"
+    task_2_cmd: "N/A (determined by requirement 1)"
+    task_2_rc: 0
+    data_2: "N/A"
+    status_2: "{{ status_1 | default('FAIL') }}"
+    rationale_2: >-
+      {% if status_1 | default('FAIL') == 'PASS' %}
+        PASS: All requirements passed
+      {% else %}
+        FAIL: One or more requirements failed
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS {{ cis_checkpoint }}"
+    - "========================================================"
+    - "Reference: {{ cis_benchmark }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('N/A') }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_7_1_9'': status_2 | trim }] }}'

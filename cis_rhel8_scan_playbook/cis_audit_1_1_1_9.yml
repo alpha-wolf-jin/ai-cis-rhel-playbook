@@ -1,35 +1,41 @@
 ---
-- name: Data Collection for CIS 1.1.1.9
+- name: Data Collection for CIS 1.1.1.9 - Ensure firewire-core kernel module is not available
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.9"
-    req_1: "Run script to verify firewire-core kernel module is NOT available in the filesystem"
-    req_2: "If req_1 returns output, verify firewire-core kernel module is NOT loaded"
-    req_3: "If req_1 returns output, verify firewire-core kernel module is NOT loadable by checking for blacklist and install directives"
-    req_4: "OVERALL Verify: Ensure firewire-core kernel module is not available"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.9"
+    req_1: "Run script to determine if firewire-core kernel module is available"
+    req_2: "Verify firewire-core kernel module is not loaded"
+    req_3: "Verify firewire-core kernel module is not loadable"
+    req_overall: "Ensure firewire-core kernel module is not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        data_2: ""
-        data_3: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    # Requirement 1: Check if firewire module exists in filesystem
-    - name: "Req 1 - Check if firewire module exists in filesystem"
+    # Requirement 1: Run script to determine if firewire-core kernel module is available
+    - name: Req 1 - Execute CIS audit script for firewire-core module availability
       copy:
-        dest: "/tmp/check_firewire.sh"
+        dest: "/tmp/cis_audit_firewire.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -45,157 +51,166 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
+      ignore_errors: true
+      changed_when: false
 
-    - name: "Req 1 - Execute firewire check script"
-      shell: "/tmp/check_firewire.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_firewire.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary script"
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/check_firewire.sh"
+        path: "/tmp/cis_audit_firewire.sh"
         state: absent
       ignore_errors: true
+      changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if firewire module exists in filesystem"
-        task_1_cmd: "Execute CIS audit script for firewire module detection"
+        task_1_name: "Execute CIS audit script for firewire-core module availability"
+        task_1_cmd: "/tmp/cis_audit_firewire.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when script returns NO output (module not found) OR module is built into kernel, FAIL when script returns output indicating module exists"
+        rationale_1: "PASS when script returns nothing (module not available), FAIL when script returns module exists"
 
-    # Requirement 2: Check if firewire-core module is loaded (only if req_1 returned output)
-    - name: "Req 2 - Check if firewire-core module is loaded"
+    # Requirement 2: Verify firewire-core kernel module is not loaded (only if module exists)
+    - name: Req 2 - Check if firewire-core module is loaded
       shell: |
+        {% raw %}
         lsmod | grep -P -- 'firewire(_|-)core'
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
+      when: data_1 != ''
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check if firewire-core module is loaded"
         task_2_cmd: "lsmod | grep -P -- 'firewire(_|-)core'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns NO output (module not loaded), FAIL when it returns output"
-      when: data_1 | trim | length > 0
+        status_2: >-
+          {% if data_1 != '' %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if data_1 != '' %}
+            {{ ('PASS when nothing returned (module not loaded), FAIL when module is loaded' if (result_2.stdout | default('') | trim == '') else 'FAIL: Module is loaded') | trim }}
+          {% else %}
+            Not applicable - Requirement 1 passed
+          {% endif %}
 
-    - name: Set requirement 2 as NA when not executed
-      set_fact:
-        task_2_name: "Check if firewire-core module is loaded"
-        task_2_cmd: "lsmod | grep -P -- 'firewire(_|-)core'"
-        task_2_rc: -1
-        data_2: "Not executed - req_1 returned no output"
-        status_2: "NA"
-        rationale_2: "Skipped because req_1 returned no output (module not found in filesystem)"
-      when: data_1 | trim | length == 0
-
-    # Requirement 3: Check if firewire-core module is blacklisted (only if req_1 returned output)
-    - name: "Req 3 - Check if firewire-core module is blacklisted"
+    # Requirement 3: Verify firewire-core kernel module is not loadable (only if module exists)
+    - name: Req 3 - Check if firewire-core module is not loadable
       shell: |
+        {% raw %}
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+firewire(_|-)core\b'
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
+      when: data_1 != ''
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if firewire-core module is blacklisted"
+        task_3_name: "Check if firewire-core module is not loadable"
         task_3_cmd: |
           modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+firewire(_|-)core\b'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if (
-              result_3.stdout | default('') | trim | length > 0 and
-              'blacklist firewire_core' in result_3.stdout and
-              ('install firewire_core /bin/false' in result_3.stdout or 'install firewire_core /bin/true' in result_3.stdout)
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when output contains BOTH 'blacklist firewire_core' AND ('install firewire_core /bin/false' OR 'install firewire_core /bin/true'), FAIL otherwise"
-      when: data_1 | trim | length > 0
+        status_3: >-
+          {% if data_1 != '' %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'blacklist firewire_core' in output and ('install firewire_core /bin/false' in output or 'install firewire_core /bin/true' in output) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_3: >-
+          {% if data_1 != '' %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'blacklist firewire_core' in output and ('install firewire_core /bin/false' in output or 'install firewire_core /bin/true' in output) %}
+              PASS: Output includes blacklist and install directives
+            {% else %}
+              FAIL: Missing required blacklist or install directives
+            {% endif %}
+          {% else %}
+            Not applicable - Requirement 1 passed
+          {% endif %}
 
-    - name: Set requirement 3 as NA when not executed
+    # Determine overall compliance
+    - name: Determine overall compliance
       set_fact:
-        task_3_name: "Check if firewire-core module is blacklisted"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+firewire(_|-)core\b'
-        task_3_rc: -1
-        data_3: "Not executed - req_1 returned no output"
-        status_3: "NA"
-        rationale_3: "Skipped because req_1 returned no output (module not found in filesystem)"
-      when: data_1 | trim | length == 0
+        status_overall: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_overall: >-
+          {% if status_1 | trim == 'PASS' %}
+            Module is not available on the system
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            Module exists but is disabled (not loaded and not loadable)
+          {% else %}
+            Module exists and is not properly disabled
+          {% endif %}
 
-    # Requirement 4: Overall verification
-    - name: Store requirement 4 details and determine overall status
-      set_fact:
-        status_4: >
-          {{ (
-            'PASS' if (
-              (result_1.stdout | default('') | trim == '') or
-              (result_1.stdout | default('') | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
-
-    # Final compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.9"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Requirement: {{ req_overall }}"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
           - "========================================================"

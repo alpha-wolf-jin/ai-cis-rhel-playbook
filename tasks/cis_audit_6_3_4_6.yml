@@ -1,0 +1,66 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.4.6
+    req_1: 'Verify audit configuration files in /etc/audit/ have correct ownership using command: find /etc/audit/ -type f \( -name ''*.conf'' -o -name ''*.rules'' \) ! -user root. Rationale: PASS when command returns no output (no files are owned by a user other than root), FAIL when any file is listed.
+
+      '
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+
+    # Requirement 1: Check audit configuration files ownership
+- name: "Req 1 - Check audit configuration files ownership"
+  shell: |
+    {% raw %}
+    find /etc/audit/ -type f \( -name '*.conf' -o -name '*.rules' \) ! -user root
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check audit configuration files ownership"
+    task_1_cmd: |
+      find /etc/audit/ -type f \( -name '*.conf' -o -name '*.rules' \) ! -user root
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS: No audit configuration files found with non-root ownership' if (result_1.stdout | default('') | trim == '') else 'FAIL: Found audit configuration files not owned by root user') | trim }}"
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.3.4.6"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ ('PASS when req_1=PASS, FAIL otherwise. Result: ' + status_1 | default('UNKNOWN')) | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_3_4_6'': status_1 | trim }] }}'

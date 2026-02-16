@@ -1,0 +1,143 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.3
+    req_1: Run the provided CIS audit script to verify Ensure hfs kernel module is not available
+    req_2: 'OVERALL Verify: Ensure hfs kernel module is not available'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+
+    # Requirement 1: Run the provided CIS audit script
+- name: Req 1 - Create CIS audit script for hfs module
+  copy:
+    dest: "/tmp/cis_audit_1.1.1.3.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+
+      {
+         l_output3="" l_dl="" # clear variables
+         unset a_output; unset a_output2 # unset arrays
+         l_mod_name="hfs" # set module name
+         l_mod_type="fs" # set module type
+         l_mod_path="$(readlink -f /lib/modules/**/kernel/$l_mod_type | sort -u)"
+         f_module_chk()
+         {
+            l_dl="y" # Set to ignore duplicate checks
+            a_showconfig=() # Create array with modprobe output
+            while IFS= read -r l_showconfig; do
+               a_showconfig+=("$l_showconfig")
+            done < <(modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+'"${l_mod_name//-/_}"'\b')
+            if ! lsmod | grep "$l_mod_name" &> /dev/null; then # Check if the module is currently loaded
+               a_output+=("  - kernel module: \"$l_mod_name\" is not loaded")
+            else
+               a_output2+=("  - kernel module: \"$l_mod_name\" is loaded")
+            fi
+            if grep -Pq -- '\binstall\h+'"${l_mod_name//-/_}"'\h+\/bin\/(true|false)\b' <<< "${a_showconfig[*]}"; then
+               a_output+=("  - kernel module: \"$l_mod_name\" is not loadable")
+            else
+               a_output2+=("  - kernel module: \"$l_mod_name\" is loadable")
+            fi
+            if grep -Pq -- '\bblacklist\h+'"${l_mod_name//-/_}"'\b' <<< "${a_showconfig[*]}"; then
+               a_output+=("  - kernel module: \"$l_mod_name\" is deny listed")
+            else
+               a_output2+=("  - kernel module: \"$l_mod_name\" is not deny listed")
+            fi
+         }
+         for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
+            if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
+               l_output3="$l_output3\n  - \"$l_mod_base_directory\""
+               [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
+               [ "$l_dl" != "y" ] && f_module_chk
+            else
+               a_output+=(" - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\"")
+            fi
+         done
+         [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
+         if [ "${#a_output2[@]}" -le 0 ]; then
+            printf '%s\n' "" "- Audit Result:" "  ** PASS **" "${a_output[@]}"
+         else
+            printf '%s\n' "" "- Audit Result:" "  ** FAIL **" " - Reason(s) for audit failure:" "${a_output2[@]}"
+            [ "${#a_output[@]}" -gt 0 ] && printf '%s\n' "- Correctly set:" "${a_output[@]}"
+         fi
+      }
+      {% endraw %}
+  register: script_create_1
+  ignore_errors: true
+
+- name: Req 1 - Execute CIS audit script for hfs module
+  shell: "/tmp/cis_audit_1.1.1.3.sh"
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_1.1.1.3.sh"
+    state: absent
+  ignore_errors: true
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Execute CIS audit script for hfs module"
+    task_1_cmd: "/tmp/cis_audit_1.1.1.3.sh"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if ('** PASS **' in (result_1.stdout | default(''))) else 'FAIL') | trim }}"
+    rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
+
+    # Requirement 2: OVERALL Verify
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Overall verification based on requirement 1"
+    task_2_cmd: "N/A - Derived from requirement 1"
+    task_2_rc: "{{ task_1_rc | default(-1) }}"
+    data_2: "{{ data_1 | default('') }}"
+    status_2: "{{ status_1 | default('UNKNOWN') }}"
+    rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+    # Final compliance report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 1.1.1.3"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.3"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: Overall status is determined by requirement 2, which is based on requirement 1"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_1_1_1_3'': status_2 | trim }] }}'

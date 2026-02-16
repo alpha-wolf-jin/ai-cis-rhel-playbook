@@ -2,11 +2,11 @@
 - name: Data Collection for CIS 1.1.2.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.2.1.2"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.1.2"
     req_1: "Check if /tmp is a separate partition"
-    req_2: "If /tmp is a separate partition, verify the nodev mount option is set"
+    req_2: "Verify the nodev mount option is set on /tmp partition (if separate partition exists)"
     req_3: "OVERALL Verify: Ensure nodev option set on /tmp partition"
 
   tasks:
@@ -23,8 +23,9 @@
         task_3_rc: -1
 
     # Requirement 1: Check if /tmp is a separate partition
-    - name: Req 1 - Check if /tmp is a separate partition
-      shell: findmnt -kn /tmp
+    - name: Req 1 - Check if /tmp is separate partition
+      shell: |
+        findmnt -kn /tmp
       args:
         executable: /bin/bash
       register: result_1
@@ -38,55 +39,49 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output shows a filesystem mounted on /tmp, FAIL when /tmp is not a separate mount point (output empty or error)') | trim }}"
+        rationale_1: "PASS when output shows a filesystem mounted at /tmp (indicating a separate partition exists), FAIL when no output or error (meaning /tmp is not a separate partition)."
 
-    # Requirement 2: If /tmp is a separate partition, verify the nodev mount option is set
-    - name: Req 2 - Verify nodev option on /tmp partition
-      shell: findmnt -kn /tmp | grep -v nodev
+    # Requirement 2: Verify nodev mount option on /tmp (if separate partition exists)
+    - name: Req 2 - Verify nodev mount option on /tmp
+      shell: |
+        findmnt -kn /tmp | grep -v nodev
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 == 'PASS'
+      when: status_1 == "PASS"
 
-    - name: Store requirement 2 details
+    - name: Store requirement 2 details (when executed)
       set_fact:
-        task_2_name: "Verify nodev option on /tmp partition"
+        task_2_name: "Verify nodev mount option on /tmp partition"
         task_2_cmd: "findmnt -kn /tmp | grep -v nodev"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% if status_1 == 'PASS' %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output == '' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            PASS
-          {% endif %}
-        rationale_2: "{{ ('PASS when the command returns no output (empty string), FAIL when any output is returned (indicating the nodev option is NOT set)') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when the command returns no output (empty), FAIL when it returns any output (indicating nodev option is NOT set)."
+      when: status_1 == "PASS"
 
-    # Requirement 3: OVERALL Verify: Ensure nodev option set on /tmp partition
+    - name: Set requirement 2 as NA when not executed
+      set_fact:
+        task_2_name: "Verify nodev mount option on /tmp partition"
+        task_2_cmd: "N/A (not executed because /tmp is not a separate partition)"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "NA"
+        rationale_2: "Not applicable because /tmp is not a separate partition."
+      when: status_1 != "PASS"
+
+    # Requirement 3: Overall compliance
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify: Ensure nodev option set on /tmp partition"
-        task_3_cmd: "N/A - Overall assessment"
+        task_3_name: "Overall verify: Ensure nodev option set on /tmp partition"
+        task_3_cmd: "N/A (computed from requirement 1 and 2)"
         task_3_rc: 0
-        data_3: "N/A"
-        status_3: >-
-          {% if status_1 == 'PASS' and status_2 == 'PASS' %}
-            PASS
-          {% elif status_1 == 'FAIL' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise (if /tmp is not a separate partition, this check is not applicable and overall result is PASS)') | trim }}"
+        data_3: ""
+        status_3: "{{ ('PASS' if (status_1 == 'FAIL') or (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=FAIL (no separate /tmp partition) OR (req_1=PASS AND req_2=PASS), FAIL when req_1=PASS AND req_2=FAIL."
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:

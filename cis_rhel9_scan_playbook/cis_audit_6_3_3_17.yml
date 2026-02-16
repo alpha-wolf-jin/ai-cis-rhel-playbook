@@ -4,11 +4,12 @@
   become: yes
   gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.17"
-    req_1: "Check UID_MIN variable is set and extract value from /etc/login.defs"
-    req_2: "Verify audit rule for chacl command exists in on-disk configuration files"
-    req_3: "Verify audit rule for chacl command is loaded in running configuration"
-    req_4: "OVERALL Verify: Ensure successful and unsuccessful attempts to use the chacl command are collected"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.17"
+    req_1: "Check on-disk audit rules for chacl command"
+    req_2: "Check loaded audit rules for chacl command"
+    req_3: "OVERALL Verify: Ensure successful and unsuccessful attempts to use the chacl command are collected"
+    expected_on_disk: "-a always,exit -F path=/usr/bin/chacl -F perm=x -F auid>=1000 -F auid!=unset -k perm_chng"
+    expected_loaded: "-a always,exit -S all -F path=/usr/bin/chacl -F perm=x -F auid>=1000 -F auid!=-1 -F key=perm_chng"
 
   tasks:
     - name: Initialize data variables
@@ -23,246 +24,168 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Check UID_MIN variable is set and extract value from /etc/login.defs
-    - name: Req 1 - Extract UID_MIN from /etc/login.defs
-      shell: |
-        awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
+    - name: Req 1 - Execute on-disk audit rules check script
+      copy:
+        dest: "/tmp/cis_check_on_disk_chacl.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
+          &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+          &&/ -F *auid>=${UID_MIN}/ \
+          &&/ -F *perm=x/ \
+          &&/ -F *path=\/usr\/bin\/chacl/ \
+          &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
+          || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the on-disk audit script
+      shell: "/tmp/cis_check_on_disk_chacl.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
-    - name: Store requirement 1 details
-      set_fact:
-        task_1_name: "Extract UID_MIN from /etc/login.defs"
-        task_1_cmd: |
-          awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
-        task_1_rc: "{{ result_1.rc | default(-1) }}"
-        data_1: "{{ result_1.stdout | default('') | trim }}"
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_check_on_disk_chacl.sh"
+        state: absent
       ignore_errors: true
 
-    - name: Set requirement 1 status and rationale
+    - name: Store requirement 1 details
       set_fact:
-        status_1: "{{ ('PASS' if (data_1 | default('') | trim is match('^[0-9]+$')) else 'FAIL') | trim }}"
-        rationale_1: "PASS when command returns a numeric value (e.g., 1000), FAIL when output is empty or non-numeric."
+        task_1_name: "Req 1 - Execute on-disk audit rules check script"
+        task_1_cmd: "bash /tmp/cis_check_on_disk_chacl.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == expected_on_disk %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == expected_on_disk %}
+            PASS when output exactly matches expected on-disk rule
+          {% else %}
+            FAIL: Expected "{{ expected_on_disk }}", got "{{ output }}"
+          {% endif %}
 
-    # Requirement 2: Verify audit rule for chacl command exists in on-disk configuration files
-    - name: Req 2 - Create temporary audit script for on-disk check
+    - name: Req 2 - Execute loaded audit rules check script
       copy:
-        dest: "/tmp/cis_audit_6.3.3.17_req2.sh"
+        dest: "/tmp/cis_check_loaded_chacl.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          if [ -n "${UID_MIN}" ]; then
-            awk "/^ *-a *always,exit/ \
-            &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
-            &&/ -F *auid>=${UID_MIN}/ \
-            &&/ -F *perm=x/ \
-            &&/ -F *path=\/usr\/bin\/chacl/ \
-            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules
-          else
-            printf "ERROR: Variable 'UID_MIN' is unset.\n"
-          fi
+          [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ \
+          &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+          &&/ -F *auid>=${UID_MIN}/ \
+          &&/ -F *perm=x/ \
+          &&/ -F *path=\/usr\/bin\/chacl/ \
+          &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" \
+          || printf "ERROR: Variable 'UID_MIN' is unset.\n"
           {% endraw %}
       register: script_create_2
       ignore_errors: true
-      when: data_1 | default('') | length > 0
 
-    - name: Req 2 - Execute the audit script for on-disk check
-      shell: "/tmp/cis_audit_6.3.3.17_req2.sh"
+    - name: Req 2 - Execute the loaded audit script
+      shell: "/tmp/cis_check_loaded_chacl.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: data_1 | default('') | length > 0
 
     - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_6.3.3.17_req2.sh"
+        path: "/tmp/cis_check_loaded_chacl.sh"
         state: absent
       ignore_errors: true
-      when: data_1 | default('') | length > 0
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify audit rule for chacl in on-disk configuration"
-        task_2_cmd: "Script: /tmp/cis_audit_6.3.3.17_req2.sh"
+        task_2_name: "Req 2 - Execute loaded audit rules check script"
+        task_2_cmd: "bash /tmp/cis_check_loaded_chacl.sh"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-      ignore_errors: true
-      when: data_1 | default('') | length > 0
-
-    - name: Set requirement 2 status and rationale
-      set_fact:
         status_2: >-
-          {% if data_1 | default('') | length > 0 %}
-            {% set expected_output = '-a always,exit -F path=/usr/bin/chacl -F perm=x -F auid>=' + data_1 + ' -F auid!=unset -k perm_chng' %}
-            {% if data_2 | default('') | trim == expected_output %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_2: >-
-          {% if data_1 | default('') | length > 0 %}
-            {% set expected_output = '-a always,exit -F path=/usr/bin/chacl -F perm=x -F auid>=' + data_1 + ' -F auid!=unset -k perm_chng' %}
-            PASS when script output exactly matches {{ expected_output }}, FAIL when output does not match or error is printed.
-          {% else %}
-            FAIL: UID_MIN not set or empty, cannot verify audit rule
-          {% endif %}
-      when: data_1 | default('') | length > 0
-
-    # Requirement 3: Verify audit rule for chacl command is loaded in running configuration
-    - name: Req 3 - Create temporary audit script for running configuration
-      copy:
-        dest: "/tmp/cis_audit_6.3.3.17_req3.sh"
-        mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          if [ -n "${UID_MIN}" ]; then
-            auditctl -l | awk "/^ *-a *always,exit/ \
-            &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
-            &&/ -F *auid>=${UID_MIN}/ \
-            &&/ -F *perm=x/ \
-            &&/ -F *path=\/usr\/bin\/chacl/ \
-            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)"
-          else
-            printf "ERROR: Variable 'UID_MIN' is unset.\n"
-          fi
-          {% endraw %}
-      register: script_create_3
-      ignore_errors: true
-      when: data_1 | default('') | length > 0
-
-    - name: Req 3 - Execute the audit script for running configuration
-      shell: "/tmp/cis_audit_6.3.3.17_req3.sh"
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      changed_when: false
-      when: data_1 | default('') | length > 0
-
-    - name: Req 3 - Remove temporary audit script
-      file:
-        path: "/tmp/cis_audit_6.3.3.17_req3.sh"
-        state: absent
-      ignore_errors: true
-      when: data_1 | default('') | length > 0
-
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Verify audit rule for chacl in running configuration"
-        task_3_cmd: "Script: /tmp/cis_audit_6.3.3.17_req3.sh"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-      ignore_errors: true
-      when: data_1 | default('') | length > 0
-
-    - name: Set requirement 3 status and rationale
-      set_fact:
-        status_3: >-
-          {% if data_1 | default('') | length > 0 %}
-            {% set expected_output = '-a always,exit -S all -F path=/usr/bin/chacl -F perm=x -F auid>=' + data_1 + ' -F auid!=-1 -F key=perm_chng' %}
-            {% if data_3 | default('') | trim == expected_output %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: >-
-          {% if data_1 | default('') | length > 0 %}
-            {% set expected_output = '-a always,exit -S all -F path=/usr/bin/chacl -F perm=x -F auid>=' + data_1 + ' -F auid!=-1 -F key=perm_chng' %}
-            PASS when script output exactly matches {{ expected_output }}, FAIL when output does not match or error is printed.
-          {% else %}
-            FAIL: UID_MIN not set or empty, cannot verify audit rule
-          {% endif %}
-      when: data_1 | default('') | length > 0
-
-    # Set default values for Requirements 2 and 3 when UID_MIN is not set
-    - name: Set default requirement 2 values when UID_MIN not set
-      set_fact:
-        task_2_name: "Verify audit rule for chacl in on-disk configuration"
-        task_2_cmd: "Script: /tmp/cis_audit_6.3.3.17_req2.sh"
-        task_2_rc: -1
-        data_2: "ERROR: UID_MIN not set or empty"
-        status_2: "FAIL"
-        rationale_2: "FAIL: UID_MIN not set or empty, cannot verify audit rule"
-      when: data_1 | default('') | length == 0
-
-    - name: Set default requirement 3 values when UID_MIN not set
-      set_fact:
-        task_3_name: "Verify audit rule for chacl in running configuration"
-        task_3_cmd: "Script: /tmp/cis_audit_6.3.3.17_req3.sh"
-        task_3_rc: -1
-        data_3: "ERROR: UID_MIN not set or empty"
-        status_3: "FAIL"
-        rationale_3: "FAIL: UID_MIN not set or empty, cannot verify audit rule"
-      when: data_1 | default('') | length == 0
-
-    # Requirement 4: Overall compliance
-    - name: Store requirement 4 details
-      set_fact:
-        status_4: >-
-          {% if (status_1 | default('FAIL') | trim == 'PASS') and 
-                (status_2 | default('FAIL') | trim == 'PASS') and 
-                (status_3 | default('FAIL') | trim == 'PASS') %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == expected_loaded %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_4: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS, FAIL otherwise."
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == expected_loaded %}
+            PASS when output exactly matches expected loaded rule
+          {% else %}
+            FAIL: Expected "{{ expected_loaded }}", got "{{ output }}"
+          {% endif %}
 
-    # Generate compliance report
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Req 3 - Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "Requirement 1 status: {{ status_1 | default('UNKNOWN') }}, Requirement 2 status: {{ status_2 | default('UNKNOWN') }}"
+        status_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS when both requirement 1 and 2 are PASS
+          {% else %}
+            FAIL: Requirement 1 status is {{ status_1 | default('FAIL') }}, Requirement 2 status is {{ status_2 | default('FAIL') }}
+          {% endif %}
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.3.3.17"
           - "========================================================"
-          - "Reference: {{ kcs_article }}"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

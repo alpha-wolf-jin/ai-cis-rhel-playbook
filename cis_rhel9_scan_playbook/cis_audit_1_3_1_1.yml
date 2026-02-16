@@ -2,11 +2,11 @@
 - name: Data Collection for CIS checkpoint 1.3.1.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.3.1.1"
-    req_1: "Check if libselinux package is installed using command: rpm -q libselinux"
-    req_2: "OVERALL Verify: Ensure SELinux is installed"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.3.1.1"
+    req_1: "Verify SELinux is installed using command: rpm -q libselinux"
+    req_2: "Ensure SELinux is installed"
 
   tasks:
     - name: Initialize data variables
@@ -18,8 +18,8 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Check if libselinux package is installed using command: rpm -q libselinux
-    - name: Req 1 - Check libselinux package installation
+    # Requirement 1: Verify SELinux is installed using command: rpm -q libselinux
+    - name: Req 1 - Check if libselinux package is installed
       shell: rpm -q libselinux
       args:
         executable: /bin/bash
@@ -29,31 +29,30 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check libselinux package installation"
+        task_1_name: "Check if libselinux package is installed"
         task_1_cmd: "rpm -q libselinux"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is search('libselinux-')) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output shows libselinux package is installed, FAIL when output is package libselinux is not installed' if (result_1.stdout | default('') | trim is search('libselinux-')) else 'FAIL when output is package libselinux is not installed') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | regex_search('^libselinux-')) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when the command returns a package name and version string (e.g., libselinux-<version>), indicating the package is installed' if (result_1.stdout | default('') | trim | regex_search('^libselinux-')) else 'FAIL when the command returns package libselinux is not installed or similar') | trim }}"
 
-    # Requirement 2: OVERALL Verify: Ensure SELinux is installed
+    # Requirement 2: Ensure SELinux is installed
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "OVERALL Verify SELinux installation"
-        task_2_cmd: "N/A (derived from requirement 1)"
-        task_2_rc: "{{ task_1_rc }}"
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | trim == 'PASS') else 'FAIL when req_1=FAIL') | trim }}"
+        task_2_name: "Overall verification - Ensure SELinux is installed"
+        task_2_cmd: "N/A - Overall status based on requirement 1"
+        task_2_rc: "0"
+        data_2: "Based on requirement 1 status: {{ status_1 | default('UNKNOWN') }}"
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when req_1=PASS' if (status_1 | default('') | trim == 'PASS') else 'FAIL otherwise') | trim }}"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.3.1.1"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -74,6 +73,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | trim }}"
-          - "  Rationale: {{ rationale_2 | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

@@ -1,209 +1,195 @@
 ---
-- name: Data Collection for CIS 1.8.3
+- name: Data Collection for CIS 1.8.3 - GDM Screen Lock Configuration
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.8.3"
-    req_1: "Verify that the GDM idle-delay setting is locked (not user-writable)"
-    req_2: "Verify that the GDM lock-delay setting is locked (not user-writable)"
-    req_3: "Verify that the GDM lock-delay is configured to 5 seconds or less"
-    req_4: "Verify that the GDM idle-delay is configured to 900 seconds (15 minutes) or less and is not 0 (disabled)"
-    req_5: "Ensure GDM screen lock is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.3"
+    req_1: "Verify that the GDM idle-delay setting is locked at the system level"
+    req_2: "Verify that the GDM lock-delay setting is locked at the system level"
+    req_3: "Verify that the GDM lock-delay value is configured to 5 seconds or less"
+    req_4: "Verify that the GDM idle-delay value is configured to 900 seconds (15 minutes) or less, and is not 0"
+    req_5: "OVERALL Verify: Ensure GDM screen lock is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        data_4: "Not collected yet"
         task_4_name: "Not executed"
         task_4_cmd: "N/A"
         task_4_rc: -1
-        data_5: "Not collected yet"
         task_5_name: "Not executed"
         task_5_cmd: "N/A"
         task_5_rc: -1
-        gdm_available: false
 
-    # Pre-check: Determine if GDM/GNOME is available
-    - name: Check if GDM/GNOME is installed
-      shell: |
-        if command -v gsettings >/dev/null 2>&1; then
-          gsettings list-schemas | grep -q "org.gnome.desktop" && echo "available"
-        fi
-      args:
-        executable: /bin/bash
-      register: gdm_check
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Set GDM availability flag
-      set_fact:
-        gdm_available: "{{ gdm_check.stdout | default('') | trim == 'available' }}"
-
-    # Requirement 1: Verify that the GDM idle-delay setting is locked (not user-writable)
-    - name: "Req 1 - Check if idle-delay is locked"
-      shell: >
-        gsettings writable org.gnome.desktop.session idle-delay
+    - name: Req 1 - Check idle-delay setting lock
+      shell: gsettings writable org.gnome.desktop.session idle-delay
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_available
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if idle-delay is locked"
+        task_1_name: "Check idle-delay setting lock"
         task_1_cmd: "gsettings writable org.gnome.desktop.session idle-delay"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {{ 
-            ('NA' if not gdm_available else 
-            ('PASS' if (result_1.stdout | default('') | trim == 'false') else 'FAIL')
-            ) | trim 
-          }}
-        rationale_1: >-
-          {{ 
-            ('Not applicable - GDM/GNOME not installed' if not gdm_available else
-            'PASS when output is false, FAIL when output is true'
-            ) | trim 
-          }}
-      when: gdm_available or not gdm_available
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'false') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly false, FAIL otherwise' if (result_1.stdout | default('') | trim == 'false') else 'FAIL: Expected false, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: Verify that the GDM lock-delay setting is locked (not user-writable)
-    - name: "Req 2 - Check if lock-delay is locked"
-      shell: >
-        gsettings writable org.gnome.desktop.screensaver lock-delay
+    - name: Req 2 - Check lock-delay setting lock
+      shell: gsettings writable org.gnome.desktop.screensaver lock-delay
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_available and data_1 | default('') | trim != ''
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if lock-delay is locked"
+        task_2_name: "Check lock-delay setting lock"
         task_2_cmd: "gsettings writable org.gnome.desktop.screensaver lock-delay"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {{ 
-            ('NA' if not gdm_available else 
-            ('PASS' if (result_2.stdout | default('') | trim == 'false') else 'FAIL')
-            ) | trim 
-          }}
-        rationale_2: >-
-          {{ 
-            ('Not applicable - GDM/GNOME not installed' if not gdm_available else
-            'PASS when output is false, FAIL when output is true'
-            ) | trim 
-          }}
-      when: gdm_available or not gdm_available
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'false') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when output is exactly false, FAIL otherwise' if (result_2.stdout | default('') | trim == 'false') else 'FAIL: Expected false, got ' + (result_2.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 3: Verify that the GDM lock-delay is configured to 5 seconds or less
-    - name: "Req 3 - Check lock-delay value"
-      shell: >
-        gsettings get org.gnome.desktop.screensaver lock-delay
+    - name: Req 3 - Check lock-delay value configuration
+      shell: gsettings get org.gnome.desktop.screensaver lock-delay
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_available and data_2 | default('') | trim != ''
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check lock-delay value"
+        task_3_name: "Check lock-delay value configuration"
         task_3_cmd: "gsettings get org.gnome.desktop.screensaver lock-delay"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: >-
-          {{ 
-            ('NA' if not gdm_available else 
-            ('PASS' if (result_3.stdout | default('') | trim in ['uint32 0', 'uint32 1', 'uint32 2', 'uint32 3', 'uint32 4', 'uint32 5']) else 'FAIL')
-            ) | trim 
-          }}
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set value_match = output | regex_search('uint32 ([0-9]+)') %}
+            {% if value_match %}
+              {% set value = value_match.split(' ')[1] | int %}
+              {% if value <= 5 %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
         rationale_3: >-
-          {{ 
-            ('Not applicable - GDM/GNOME not installed' if not gdm_available else
-            'PASS when output is uint32 0, uint32 1, uint32 2, uint32 3, uint32 4, or uint32 5, FAIL otherwise'
-            ) | trim 
-          }}
-      when: gdm_available or not gdm_available
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set value_match = output | regex_search('uint32 ([0-9]+)') %}
+            {% if value_match %}
+              {% set value = value_match.split(' ')[1] | int %}
+              {% if value <= 5 %}
+                PASS when the extracted numeric value is an integer less than or equal to 5
+              {% else %}
+                FAIL: Value {{ value }} is greater than 5
+              {% endif %}
+            {% else %}
+              FAIL: Could not extract numeric value from output
+            {% endif %}
+          {% else %}
+            FAIL: No output received
+          {% endif %}
 
-    # Requirement 4: Verify that the GDM idle-delay is configured to 900 seconds (15 minutes) or less and is not 0 (disabled)
-    - name: "Req 4 - Check idle-delay value"
-      shell: >
-        gsettings get org.gnome.desktop.session idle-delay
+    - name: Req 4 - Check idle-delay value configuration
+      shell: gsettings get org.gnome.desktop.session idle-delay
       args:
         executable: /bin/bash
       register: result_4
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_available and data_1 | default('') | trim != ''
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check idle-delay value"
+        task_4_name: "Check idle-delay value configuration"
         task_4_cmd: "gsettings get org.gnome.desktop.session idle-delay"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
         status_4: >-
-          {{ 
-            ('NA' if not gdm_available else 
-            ('PASS' if (result_4.stdout | default('') | trim != '' and 
-                       result_4.stdout | default('') | trim != 'uint32 0' and 
-                       result_4.stdout | default('') | trim | regex_replace('uint32 ', '') | int <= 900 and 
-                       result_4.stdout | default('') | trim | regex_replace('uint32 ', '') | int > 0) 
-             else 'FAIL')
-            ) | trim 
-          }}
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set value_match = output | regex_search('uint32 ([0-9]+)') %}
+            {% if value_match %}
+              {% set value = value_match.split(' ')[1] | int %}
+              {% if value > 0 and value <= 900 %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
         rationale_4: >-
-          {{ 
-            ('Not applicable - GDM/GNOME not installed' if not gdm_available else
-            'PASS when output is a uint32 value greater than 0 and less than or equal to 900, FAIL when output is uint32 0 or a value greater than 900 or empty'
-            ) | trim 
-          }}
-      when: gdm_available or not gdm_available
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set value_match = output | regex_search('uint32 ([0-9]+)') %}
+            {% if value_match %}
+              {% set value = value_match.split(' ')[1] | int %}
+              {% if value > 0 and value <= 900 %}
+                PASS when the extracted numeric value is an integer greater than 0 and less than or equal to 900
+              {% elif value == 0 %}
+                FAIL: Value is 0, must be greater than 0
+              {% elif value > 900 %}
+                FAIL: Value {{ value }} is greater than 900
+              {% else %}
+                FAIL: Invalid value {{ value }}
+              {% endif %}
+            {% else %}
+              FAIL: Could not extract numeric value from output
+            {% endif %}
+          {% else %}
+            FAIL: No output received
+          {% endif %}
 
-    # Requirement 5: OVERALL Verify - Ensure GDM screen lock is configured
     - name: Store requirement 5 details
       set_fact:
-        task_5_name: "Overall verification"
-        task_5_cmd: "N/A - Combined check"
+        task_5_name: "Overall compliance check"
+        task_5_cmd: "N/A - Composite check"
         task_5_rc: 0
-        data_5: "Combined results of requirements 1-4"
+        data_5: "N/A"
         status_5: >-
-          {{ 
-            ('PASS' if not gdm_available else
-            ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS') else 'FAIL')
-            ) | trim 
-          }}
+          {% if status_1|default('FAIL')|trim == 'PASS' and 
+                status_2|default('FAIL')|trim == 'PASS' and 
+                status_3|default('FAIL')|trim == 'PASS' and 
+                status_4|default('FAIL')|trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
         rationale_5: >-
-          {{ 
-            ('PASS - GDM/GNOME not installed, check not applicable' if not gdm_available else
-            'PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise'
-            ) | trim 
-          }}
+          {% if status_1|default('FAIL')|trim == 'PASS' and 
+                status_2|default('FAIL')|trim == 'PASS' and 
+                status_3|default('FAIL')|trim == 'PASS' and 
+                status_4|default('FAIL')|trim == 'PASS' %}
+            PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS
+          {% else %}
+            FAIL: One or more requirements failed
+          {% endif %}
 
     - name: Generate compliance report
       debug:
@@ -211,51 +197,51 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.8.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Task: {{ task_5_name }}"
-          - "  Command: {{ task_5_cmd }}"
-          - "  Exit code: {{ task_5_rc }}"
-          - "  Data: {{ data_5 }}"
-          - "  Status: {{ status_5 }}"
-          - "  Rationale: {{ rationale_5 }}"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 }}"
-          - "  Rationale: {{ rationale_5 }}"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
           - "========================================================"

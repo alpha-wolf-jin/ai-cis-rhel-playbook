@@ -1,43 +1,82 @@
 ---
-- name: Data Collection for CIS 1.8.7
+- name: Data Collection for CIS checkpoint 1.8.7
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.8.7"
-    req_1: |
-      Verify Xwayland is not enabled by checking that the WaylandEnable setting in the GDM custom configuration is set to 'false' using command: `sed -n '/\[daemon\]/,/\[/p' /etc/gdm/custom.conf | grep -Psi '^\h*waylandenable\b'`. Rationale: PASS when the command output is exactly 'WaylandEnable=false', FAIL otherwise
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.7"
+    req_1: "Check if the GDM custom configuration file exists at /etc/gdm/custom.conf"
+    req_2: "Verify the WaylandEnable setting in the [daemon] block of /etc/gdm/custom.conf"
+    req_3: "OVERALL Verify: Ensure Xwayland is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify Xwayland is not enabled
-    - name: "Req 1 - Check WaylandEnable setting"
-      shell: |
-        sed -n '/\[daemon\]/,/\[/p' /etc/gdm/custom.conf | grep -Psi '^\h*waylandenable\b'
+    - name: Req 1 - Check if GDM custom.conf exists
+      shell: test -f /etc/gdm/custom.conf
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check WaylandEnable setting"
-        task_1_cmd: |
-          sed -n '/\[daemon\]/,/\[/p' /etc/gdm/custom.conf | grep -Psi '^\h*waylandenable\b'
+        task_1_name: "Check if GDM custom.conf exists"
+        task_1_cmd: "test -f /etc/gdm/custom.conf"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
-        data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'WaylandEnable=false') else 'FAIL') | trim }}"
-        rationale_1: "{{ 'PASS when the command output is exactly WaylandEnable=false, FAIL otherwise' | trim }}"
-        overall_status: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'WaylandEnable=false') else 'FAIL') | trim }}"
-        overall_rationale: "{{ 'PASS when Xwayland is not enabled (WaylandEnable=false), FAIL otherwise' | trim }}"
+        data_1: "{{ ('File exists' if result_1.rc == 0 else 'File does not exist') | trim }}"
+        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
+        rationale_1: "PASS when the file exists, FAIL when the file does not exist"
+
+    - name: Req 2 - Verify WaylandEnable setting
+      shell: |
+        {% raw %}
+        sed -n '/\[daemon\]/,/\[/p' /etc/gdm/custom.conf 2>/dev/null | grep -Psi '^\h*waylandenable\b'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify WaylandEnable setting in [daemon] block"
+        task_2_cmd: |
+          sed -n '/\[daemon\]/,/\[/p' /etc/gdm/custom.conf 2>/dev/null | grep -Psi '^\h*waylandenable\b'
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim) == 'WaylandEnable=false' else 'FAIL') | trim }}"
+        rationale_2: "PASS when the output is exactly 'WaylandEnable=false', FAIL when the output is different, missing, or the file does not contain a [daemon] block"
+
+    - name: Store requirement 3 details (Overall verification)
+      set_fact:
+        task_3_name: "Overall Xwayland configuration check"
+        task_3_cmd: "N/A - Combined check of requirements 1 and 2"
+        task_3_rc: 0
+        data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
 
     - name: Generate compliance report
       debug:
@@ -45,19 +84,35 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.8.7"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.7"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
           - "========================================================"

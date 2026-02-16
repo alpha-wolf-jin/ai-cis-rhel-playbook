@@ -1,20 +1,19 @@
 ---
-- name: Data Collection for CIS 6.3.3.7
+- name: Data Collection for CIS 6.3.3.7 - Ensure unsuccessful file access attempts are collected
   hosts: all
   become: yes
   gather_facts: false
   vars:
     kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.7"
-    req_1: "Check that UID_MIN is defined in /etc/login.defs"
-    req_2: "Verify the on-disk audit rules for unsuccessful file access attempts (EACCES) for 64-bit processes"
-    req_3: "Verify the on-disk audit rules for unsuccessful file access attempts (EPERM) for 64-bit processes"
-    req_4: "Verify the on-disk audit rules for unsuccessful file access attempts (EACCES) for 32-bit processes"
-    req_5: "Verify the on-disk audit rules for unsuccessful file access attempts (EPERM) for 32-bit processes"
-    req_6: "Verify the running audit rules for unsuccessful file access attempts (EACCES) for 64-bit processes"
-    req_7: "Verify the running audit rules for unsuccessful file access attempts (EPERM) for 64-bit processes"
-    req_8: "Verify the running audit rules for unsuccessful file access attempts (EACCES) for 32-bit processes"
-    req_9: "Verify the running audit rules for unsuccessful file access attempts (EPERM) for 32-bit processes"
-    req_10: "OVERALL Verify: Ensure unsuccessful file access attempts are collected"
+    req_1: "Check on-disk audit rules for unsuccessful file access attempts for b64 arch with EACCES exit"
+    req_2: "Check on-disk audit rules for unsuccessful file access attempts for b64 arch with EPERM exit"
+    req_3: "Check on-disk audit rules for unsuccessful file access attempts for b32 arch with EACCES exit"
+    req_4: "Check on-disk audit rules for unsuccessful file access attempts for b32 arch with EPERM exit"
+    req_5: "Check loaded audit rules for unsuccessful file access attempts for b64 arch with EACCES exit"
+    req_6: "Check loaded audit rules for unsuccessful file access attempts for b64 arch with EPERM exit"
+    req_7: "Check loaded audit rules for unsuccessful file access attempts for b32 arch with EACCES exit"
+    req_8: "Check loaded audit rules for unsuccessful file access attempts for b32 arch with EPERM exit"
+    req_9: "OVERALL Verify: Ensure unsuccessful file access attempts are collected"
 
   tasks:
     - name: Initialize data variables
@@ -22,56 +21,99 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
         task_4_name: "Not executed"
         task_4_cmd: "N/A"
         task_4_rc: -1
+        data_4: ""
+        status_4: "UNKNOWN"
+        rationale_4: "Not evaluated"
         task_5_name: "Not executed"
         task_5_cmd: "N/A"
         task_5_rc: -1
+        data_5: ""
+        status_5: "UNKNOWN"
+        rationale_5: "Not evaluated"
         task_6_name: "Not executed"
         task_6_cmd: "N/A"
         task_6_rc: -1
+        data_6: ""
+        status_6: "UNKNOWN"
+        rationale_6: "Not evaluated"
         task_7_name: "Not executed"
         task_7_cmd: "N/A"
         task_7_rc: -1
+        data_7: ""
+        status_7: "UNKNOWN"
+        rationale_7: "Not evaluated"
         task_8_name: "Not executed"
         task_8_cmd: "N/A"
         task_8_rc: -1
+        data_8: ""
+        status_8: "UNKNOWN"
+        rationale_8: "Not evaluated"
         task_9_name: "Not executed"
         task_9_cmd: "N/A"
         task_9_rc: -1
-        task_10_name: "Not executed"
-        task_10_cmd: "N/A"
-        task_10_rc: -1
+        data_9: ""
+        status_9: "UNKNOWN"
+        rationale_9: "Not evaluated"
 
-    # Requirement 1: Check that UID_MIN is defined in /etc/login.defs
-    - name: Req 1 - Check UID_MIN definition
-      shell: |
-        awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
+    - name: Req 1 - Execute on-disk b64 EACCES audit script
+      copy:
+        dest: "/tmp/cis_audit_req_1.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+          if [ -n "${UID_MIN}" ]; then
+            awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Run on-disk b64 EACCES audit script
+      shell: "/tmp/cis_audit_req_1.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_req_1.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check UID_MIN definition in /etc/login.defs"
-        task_1_cmd: |
-          awk '/^\s*UID_MIN/{print $2}' /etc/login.defs
+        task_1_name: "Execute on-disk b64 EACCES audit script"
+        task_1_cmd: "Check on-disk rules for b64 arch with EACCES exit"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is match('^[0-9]+$')) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the command returns a numeric value (e.g., 1000)' if (result_1.stdout | default('') | trim is match('^[0-9]+$')) else 'FAIL when it returns empty or an error') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout is defined and result_1.stdout != '' and 'ERROR' not in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k access (or functionally equivalent), FAIL otherwise' if (result_1.stdout is defined and result_1.stdout != '' and 'ERROR' not in result_1.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 2: Verify on-disk EACCES 64-bit audit rules
-    - name: Req 2 - Execute on-disk EACCES 64-bit audit script
+    - name: Req 2 - Execute on-disk b64 EPERM audit script
       copy:
         dest: "/tmp/cis_audit_req_2.sh"
         mode: '0700'
@@ -79,12 +121,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_2
       ignore_errors: true
 
-    - name: Req 2 - Run the audit script
+    - name: Req 2 - Run on-disk b64 EPERM audit script
       shell: "/tmp/cis_audit_req_2.sh"
       args:
         executable: /bin/bash
@@ -100,16 +146,14 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify on-disk audit rules for EACCES 64-bit"
-        task_2_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && awk '/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_2_name: "Execute on-disk b64 EPERM audit script"
+        task_2_cmd: "Check on-disk rules for b64 arch with EPERM exit"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EACCES.*auid>=')) else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_2.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EACCES.*auid>=')) else 'FAIL otherwise') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout is defined and result_2.stdout != '' and 'ERROR' not in result_2.stdout) else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k access (or functionally equivalent), FAIL otherwise' if (result_2.stdout is defined and result_2.stdout != '' and 'ERROR' not in result_2.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 3: Verify on-disk EPERM 64-bit audit rules
-    - name: Req 3 - Execute on-disk EPERM 64-bit audit script
+    - name: Req 3 - Execute on-disk b32 EACCES audit script
       copy:
         dest: "/tmp/cis_audit_req_3.sh"
         mode: '0700'
@@ -117,12 +161,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_3
       ignore_errors: true
 
-    - name: Req 3 - Run the audit script
+    - name: Req 3 - Run on-disk b32 EACCES audit script
       shell: "/tmp/cis_audit_req_3.sh"
       args:
         executable: /bin/bash
@@ -138,16 +186,14 @@
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Verify on-disk audit rules for EPERM 64-bit"
-        task_3_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && awk '/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_3_name: "Execute on-disk b32 EACCES audit script"
+        task_3_cmd: "Check on-disk rules for b32 arch with EACCES exit"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EPERM.*auid>=')) else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_3.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EPERM.*auid>=')) else 'FAIL otherwise') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout is defined and result_3.stdout != '' and 'ERROR' not in result_3.stdout) else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k access (or functionally equivalent), FAIL otherwise' if (result_3.stdout is defined and result_3.stdout != '' and 'ERROR' not in result_3.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 4: Verify on-disk EACCES 32-bit audit rules
-    - name: Req 4 - Execute on-disk EACCES 32-bit audit script
+    - name: Req 4 - Execute on-disk b32 EPERM audit script
       copy:
         dest: "/tmp/cis_audit_req_4.sh"
         mode: '0700'
@@ -155,12 +201,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_4
       ignore_errors: true
 
-    - name: Req 4 - Run the audit script
+    - name: Req 4 - Run on-disk b32 EPERM audit script
       shell: "/tmp/cis_audit_req_4.sh"
       args:
         executable: /bin/bash
@@ -176,16 +226,14 @@
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Verify on-disk audit rules for EACCES 32-bit"
-        task_4_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && awk '/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_4_name: "Execute on-disk b32 EPERM audit script"
+        task_4_cmd: "Check on-disk rules for b32 arch with EPERM exit"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EACCES.*auid>=')) else 'FAIL') | trim }}"
-        rationale_4: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_4.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EACCES.*auid>=')) else 'FAIL otherwise') | trim }}"
+        status_4: "{{ ('PASS' if (result_4.stdout is defined and result_4.stdout != '' and 'ERROR' not in result_4.stdout) else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k access (or functionally equivalent), FAIL otherwise' if (result_4.stdout is defined and result_4.stdout != '' and 'ERROR' not in result_4.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 5: Verify on-disk EPERM 32-bit audit rules
-    - name: Req 5 - Execute on-disk EPERM 32-bit audit script
+    - name: Req 5 - Execute loaded b64 EACCES audit script
       copy:
         dest: "/tmp/cis_audit_req_5.sh"
         mode: '0700'
@@ -193,12 +241,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)"
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_5
       ignore_errors: true
 
-    - name: Req 5 - Run the audit script
+    - name: Req 5 - Run loaded b64 EACCES audit script
       shell: "/tmp/cis_audit_req_5.sh"
       args:
         executable: /bin/bash
@@ -214,16 +266,14 @@
 
     - name: Store requirement 5 details
       set_fact:
-        task_5_name: "Verify on-disk audit rules for EPERM 32-bit"
-        task_5_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && awk '/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_5_name: "Execute loaded b64 EACCES audit script"
+        task_5_cmd: "Check loaded rules for b64 arch with EACCES exit"
         task_5_rc: "{{ result_5.rc | default(-1) }}"
         data_5: "{{ result_5.stdout | default('') | trim }}"
-        status_5: "{{ ('PASS' if (result_5.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EPERM.*auid>=')) else 'FAIL') | trim }}"
-        rationale_5: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_5.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EPERM.*auid>=')) else 'FAIL otherwise') | trim }}"
+        status_5: "{{ ('PASS' if (result_5.stdout is defined and result_5.stdout != '' and 'ERROR' not in result_5.stdout) else 'FAIL') | trim }}"
+        rationale_5: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S open,truncate,ftruncate,creat,openat -F exit=-EACCES -F auid>=1000 -F auid!=-1 -F key=access (or functionally equivalent), FAIL otherwise' if (result_5.stdout is defined and result_5.stdout != '' and 'ERROR' not in result_5.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 6: Verify running EACCES 64-bit audit rules
-    - name: Req 6 - Execute running EACCES 64-bit audit script
+    - name: Req 6 - Execute loaded b64 EPERM audit script
       copy:
         dest: "/tmp/cis_audit_req_6.sh"
         mode: '0700'
@@ -231,12 +281,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)"
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_6
       ignore_errors: true
 
-    - name: Req 6 - Run the audit script
+    - name: Req 6 - Run loaded b64 EPERM audit script
       shell: "/tmp/cis_audit_req_6.sh"
       args:
         executable: /bin/bash
@@ -252,16 +306,14 @@
 
     - name: Store requirement 6 details
       set_fact:
-        task_6_name: "Verify running audit rules for EACCES 64-bit"
-        task_6_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_6_name: "Execute loaded b64 EPERM audit script"
+        task_6_cmd: "Check loaded rules for b64 arch with EPERM exit"
         task_6_rc: "{{ result_6.rc | default(-1) }}"
         data_6: "{{ result_6.stdout | default('') | trim }}"
-        status_6: "{{ ('PASS' if (result_6.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EACCES.*auid>=')) else 'FAIL') | trim }}"
-        rationale_6: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_6.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EACCES.*auid>=')) else 'FAIL otherwise') | trim }}"
+        status_6: "{{ ('PASS' if (result_6.stdout is defined and result_6.stdout != '' and 'ERROR' not in result_6.stdout) else 'FAIL') | trim }}"
+        rationale_6: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S open,truncate,ftruncate,creat,openat -F exit=-EPERM -F auid>=1000 -F auid!=-1 -F key=access (or functionally equivalent), FAIL otherwise' if (result_6.stdout is defined and result_6.stdout != '' and 'ERROR' not in result_6.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 7: Verify running EPERM 64-bit audit rules
-    - name: Req 7 - Execute running EPERM 64-bit audit script
+    - name: Req 7 - Execute loaded b32 EACCES audit script
       copy:
         dest: "/tmp/cis_audit_req_7.sh"
         mode: '0700'
@@ -269,12 +321,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)"
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_7
       ignore_errors: true
 
-    - name: Req 7 - Run the audit script
+    - name: Req 7 - Run loaded b32 EACCES audit script
       shell: "/tmp/cis_audit_req_7.sh"
       args:
         executable: /bin/bash
@@ -290,16 +346,14 @@
 
     - name: Store requirement 7 details
       set_fact:
-        task_7_name: "Verify running audit rules for EPERM 64-bit"
-        task_7_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b64/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_7_name: "Execute loaded b32 EACCES audit script"
+        task_7_cmd: "Check loaded rules for b32 arch with EACCES exit"
         task_7_rc: "{{ result_7.rc | default(-1) }}"
         data_7: "{{ result_7.stdout | default('') | trim }}"
-        status_7: "{{ ('PASS' if (result_7.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EPERM.*auid>=')) else 'FAIL') | trim }}"
-        rationale_7: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_7.stdout | default('') | trim | regex_search('always,exit.*arch=b64.*exit=-EPERM.*auid>=')) else 'FAIL otherwise') | trim }}"
+        status_7: "{{ ('PASS' if (result_7.stdout is defined and result_7.stdout != '' and 'ERROR' not in result_7.stdout) else 'FAIL') | trim }}"
+        rationale_7: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S open,truncate,ftruncate,creat,openat -F exit=-EACCES -F auid>=1000 -F auid!=-1 -F key=access (or functionally equivalent), FAIL otherwise' if (result_7.stdout is defined and result_7.stdout != '' and 'ERROR' not in result_7.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
-    # Requirement 8: Verify running EACCES 32-bit audit rules
-    - name: Req 8 - Execute running EACCES 32-bit audit script
+    - name: Req 8 - Execute loaded b32 EPERM audit script
       copy:
         dest: "/tmp/cis_audit_req_8.sh"
         mode: '0700'
@@ -307,12 +361,16 @@
           {% raw %}
           #!/usr/bin/env bash
           UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          if [ -n "${UID_MIN}" ]; then
+            auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)"
+          else
+            printf "ERROR: Variable 'UID_MIN' is unset.\n"
+          fi
           {% endraw %}
       register: script_create_8
       ignore_errors: true
 
-    - name: Req 8 - Run the audit script
+    - name: Req 8 - Run loaded b32 EPERM audit script
       shell: "/tmp/cis_audit_req_8.sh"
       args:
         executable: /bin/bash
@@ -328,84 +386,29 @@
 
     - name: Store requirement 8 details
       set_fact:
-        task_8_name: "Verify running audit rules for EACCES 32-bit"
-        task_8_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EACCES/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' || printf 'ERROR: Variable UID_MIN is unset.\n'
+        task_8_name: "Execute loaded b32 EPERM audit script"
+        task_8_cmd: "Check loaded rules for b32 arch with EPERM exit"
         task_8_rc: "{{ result_8.rc | default(-1) }}"
         data_8: "{{ result_8.stdout | default('') | trim }}"
-        status_8: "{{ ('PASS' if (result_8.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EACCES.*auid>=')) else 'FAIL') | trim }}"
-        rationale_8: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_8.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EACCES.*auid>=')) else 'FAIL otherwise') | trim }}"
-
-    # Requirement 9: Verify running EPERM 32-bit audit rules
-    - name: Req 9 - Execute running EPERM 32-bit audit script
-      copy:
-        dest: "/tmp/cis_audit_req_9.sh"
-        mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-          [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" || printf "ERROR: Variable 'UID_MIN' is unset.\n"
-          {% endraw %}
-      register: script_create_9
-      ignore_errors: true
-
-    - name: Req 9 - Run the audit script
-      shell: "/tmp/cis_audit_req_9.sh"
-      args:
-        executable: /bin/bash
-      register: result_9
-      ignore_errors: true
-      changed_when: false
-
-    - name: Req 9 - Remove temporary audit script
-      file:
-        path: "/tmp/cis_audit_req_9.sh"
-        state: absent
-      ignore_errors: true
+        status_8: "{{ ('PASS' if (result_8.stdout is defined and result_8.stdout != '' and 'ERROR' not in result_8.stdout) else 'FAIL') | trim }}"
+        rationale_8: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S open,truncate,ftruncate,creat,openat -F exit=-EPERM -F auid>=1000 -F auid!=-1 -F key=access (or functionally equivalent), FAIL otherwise' if (result_8.stdout is defined and result_8.stdout != '' and 'ERROR' not in result_8.stdout) else 'FAIL: No matching rule found or ERROR in output') | trim }}"
 
     - name: Store requirement 9 details
       set_fact:
-        task_9_name: "Verify running audit rules for EPERM 32-bit"
-        task_9_cmd: |
-          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs); [ -n "${UID_MIN}" ] && auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b32/ &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) &&/ -F *auid>=${UID_MIN}/ &&/ -F *exit=-EPERM/ &&/ -S/ &&/creat/ &&/open/ &&/truncate/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' || printf 'ERROR: Variable UID_MIN is unset.\n'
-        task_9_rc: "{{ result_9.rc | default(-1) }}"
-        data_9: "{{ result_9.stdout | default('') | trim }}"
-        status_9: "{{ ('PASS' if (result_9.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EPERM.*auid>=')) else 'FAIL') | trim }}"
-        rationale_9: "{{ ('PASS when the output includes a rule matching -a always,exit -F arch=b32 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=<UID_MIN> -F auid!=unset -k access' if (result_9.stdout | default('') | trim | regex_search('always,exit.*arch=b32.*exit=-EPERM.*auid>=')) else 'FAIL otherwise') | trim }}"
+        task_9_name: "OVERALL Verify"
+        task_9_cmd: "Check overall compliance based on requirements 1-8"
+        task_9_rc: 0
+        data_9: "Overall check based on requirements 1-8"
+        status_9: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS' and status_5 == 'PASS' and status_6 == 'PASS' and status_7 == 'PASS' and status_8 == 'PASS') else 'FAIL') | trim }}"
+        rationale_9: "{{ ('PASS when all requirements 1-8 are PASS, FAIL otherwise' if (status_1 == 'PASS' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS' and status_5 == 'PASS' and status_6 == 'PASS' and status_7 == 'PASS' and status_8 == 'PASS') else 'FAIL: One or more requirements failed') | trim }}"
 
-    # Requirement 10: Overall verification
-    - name: Store requirement 10 details
-      set_fact:
-        task_10_name: "OVERALL Verify: Ensure unsuccessful file access attempts are collected"
-        task_10_cmd: "N/A - Overall check based on all previous requirements"
-        task_10_rc: 0
-        data_10: "N/A"
-        status_10: >-
-          {% set all_status = [status_1, status_2, status_3, status_4, status_5, status_6, status_7, status_8, status_9] %}
-          {% set all_pass = all_status | select('equalto', 'PASS') | list | length %}
-          {% if all_status | length == 9 and all_pass == 9 %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_10: >-
-          {% set all_status = [status_1, status_2, status_3, status_4, status_5, status_6, status_7, status_8, status_9] %}
-          {% set all_pass = all_status | select('equalto', 'PASS') | list | length %}
-          {% if all_status | length == 9 and all_pass == 9 %}
-            PASS when all individual requirements (1-9) are PASS
-          {% else %}
-            FAIL: One or more individual requirements failed ({{ 9 - all_pass }} of 9 failed)
-          {% endif %}
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.3.3.7"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.7"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -480,16 +483,8 @@
           - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_9 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 10 - {{ req_10 }}:"
-          - "  Task: {{ task_10_name | default('Task not recorded') }}"
-          - "  Command: {{ task_10_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_10_rc | default(-1) }}"
-          - "  Data: {{ data_10 | default('') | trim }}"
-          - "  Status: {{ status_10 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_10 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_10 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_10 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_9 | default('Not evaluated') | trim }}"
           - "========================================================"

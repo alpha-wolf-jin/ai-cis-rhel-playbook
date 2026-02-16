@@ -1,10 +1,10 @@
 ---
-- name: Data Collection for CIS checkpoint 2.4.1.2
+- name: Data Collection for CIS 2.4.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.4.1.2"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.2"
     req_1: "Check if cron is installed on the system"
     req_2: "Verify permissions, ownership, and group of /etc/crontab"
     req_3: "OVERALL Verify: Ensure permissions on /etc/crontab are configured"
@@ -18,13 +18,11 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
     # Requirement 1: Check if cron is installed on the system
-    - name: Req 1 - Check cron installation
-      shell: rpm -q cronie
+    - name: Req 1 - Check if cron is installed
+      shell: |
+        rpm -q cronie
       args:
         executable: /bin/bash
       register: result_1
@@ -33,87 +31,74 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check cron installation"
+        task_1_name: "Check if cron is installed"
         task_1_cmd: "rpm -q cronie"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output is search('cronie-') %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output is search('cronie-') %}
-            PASS when cron is installed (command returns a package version string)
-          {% else %}
-            FAIL when cron is not installed (command returns package cronie is not installed)
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '' and 'package cronie is not installed' not in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when cron is installed (command returns a package version string), FAIL when cron is not installed' if (result_1.stdout | default('') | trim != '' and 'package cronie is not installed' not in result_1.stdout) else 'FAIL: ' + (result_1.stdout | default('') | trim)) | trim }}"
 
     # Requirement 2: Verify permissions, ownership, and group of /etc/crontab
-    - name: Req 2 - Check /etc/crontab permissions
-      shell: !unsafe |
+    # ONLY run this check if cron is installed (status_1 == 'PASS')
+    - name: Req 2 - Verify permissions on /etc/crontab
+      shell: |
+        {% raw %}
         stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/crontab
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: data_1 | default('') | trim | length > 0
+      when: status_1 == 'PASS'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check /etc/crontab permissions"
+        task_2_name: "Verify permissions on /etc/crontab"
         task_2_cmd: "stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/crontab"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == 'Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root)' %}
-            PASS
+          {% if status_1 == 'PASS' %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == 'Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root)' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
             FAIL
           {% endif %}
         rationale_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == 'Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root)' %}
-            PASS when output matches Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root) exactly
+          {% if status_1 == 'PASS' %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == 'Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root)' %}
+              PASS when output shows Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root)
+            {% else %}
+              FAIL: Expected Access: (600/-rw-------) Uid: ( 0/ root) Gid: ( 0/ root), got {{ output }}
+            {% endif %}
           {% else %}
-            FAIL when output does not match expected pattern
+            FAIL: cron is not installed, so /etc/crontab check is not applicable
           {% endif %}
-      when: data_1 | default('') | trim | length > 0
 
-    # Requirement 3: OVERALL Verify: Ensure permissions on /etc/crontab are configured
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
         task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
+        task_3_cmd: "N/A"
         task_3_rc: 0
-        data_3: "N/A"
-        status_3: >-
-          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
-            PASS when req_1=PASS AND req_2=PASS
-          {% else %}
-            FAIL when either req_1 or req_2 is FAIL
-          {% endif %}
-      when: data_1 | default('') | trim | length > 0
+        data_3: "req_1 status: {{ status_1 }}, req_2 status: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: req_1=' + status_1 + ', req_2=' + status_2) | trim }}"
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.4.1.2"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.4.1.2"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

@@ -2,33 +2,31 @@
 - name: Data Collection for CIS 1.7.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.7.5"
-    req_1: "Verify /etc/issue file permissions are 644 or more restrictive, owner is root, and group is root"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.5"
+    req_1: "Check file permissions, ownership, and group of /etc/issue"
     req_2: "OVERALL Verify: Ensure access to /etc/issue is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify /etc/issue file permissions are 644 or more restrictive, owner is root, and group is root
     - name: "Req 1 - Check /etc/issue permissions and ownership"
-      shell: >
+      shell: |
+        {% raw %}
         stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)' /etc/issue
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
@@ -37,27 +35,68 @@
         task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)' /etc/issue"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'Access: (0644/-rw-r--r--)  Uid: ( 0/ root) Gid: { 0/ root)') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output matches 'Access: (0644/-rw-r--r--)  Uid: ( 0/ root) Gid: { 0/ root)', FAIL otherwise"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set mode_str = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') | default('') %}
+            {% set uid_str = output | regex_replace('.*Uid: \(\s*([0-9]+)/.*', '\1') | default('') %}
+            {% set gid_str = output | regex_replace('.*Gid: \{\s*([0-9]+)/.*', '\1') | default('') %}
+            {% if mode_str != '' and uid_str != '' and gid_str != '' %}
+              {% set mode_int = mode_str | int(base=8) %}
+              {% set uid_int = uid_str | int %}
+              {% set gid_int = gid_str | int %}
+              {% if mode_int <= 420 and uid_int == 0 and gid_int == 0 %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set mode_str = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') | default('') %}
+            {% set uid_str = output | regex_replace('.*Uid: \(\s*([0-9]+)/.*', '\1') | default('') %}
+            {% set gid_str = output | regex_replace('.*Gid: \{\s*([0-9]+)/.*', '\1') | default('') %}
+            {% if mode_str != '' and uid_str != '' and gid_str != '' %}
+              {% set mode_int = mode_str | int(base=8) %}
+              {% set uid_int = uid_str | int %}
+              {% set gid_int = gid_str | int %}
+              {% if mode_int <= 420 and uid_int == 0 and gid_int == 0 %}
+                PASS: File permissions {{ mode_str }} (octal, decimal {{ mode_int }}) are ≤ 644 (decimal 420), Uid is {{ uid_int }} (root), Gid is {{ gid_int }} (root) - all requirements met
+              {% else %}
+                FAIL:
+                {% if mode_int > 420 %}File permissions {{ mode_str }} (octal, decimal {{ mode_int }}) are > 644 (decimal 420){% endif %}
+                {% if uid_int != 0 %}{% if mode_int > 420 %} and {% endif %}Uid is {{ uid_int }} (expected 0){% endif %}
+                {% if gid_int != 0 %}{% if mode_int > 420 or uid_int != 0 %} and {% endif %}Gid is {{ gid_int }} (expected 0){% endif %}
+              {% endif %}
+            {% else %}
+              FAIL: Could not parse output: {{ output }}
+            {% endif %}
+          {% else %}
+            FAIL: Command returned no output or file does not exist
+          {% endif %}
 
-    # Requirement 2: OVERALL Verify: Ensure access to /etc/issue is configured
-    - name: "Req 2 - Determine overall compliance"
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
+        task_2_name: "OVERALL Verify: Ensure access to /etc/issue is configured"
+        task_2_cmd: "N/A - Overall compliance check"
         task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        data_2: "N/A"
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_2: "{{ 'PASS: Requirement 1 passed - access to /etc/issue is properly configured' if (status_1 | default('FAIL') | trim == 'PASS') else 'FAIL: Requirement 1 failed - access to /etc/issue is not properly configured' }}"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.7.5"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.7.5"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.5"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -79,5 +118,5 @@
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Rationale: {{ 'PASS when requirement 1 passes (access mode 644 or more restrictive, Uid=0, Gid=0), FAIL otherwise' if (status_2 | default('FAIL') | trim == 'PASS') else 'FAIL: Requirement 1 did not pass' }}"
           - "========================================================"

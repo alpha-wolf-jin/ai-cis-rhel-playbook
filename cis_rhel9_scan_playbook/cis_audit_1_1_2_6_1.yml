@@ -1,13 +1,13 @@
 ---
-- name: Data Collection for CIS 1.1.2.6.1
+- name: Data Collection for CIS checkpoint 1.1.2.6.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.2.6.1"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.6.1"
     req_1: "Check that /var/log is mounted as a separate filesystem"
-    req_2: "Verify the /var/log mount includes the 'nosuid' option"
-    req_3: "Verify the /var/log mount includes the 'nodev' option"
+    req_2: "Verify the /var/log mount includes the 'nodev' option"
+    req_3: "Verify the /var/log mount includes the 'nosuid' option"
     req_4: "Verify the /var/log mount includes the 'noexec' option"
     req_5: "OVERALL Verify: Ensure separate partition exists for /var/log"
 
@@ -26,12 +26,9 @@
         task_4_name: "Not executed"
         task_4_cmd: "N/A"
         task_4_rc: -1
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
 
     # Requirement 1: Check that /var/log is mounted as a separate filesystem
-    - name: Req 1 - Check /var/log mount
+    - name: Req 1 - Check /var/log mount status
       shell: findmnt -kn /var/log
       args:
         executable: /bin/bash
@@ -41,16 +38,18 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check /var/log mount"
+        task_1_name: "Check /var/log mount status"
         task_1_cmd: "findmnt -kn /var/log"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '' and result_1.stdout is search('/dev/')) else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command output shows a device (e.g., /dev/sdb) mounted on the target '/var/log', FAIL when output is empty or shows an error"
+        status_1: |
+          {{ ('PASS' if (result_1.stdout | default('') | trim != '' and result_1.stdout | default('') | trim is not match('^TARGET\\s*-\\s*$') and result_1.stdout | default('') | trim is search('^/var/log\\s+/dev/')) else 'FAIL') | trim }}
+        rationale_1: |
+          {{ ('PASS when output shows a device and mount point for /var/log' if (result_1.stdout | default('') | trim != '' and result_1.stdout | default('') | trim is not match('^TARGET\\s*-\\s*$') and result_1.stdout | default('') | trim is search('^/var/log\\s+/dev/')) else 'FAIL when output is empty or shows TARGET column as -') | trim }}
 
-    # Requirement 2: Verify the /var/log mount includes the 'nosuid' option
-    - name: Req 2 - Check nosuid option
-      shell: findmnt -kn /var/log
+    # Requirement 2: Verify the /var/log mount includes the 'nodev' option
+    - name: Req 2 - Check for nodev option
+      shell: findmnt -kn /var/log -o OPTIONS
       args:
         executable: /bin/bash
       register: result_2
@@ -59,16 +58,16 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check nosuid option"
-        task_2_cmd: "findmnt -kn /var/log"
+        task_2_name: "Check for nodev option"
+        task_2_cmd: "findmnt -kn /var/log -o OPTIONS"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '' and result_2.stdout is search('nosuid')) else 'FAIL') | trim }}"
-        rationale_2: "PASS when the mount options in the output contain 'nosuid', FAIL otherwise"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim is search('nodev')) else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when output contains the string nodev' if (result_2.stdout | default('') | trim is search('nodev')) else 'FAIL otherwise') | trim }}"
 
-    # Requirement 3: Verify the /var/log mount includes the 'nodev' option
-    - name: Req 3 - Check nodev option
-      shell: findmnt -kn /var/log
+    # Requirement 3: Verify the /var/log mount includes the 'nosuid' option
+    - name: Req 3 - Check for nosuid option
+      shell: findmnt -kn /var/log -o OPTIONS
       args:
         executable: /bin/bash
       register: result_3
@@ -77,16 +76,16 @@
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check nodev option"
-        task_3_cmd: "findmnt -kn /var/log"
+        task_3_name: "Check for nosuid option"
+        task_3_cmd: "findmnt -kn /var/log -o OPTIONS"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim != '' and result_3.stdout is search('nodev')) else 'FAIL') | trim }}"
-        rationale_3: "PASS when the mount options in the output contain 'nodev', FAIL otherwise"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim is search('nosuid')) else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when output contains the string nosuid' if (result_3.stdout | default('') | trim is search('nosuid')) else 'FAIL otherwise') | trim }}"
 
     # Requirement 4: Verify the /var/log mount includes the 'noexec' option
-    - name: Req 4 - Check noexec option
-      shell: findmnt -kn /var/log
+    - name: Req 4 - Check for noexec option
+      shell: findmnt -kn /var/log -o OPTIONS
       args:
         executable: /bin/bash
       register: result_4
@@ -95,30 +94,22 @@
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check noexec option"
-        task_4_cmd: "findmnt -kn /var/log"
+        task_4_name: "Check for noexec option"
+        task_4_cmd: "findmnt -kn /var/log -o OPTIONS"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim != '' and result_4.stdout is search('noexec')) else 'FAIL') | trim }}"
-        rationale_4: "PASS when the mount options in the output contain 'noexec', FAIL otherwise"
+        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim is search('noexec')) else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS when output contains the string noexec' if (result_4.stdout | default('') | trim is search('noexec')) else 'FAIL otherwise') | trim }}"
 
-    # Requirement 5: OVERALL Verify
+    # Requirement 5: Overall verification
     - name: Store requirement 5 details
       set_fact:
         task_5_name: "Overall verification"
-        task_5_cmd: "N/A - Combined check"
+        task_5_cmd: "N/A"
         task_5_rc: 0
-        data_5: "Combined status from requirements 1-4"
-        status_5: >-
-          {% if status_1 | trim == 'PASS' and 
-               status_2 | trim == 'PASS' and 
-               status_3 | trim == 'PASS' and 
-               status_4 | trim == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_5: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise"
+        data_5: "N/A"
+        status_5: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' and status_3 | default('FAIL') == 'PASS' and status_4 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
+        rationale_5: "{{ ('PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' and status_3 | default('FAIL') == 'PASS' and status_4 | default('FAIL') == 'PASS') else 'FAIL otherwise') | trim }}"
 
     - name: Generate compliance report
       debug:
@@ -126,7 +117,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.6.1"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.6.1"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

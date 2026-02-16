@@ -1,12 +1,12 @@
 ---
-- name: Data Collection for CIS checkpoint 2.4.1.4
+- name: Data Collection for CIS 2.4.1.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
     kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.4"
-    req_1: "Check if cron is installed on the system"
-    req_2: "Verify permissions, ownership, and group of /etc/cron.daily/"
+    req_1: "Check if cron is installed using command: rpm -q cronie"
+    req_2: "If cron is installed, verify permissions on /etc/cron.daily directory using command: stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/"
     req_3: "OVERALL Verify: Ensure permissions on /etc/cron.daily are configured"
 
   tasks:
@@ -22,10 +22,12 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Check if cron is installed on the system
-    - name: Req 1 - Check cronie package installation
-      shell: !unsafe |
+    # Requirement 1: Check if cron is installed using command: rpm -q cronie
+    - name: Req 1 - Check cron installation
+      shell: |
+        {% raw %}
         rpm -q cronie
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -34,22 +36,25 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check cronie package installation"
+        task_1_name: "Check cron installation"
         task_1_cmd: "rpm -q cronie"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is not search('is not installed')) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when cronie package is installed (output shows package name and version), FAIL when package is not installed (output is package cronie is not installed)' if (result_1.stdout | default('') | trim is not search('is not installed')) else 'FAIL when package is not installed (output is package cronie is not installed), PASS when cronie package is installed (output shows package name and version)') | trim }}"
+        status_1: "{{ ('PASS' if ('not installed' not in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when cronie package is installed (output shows version string), FAIL when not installed (output shows package cronie is not installed)') | trim }}"
 
-    # Requirement 2: Verify permissions, ownership, and group of /etc/cron.daily/
+    # Requirement 2: If cron is installed, verify permissions on /etc/cron.daily directory
     - name: Req 2 - Verify /etc/cron.daily permissions
-      shell: !unsafe |
+      shell: |
+        {% raw %}
         stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.daily/
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
+      when: status_1 | trim == 'PASS'
 
     - name: Store requirement 2 details
       set_fact:
@@ -58,44 +63,34 @@
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output is search('Access: \(700/drwx------\) Uid: \( 0/ root\) Gid: \( 0/ root\)') %}
-            PASS
+          {% if status_1 | trim == 'PASS' %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == 'Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root)' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
-            FAIL
+            NA
           {% endif %}
-        rationale_2: |
-          {{ ('PASS when Access is (700/drwx------) AND Uid is ( 0/ root) AND Gid is ( 0/ root), FAIL otherwise' if (result_2.stdout | default('') | trim is search('Access: \(700/drwx------\) Uid: \( 0/ root\) Gid: \( 0/ root\)')) else 'FAIL otherwise, PASS when Access is (700/drwx------) AND Uid is ( 0/ root) AND Gid is ( 0/ root)') | trim }}
+        rationale_2: "{{ ('PASS when Access is (700/drwx------) AND Uid is ( 0/ root) AND Gid is ( 0/ root), FAIL otherwise') | trim }}"
 
-    # Requirement 3: OVERALL Verify: Ensure permissions on /etc/cron.daily are configured
+    # Requirement 3: OVERALL Verify
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify: Ensure permissions on /etc/cron.daily are configured"
-        task_3_cmd: "N/A (calculated from req_1 and req_2)"
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - computed from requirements 1 and 2"
         task_3_rc: 0
-        data_3: "N/A"
+        data_3: "req_1={{ status_1 | default('UNKNOWN') | trim }}, req_2={{ status_2 | default('UNKNOWN') | trim }}"
         status_3: >-
-          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
+          {% if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') %}
             PASS
-          {% elif status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'FAIL' %}
+          {% else %}
             FAIL
-          {% else %}
-            UNKNOWN
           {% endif %}
-        rationale_3: >-
-          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
-            PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS)
-          {% elif status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
-            PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS)
-          {% elif status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'FAIL' %}
-            FAIL when req_1=PASS AND req_2=FAIL
-          {% else %}
-            Cannot determine overall compliance
-          {% endif %}
+        rationale_3: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS), FAIL otherwise"
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:

@@ -1,0 +1,357 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19
+    req_1: 'Verify global sshd PermitEmptyPasswords setting using command: `sshd -T | grep permitemptypasswords`. Rationale: PASS when output is ''permitemptypasswords no'', FAIL otherwise'
+    req_2: 'If Match blocks are used in sshd_config, verify PermitEmptyPasswords setting for each applicable Match block using command: `sshd -T -C user=<user> -C addr=<addr> -C host=<host> -C laddr=<laddr> -C lport=<lport> -C rdomain=<rdomain> | grep permitemptypasswords` (substitute actual connection parameters for each Match block). Rationale: PASS when output for all tested Match blocks is ''permitemptypasswords no'', FAIL if any tested block returns a different value'
+    req_3: 'OVERALL Verify: Ensure sshd PermitEmptyPasswords is disabled. Rationale: PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Generate compliance report"
+    task_3_cmd: "N/A"
+    task_3_rc: 0
+
+- name: Req 1 - Check global PermitEmptyPasswords setting
+  shell: sshd -T | grep permitemptypasswords
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check global PermitEmptyPasswords setting"
+    task_1_cmd: "sshd -T | grep permitemptypasswords"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: '{{ ("PASS" if (result_1.stdout | default("") | trim == "permitemptypasswords no") else "FAIL") | trim }}'
+    rationale_1: '{{ ("PASS when output is exactly permitemptypasswords no, FAIL otherwise" if (result_1.stdout | default("") | trim == "permitemptypasswords no") else "FAIL: Expected permitemptypasswords no, got " + (result_1.stdout | default("") | trim)) | trim }}'
+
+- name: Req 2 - Check for Match blocks in sshd_config
+  shell: |
+    # Check if sshd_config contains Match blocks
+    if grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null; then
+      echo "true"
+    else
+      echo "false"
+    fi
+  args:
+    executable: /bin/bash
+  register: match_blocks_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 2 - Create script to test Match blocks with all parameters
+  copy:
+    dest: "/tmp/test_match_blocks.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/bin/bash
+
+      # Script to test Match blocks in sshd_config for PermitEmptyPasswords setting
+      # This follows the CIS audit procedure exactly
+
+      SSH_CONFIG_FILE="/etc/ssh/sshd_config"
+
+      # Check if file exists
+      if [ ! -f "$SSH_CONFIG_FILE" ]; then
+        echo "ERROR: sshd_config file not found at $SSH_CONFIG_FILE"
+        exit 1
+      fi
+
+      # Map sshd_config condition names to sshd -C parameter names
+      # Note: sshd_config conditions are case-insensitive
+      declare -A condition_map
+      condition_map["user"]="user"
+      condition_map["group"]="user"  # Group maps to user parameter
+      condition_map["host"]="host"
+      condition_map["address"]="addr"
+      condition_map["localaddress"]="laddr"
+      condition_map["localport"]="lport"
+      condition_map["rdomain"]="rdomain"
+
+      # Variables to track results
+      all_pass=true
+      tested_blocks=0
+      output_lines=""
+
+      # Read sshd_config and process Match blocks
+      in_match_block=false
+      match_conditions=""
+      while IFS= read -r line || [ -n "$line" ]; do
+        # Remove comments and trim whitespace
+        clean_line=$(echo "$line" | sed 's/#.*$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        
+        if [ -z "$clean_line" ]; then
+          continue
+        fi
+        
+        # Check if this is a Match line (case-insensitive)
+        if [[ "$clean_line" =~ ^[Mm][Aa][Tt][Cc][Hh][[:space:]]+(.*)$ ]]; then
+          # We found a new Match block
+          in_match_block=true
+          match_conditions="${BASH_REMATCH[1]}"
+          
+        elif $in_match_block && [[ "$clean_line" =~ ^[A-Za-z] ]]; then
+          # We're in a Match block and found a new configuration line
+          # This means the Match block has ended
+          in_match_block=false
+          
+          # Process the Match block we just collected
+          if [ -n "$match_conditions" ]; then
+            # Parse the conditions
+            cmd="sshd -T"
+            has_conditions=false
+            
+            # Split conditions into words
+            # Use set to handle word splitting properly
+            set -- $match_conditions
+            
+            while [ $# -gt 0 ]; do
+              condition_type=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+              condition_value="$2"
+              
+              # Check if this condition type maps to a sshd -C parameter
+              if [ -n "${condition_map[$condition_type]}" ]; then
+                param_name="${condition_map[$condition_type]}"
+                
+                # Special handling for Group condition
+                if [ "$condition_type" = "group" ]; then
+                  # For Group conditions, we need to test with a user from that group
+                  # We'll use the first user in the group as a sample
+                  group_users=$(getent group "$condition_value" | cut -d: -f4 | cut -d, -f1)
+                  if [ -n "$group_users" ]; then
+                    cmd="$cmd -C user=$group_users"
+                    has_conditions=true
+                  fi
+                else
+                  cmd="$cmd -C $param_name=$condition_value"
+                  has_conditions=true
+                fi
+              fi
+              
+              shift 2 2>/dev/null || break
+            done
+            
+            if $has_conditions; then
+              # Execute the sshd -T command with the collected parameters
+              tested_blocks=$((tested_blocks + 1))
+              result=$($cmd 2>/dev/null | grep -i permitemptypasswords || echo "not_found")
+              
+              if [ "$result" != "not_found" ]; then
+                # Extract the value (case-insensitive comparison)
+                permit_value=$(echo "$result" | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
+                output_lines="$output_lines$match_conditions: permitemptypasswords $permit_value\n"
+                
+                # Check if this match block has the correct setting
+                if [ "$permit_value" != "no" ]; then
+                  all_pass=false
+                fi
+              else
+                # Setting not found in output - using default or inherited
+                output_lines="$output_lines$match_conditions: permitemptypasswords not explicitly set (using default/inherited)\n"
+              fi
+            else
+              # No mappable conditions found
+              output_lines="$output_lines$match_conditions: No testable conditions found\n"
+            fi
+            
+            match_conditions=""
+          fi
+        fi
+      done < "$SSH_CONFIG_FILE"
+
+      # Handle the last Match block if we were still in one
+      if $in_match_block && [ -n "$match_conditions" ]; then
+        # Process the last Match block
+        cmd="sshd -T"
+        has_conditions=false
+        
+        set -- $match_conditions
+        while [ $# -gt 0 ]; do
+          condition_type=$(echo "$1" | tr '[:upper:]' '[:lower:]')
+          condition_value="$2"
+          
+          if [ -n "${condition_map[$condition_type]}" ]; then
+            param_name="${condition_map[$condition_type]}"
+            
+            if [ "$condition_type" = "group" ]; then
+              group_users=$(getent group "$condition_value" | cut -d: -f4 | cut -d, -f1)
+              if [ -n "$group_users" ]; then
+                cmd="$cmd -C user=$group_users"
+                has_conditions=true
+              fi
+            else
+              cmd="$cmd -C $param_name=$condition_value"
+              has_conditions=true
+            fi
+          fi
+          
+          shift 2 2>/dev/null || break
+        done
+        
+        if $has_conditions; then
+          tested_blocks=$((tested_blocks + 1))
+          result=$($cmd 2>/dev/null | grep -i permitemptypasswords || echo "not_found")
+          
+          if [ "$result" != "not_found" ]; then
+            permit_value=$(echo "$result" | awk '{print $2}' | tr '[:upper:]' '[:lower:]')
+            output_lines="$output_lines$match_conditions: permitemptypasswords $permit_value\n"
+            
+            if [ "$permit_value" != "no" ]; then
+              all_pass=false
+            fi
+          else
+            output_lines="$output_lines$match_conditions: permitemptypasswords not explicitly set (using default/inherited)\n"
+          fi
+        else
+          output_lines="$output_lines$match_conditions: No testable conditions found\n"
+        fi
+      fi
+
+      # Output results
+      if [ $tested_blocks -eq 0 ]; then
+        echo "No Match blocks with testable conditions found in sshd_config"
+      else
+        echo "Tested $tested_blocks Match block(s):"
+        echo ""
+        printf "$output_lines"
+        echo ""
+        
+        if $all_pass; then
+          echo "All tested Match blocks have permitemptypasswords set to no or use default/inherited setting"
+        else
+          echo "Some Match blocks have incorrect permitemptypasswords setting"
+          exit 1
+        fi
+      fi
+      {% endraw %}
+  register: script_create_2
+  ignore_errors: true
+  changed_when: false
+  when: match_blocks_check.stdout | default('false') | trim == 'true'
+
+- name: Req 2 - Execute the Match block test script
+  shell: "/tmp/test_match_blocks.sh"
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: match_blocks_check.stdout | default('false') | trim == 'true'
+
+- name: Req 2 - Remove temporary script
+  file:
+    path: "/tmp/test_match_blocks.sh"
+    state: absent
+  ignore_errors: true
+  when: match_blocks_check.stdout | default('false') | trim == 'true'
+
+- name: Req 2 - Store details when no Match blocks
+  set_fact:
+    task_2_name: "Check Match blocks for PermitEmptyPasswords setting"
+    task_2_cmd: "Check sshd_config for Match blocks"
+    task_2_rc: 0
+    data_2: "No Match blocks found in sshd_config"
+    status_2: "NA"
+    rationale_2: "No Match blocks to test in sshd_config"
+  when: match_blocks_check.stdout | default('false') | trim == 'false'
+
+- name: Req 2 - Store details when Match blocks exist
+  set_fact:
+    task_2_name: "Check Match blocks for PermitEmptyPasswords setting"
+    task_2_cmd: "Test Match blocks with sshd -T -C parameters"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% set output = result_2.stdout | default('') | trim %}
+      {% if "No Match blocks with testable conditions found" in output or "No Match blocks found in sshd_config" in output %}
+        NA
+      {% elif "All tested Match blocks have permitemptypasswords set to no" in output and result_2.rc == 0 %}
+        PASS
+      {% elif result_2.rc == 1 %}
+        FAIL
+      {% else %}
+        UNKNOWN
+      {% endif %}
+    rationale_2: "{{ result_2.stdout | default('') | trim }}"
+  when: match_blocks_check.stdout | default('false') | trim == 'true'
+
+- name: Req 3 - Determine overall compliance
+  set_fact:
+    data_3: "Global: {{ status_1 | default('UNKNOWN') }}, Match blocks: {{ status_2 | default('UNKNOWN') }}"
+    status_3: >-
+      {% set global_ok = (status_1 | default('UNKNOWN') | trim == 'PASS') %}
+      {% set match_blocks_status = status_2 | default('UNKNOWN') | trim %}
+      {% set match_blocks_ok = (match_blocks_status == 'PASS' or match_blocks_status == 'NA') %}
+      {% if global_ok and match_blocks_ok %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% set global_ok = (status_1 | default('UNKNOWN') | trim == 'PASS') %}
+      {% set match_blocks_status = status_2 | default('UNKNOWN') | trim %}
+      {% set match_blocks_ok = (match_blocks_status == 'PASS' or match_blocks_status == 'NA') %}
+      {% if global_ok and match_blocks_ok %}
+        Global setting PASS and Match blocks if any PASS or NA
+      {% else %}
+        {% if not global_ok %}
+          Global setting FAIL
+        {% endif %}
+        {% if match_blocks_status == 'FAIL' %}
+          Match blocks FAIL
+        {% endif %}
+      {% endif %}
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.1.19"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_1_19'': status_3 | trim }] }}'

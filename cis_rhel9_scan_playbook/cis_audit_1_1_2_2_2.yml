@@ -2,11 +2,11 @@
 - name: Data Collection for CIS 1.1.2.2.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.2.2.2"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.2"
     req_1: "Check if /dev/shm is mounted as a separate partition"
-    req_2: "Verify the 'nodev' mount option is set on /dev/shm"
+    req_2: "If a separate partition exists for /dev/shm, verify the nodev mount option is set"
     req_3: "OVERALL Verify: Ensure nodev option set on /dev/shm partition"
 
   tasks:
@@ -21,9 +21,12 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not executed - no separate partition for /dev/shm"
 
     # Requirement 1: Check if /dev/shm is mounted as a separate partition
-    - name: Req 1 - Check if /dev/shm is mounted
+    - name: Req 1 - Check /dev/shm mount
       shell: findmnt -kn /dev/shm
       args:
         executable: /bin/bash
@@ -38,44 +41,38 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns output (indicating a mount exists), FAIL when command returns no output (indicating no separate partition)') | trim }}"
+        rationale_1: "PASS when command returns output (indicating a separate mount exists), FAIL when command returns no output (indicating no separate partition)"
 
-    # Requirement 2: Verify the 'nodev' mount option is set on /dev/shm
-    - name: Req 2 - Verify nodev option is set
+    # Requirement 2: If a separate partition exists for /dev/shm, verify the nodev mount option is set
+    # Only execute if Requirement 1 found a separate partition (data_1 is not empty)
+    - name: Req 2 - Verify nodev option on /dev/shm
       shell: findmnt -kn /dev/shm | grep -v 'nodev'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
+      when: data_1 | length > 0
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify the 'nodev' mount option is set on /dev/shm"
+        task_2_name: "If a separate partition exists for /dev/shm, verify the nodev mount option is set"
         task_2_cmd: "findmnt -kn /dev/shm | grep -v 'nodev'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when command returns no output (meaning nodev is present in the options), FAIL when command returns any output (meaning nodev is missing)') | trim }}"
+        rationale_2: "PASS when command returns no output (nodev option is present), FAIL when command returns any output (nodev option is missing)"
+      when: data_1 | length > 0
 
-    # Requirement 3: OVERALL Verify: Ensure nodev option set on /dev/shm partition
+    # Requirement 3: OVERALL Verify - Ensure nodev option set on /dev/shm partition
     - name: Store requirement 3 details
       set_fact:
         task_3_name: "OVERALL Verify: Ensure nodev option set on /dev/shm partition"
-        task_3_cmd: "N/A (calculated from req_1 and req_2)"
+        task_3_cmd: "Overall status calculation based on req1 and req2"
         task_3_rc: 0
-        data_3: "req_1={{ status_1 }}, req_2={{ status_2 }}"
-        status_3: >-
-          {% if status_1 | trim == 'FAIL' %}
-            PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_3: "{{ ('PASS when req_1=FAIL (no separate partition) OR (req_1=PASS AND req_2=PASS), FAIL when req_1=PASS AND req_2=FAIL') | trim }}"
+        data_3: "Overall status calculation"
+        status_3: "{{ ('PASS' if (status_1 | trim == 'FAIL' or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS')) else 'FAIL') | trim }}"
+        rationale_3: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS), FAIL when (req_1=PASS AND req_2=FAIL)"
 
     # Final report
     - name: Generate compliance report
@@ -84,7 +81,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.2.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -114,5 +111,5 @@
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Rationale: PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS), FAIL when (req_1=PASS AND req_2=FAIL)"
           - "========================================================"

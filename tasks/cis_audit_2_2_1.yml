@@ -1,0 +1,69 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_check: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.2.1
+    req_1: Check if the ftp client package is installed
+    req_overall: Ensure ftp client is not installed
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_overall_name: "OVERALL VERIFY"
+
+- name: Req 1 - Check ftp client installation
+  shell: rpm -q ftp
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Req 1 - Check ftp client installation"
+    task_1_cmd: "rpm -q ftp"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout is defined and result_1.stdout | trim == 'package ftp is not installed') else 'FAIL') | trim }}"
+    rationale_1: >-
+      {{
+        (
+          'PASS when the output is exactly "package ftp is not installed", FAIL when any other output is returned'
+          if (result_1.stdout is defined and result_1.stdout | trim == 'package ftp is not installed')
+          else 'FAIL: Expected "package ftp is not installed", got "' + (result_1.stdout | default('') | trim) + '"'
+        ) | trim
+      }}
+
+- name: Store overall requirement details
+  set_fact:
+    status_overall: "{{ status_1 | trim }}"
+    rationale_overall: "{{ ('PASS when req_1=PASS, FAIL otherwise' if status_1 == 'PASS' else 'FAIL: ftp client is installed') | trim }}"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.2.1"
+    - "========================================================"
+    - "Reference: {{ cis_check }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 }}"
+    - "  Status: {{ status_1 }}"
+    - "  Rationale: {{ rationale_1 }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_overall }}"
+    - "  Rationale: {{ rationale_overall }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_2_1'': status_1 | trim }] }}'

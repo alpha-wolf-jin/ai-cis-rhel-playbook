@@ -1,0 +1,109 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.1
+    req_1: 'Check audit log storage size configuration using command: grep -Po -- ''^\h*max_log_file\h*=\h*\d+\b'' /etc/audit/auditd.conf
+
+      '
+    req_overall: Ensure audit log storage size is configured
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_overall_name: "Not executed"
+    task_overall_cmd: "N/A"
+    task_overall_rc: -1
+
+    # Requirement 1: Check audit log storage size configuration
+- name: Req 1 - Check audit log storage size configuration
+  shell: |
+    grep -Po -- '^\h*max_log_file\h*=\h*\d+\b' /etc/audit/auditd.conf
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check audit log storage size configuration"
+    task_1_cmd: |
+      grep -Po -- '^\h*max_log_file\h*=\h*\d+\b' /etc/audit/auditd.conf
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set match = output | regex_search('^max_log_file\\s*=\\s*(\\d+)$') %}
+        {% if match %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set match = output | regex_search('^max_log_file\\s*=\\s*(\\d+)$') %}
+        {% if match %}
+          PASS: Output is in correct format 'max_log_file = <MB>' where <MB> is a positive integer. Site policy compliance must be verified manually.
+        {% else %}
+          FAIL: Output is not in correct format. Expected 'max_log_file = <MB>' where <MB> is a positive integer.
+        {% endif %}
+      {% else %}
+        FAIL: Command returned no output. max_log_file is not configured.
+      {% endif %}
+
+- name: Store overall compliance details
+  set_fact:
+    task_overall_name: "OVERALL VERIFY: Ensure audit log storage size is configured"
+    task_overall_cmd: "Aggregated from individual requirements"
+    task_overall_rc: 0
+    data_overall: "Individual requirement statuses collected"
+    status_overall: "{{ status_1 | default('FAIL') | trim }}"
+    rationale_overall: >-
+      {% if status_1 | default('FAIL') | trim == 'PASS' %}
+        PASS when req_1=PASS, FAIL otherwise. Requirement 1 is PASS.
+      {% else %}
+        FAIL when req_1=PASS, FAIL otherwise. Requirement 1 is FAIL.
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.3.2.1"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.2.1"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT OVERALL - {{ req_overall }}:"
+    - "  Task: {{ task_overall_name | default('Task not recorded') }}"
+    - "  Command: {{ task_overall_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_overall_rc | default(-1) }}"
+    - "  Data: {{ data_overall | default('') | trim }}"
+    - "  Status: {{ status_overall | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_3_2_1'': status_1 | trim }] }}'

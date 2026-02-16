@@ -1,0 +1,176 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.3.3
+    req_1: 'Check if nftables is in use and enabled using command: systemctl --quiet is-enabled nftables.service'
+    req_2: 'Verify the INPUT base chain policy is DROP using command: systemctl --quiet is-enabled nftables.service && nft list ruleset | grep ''hook input'' | grep -v ''policy drop'''
+    req_3: 'Verify the FORWARD base chain policy is DROP using command: systemctl --quiet is-enabled nftables.service && nft list ruleset | grep ''hook forward'' | grep -v ''policy drop'''
+    req_4: 'OVERALL Verify: Ensure nftables default deny firewall policy'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    task_4_name: "Overall verification"
+    task_4_cmd: "N/A"
+    task_4_rc: -1
+
+    # Requirement 1: Check if nftables is enabled
+- name: Req 1 - Check if nftables is enabled
+  shell: |
+    systemctl --quiet is-enabled nftables.service
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check if nftables is enabled"
+    task_1_cmd: "systemctl --quiet is-enabled nftables.service"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when command exit code is 0 (service is enabled), FAIL when exit code is non-zero (service is not enabled)' if result_1.rc == 0 else 'FAIL: nftables service is not enabled, exit code: ' + result_1.rc|string) | trim }}"
+
+    # Requirement 2: Verify INPUT chain policy is DROP
+- name: Req 2 - Verify INPUT chain policy is DROP
+  shell: |
+    systemctl --quiet is-enabled nftables.service && nft list ruleset | grep 'hook input' | grep -v 'policy drop'
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Verify INPUT chain policy is DROP"
+    task_2_cmd: "systemctl --quiet is-enabled nftables.service && nft list ruleset | grep 'hook input' | grep -v 'policy drop'"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% if status_1 | trim == 'FAIL' %}
+        NA
+      {% else %}
+        {{ ('PASS' if result_2.stdout | default('') | trim == '' else 'FAIL') | trim }}
+      {% endif %}
+    rationale_2: >-
+      {% if status_1 | trim == 'FAIL' %}
+        NOT APPLICABLE: nftables is not enabled
+      {% else %}
+        {{ ('PASS when command output is EMPTY (no lines returned), FAIL when any output is returned (indicating an INPUT hook without a DROP policy)' if result_2.stdout | default('') | trim == '' else 'FAIL: INPUT hook found without DROP policy') | trim }}
+      {% endif %}
+
+    # Requirement 3: Verify FORWARD chain policy is DROP
+- name: Req 3 - Verify FORWARD chain policy is DROP
+  shell: |
+    systemctl --quiet is-enabled nftables.service && nft list ruleset | grep 'hook forward' | grep -v 'policy drop'
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Verify FORWARD chain policy is DROP"
+    task_3_cmd: "systemctl --quiet is-enabled nftables.service && nft list ruleset | grep 'hook forward' | grep -v 'policy drop'"
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: >-
+      {% if status_1 | trim == 'FAIL' %}
+        NA
+      {% else %}
+        {{ ('PASS' if result_3.stdout | default('') | trim == '' else 'FAIL') | trim }}
+      {% endif %}
+    rationale_3: >-
+      {% if status_1 | trim == 'FAIL' %}
+        NOT APPLICABLE: nftables is not enabled
+      {% else %}
+        {{ ('PASS when command output is EMPTY (no lines returned), FAIL when any output is returned (indicating a FORWARD hook without a DROP policy)' if result_3.stdout | default('') | trim == '' else 'FAIL: FORWARD hook found without DROP policy') | trim }}
+      {% endif %}
+
+    # Requirement 4: Overall verification
+- name: Store requirement 4 details
+  set_fact:
+    task_4_name: "Overall verification"
+    task_4_cmd: "N/A"
+    task_4_rc: 0
+    data_4: "Req1: {{ status_1 | default('UNKNOWN') }}, Req2: {{ status_2 | default('UNKNOWN') }}, Req3: {{ status_3 | default('UNKNOWN') }}"
+    status_4: >-
+      {% if status_1 | trim == 'FAIL' %}
+        NA
+      {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_4: >-
+      {% if status_1 | trim == 'FAIL' %}
+        NOT APPLICABLE: nftables is not enabled
+      {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+        PASS: All requirements are PASS
+      {% else %}
+        FAIL: One or more requirements failed (Req1: {{ status_1 | default('UNKNOWN') }}, Req2: {{ status_2 | default('UNKNOWN') }}, Req3: {{ status_3 | default('UNKNOWN') }})
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 4.3.3"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.3.3"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name | default('Task not recorded') }}"
+    - "  Command: {{ task_4_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_4_rc | default(-1) }}"
+    - "  Data: {{ data_4 | default('') | trim }}"
+    - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_4 | trim }}"
+    - "  Rationale: {{ rationale_4 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_4_3_3'': status_4 | trim }] }}'

@@ -1,0 +1,109 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.1.1
+    req_1: 'Verify systemd-journald service is enabled using command: systemctl is-enabled systemd-journald.service'
+    req_2: 'Verify systemd-journald service is active using command: systemctl is-active systemd-journald.service'
+    req_3: 'OVERALL Verify: Ensure journald service is enabled and active'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+
+    # Requirement 1: Verify systemd-journald service is enabled
+- name: Req 1 - Check if systemd-journald is enabled
+  shell: systemctl is-enabled systemd-journald.service
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Req 1 - Check if systemd-journald is enabled"
+    task_1_cmd: "systemctl is-enabled systemd-journald.service"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'static') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when output is static (default state indicating it is referenced by other units and cannot be enabled/disabled)' if (result_1.stdout | default('') | trim == 'static') else 'FAIL when output is ' + (result_1.stdout | default('') | trim) + ' instead of static') | trim }}"
+
+    # Requirement 2: Verify systemd-journald service is active
+- name: Req 2 - Check if systemd-journald is active
+  shell: systemctl is-active systemd-journald.service
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Req 2 - Check if systemd-journald is active"
+    task_2_cmd: "systemctl is-active systemd-journald.service"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'active') else 'FAIL') | trim }}"
+    rationale_2: "{{ ('PASS when output is active' if (result_2.stdout | default('') | trim == 'active') else 'FAIL when output is ' + (result_2.stdout | default('') | trim) + ' instead of active') | trim }}"
+
+    # Requirement 3: OVERALL Verify - Ensure journald service is enabled and active
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Req 3 - OVERALL Verify: Ensure journald service is enabled and active"
+    task_3_cmd: "N/A (combined check of req_1 and req_2)"
+    task_3_rc: 0
+    data_3: "enabled_status={{ data_1 | default('') | trim }}, active_status={{ data_2 | default('') | trim }}"
+    status_3: "{{ ('PASS' if (status_1 | default('') | trim == 'PASS' and status_2 | default('') | trim == 'PASS') else 'FAIL') | trim }}"
+    rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS' if (status_1 | default('') | trim == 'PASS' and status_2 | default('') | trim == 'PASS') else 'FAIL when req_1 or req_2 is not PASS') | trim }}"
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.2.1.1"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name }}"
+    - "  Command: {{ task_2_cmd }}"
+    - "  Exit code: {{ task_2_rc }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name }}"
+    - "  Command: {{ task_3_cmd }}"
+    - "  Exit code: {{ task_3_rc }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_2_1_1'': status_3 | trim }] }}'

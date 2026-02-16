@@ -1,45 +1,42 @@
 ---
-- name: Data Collection for CIS 1.1.2.6.4
+- name: Data Collection for CIS checkpoint 1.1.2.6.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.2.6.4"
-    req_1: "Verify the /var/log partition exists as a separate mount point"
-    req_2: "IF a separate /var/log partition exists, verify the 'noexec' mount option is set"
+    req_1: "Check if /var/log is a separate mount point using command: findmnt -kn /var/log"
+    req_2: "If /var/log is a separate mount point, verify the noexec mount option is set using command: findmnt -kn /var/log | grep -v noexec"
     req_3: "OVERALL Verify: Ensure noexec option set on /var/log partition"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
         status_1: "UNKNOWN"
         rationale_1: "Not evaluated"
-        data_2: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
         status_2: "UNKNOWN"
         rationale_2: "Not evaluated"
-        data_3: ""
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_3: ""
         status_3: "UNKNOWN"
         rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify the /var/log partition exists as a separate mount point
+    # Requirement 1: Check if /var/log is a separate mount point
     - name: "Req 1 - Check if /var/log is separate mount point"
-      shell: >
-        findmnt -kn /var/log
+      shell: findmnt -kn /var/log
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
@@ -49,86 +46,97 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when a mount point is found, FAIL when no mount point is found (control not applicable)' if (result_1.stdout | default('') | trim != '') else 'FAIL when no mount point is found (control not applicable)') | trim }}"
+        rationale_1: "{{ ('PASS: /var/log is a separate mount point' if (result_1.stdout | default('') | trim != '') else 'FAIL: /var/log is not a separate mount point') | trim }}"
 
-    # Requirement 2: IF a separate /var/log partition exists, verify the 'noexec' mount option is set
-    - name: "Req 2 - Check noexec option on /var/log"
-      shell: >
-        findmnt -kn /var/log | grep -v noexec
+    # Requirement 2: Verify noexec option is set (only if req_1 passed)
+    - name: "Req 2 - Verify noexec mount option is set"
+      shell: findmnt -kn /var/log | grep -v noexec
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 == "PASS"
+      when: status_1 | trim == 'PASS'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check noexec option on /var/log"
+        task_2_name: "Verify noexec mount option is set"
         task_2_cmd: "findmnt -kn /var/log | grep -v noexec"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when the command returns no output (empty), FAIL when any output is returned' if (result_2.stdout | default('') | trim == '') else 'FAIL when any output is returned') | trim }}"
-      when: status_1 == "PASS"
+        status_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {{ ('PASS: noexec option is present on /var/log partition' if (result_2.stdout | default('') | trim == '') else 'FAIL: noexec option is missing from /var/log partition') | trim }}
+          {% else %}
+            NA: Requirement not applicable as /var/log is not a separate mount point
+          {% endif %}
+      when: status_1 | trim == 'PASS'
 
-    - name: Set requirement 2 as NA when no separate partition
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_2_name: "Check noexec option on /var/log"
-        task_2_cmd: "findmnt -kn /var/log | grep -v noexec"
-        task_2_rc: -1
-        data_2: "N/A - No separate /var/log partition"
-        status_2: "NA"
-        rationale_2: "Not applicable - No separate /var/log partition found"
-      when: status_1 == "FAIL"
-
-    # Requirement 3: OVERALL Verify: Ensure noexec option set on /var/log partition
-    - name: Determine overall compliance
-      set_fact:
-        task_3_name: "Overall compliance determination"
-        task_3_cmd: "N/A - Calculated from previous results"
+        task_3_name: "Overall verification of noexec option on /var/log"
+        task_3_cmd: "N/A - Logical evaluation"
         task_3_rc: 0
-        data_3: "req_1={{ status_1 }}, req_2={{ status_2 }}"
-        status_3: "{{ ('PASS' if (status_1 == 'FAIL') or (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=FAIL (no separate partition) OR (req_1=PASS AND req_2=PASS), FAIL when req_1=PASS AND req_2=FAIL' if (status_1 == 'FAIL') or (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL when req_1=PASS AND req_2=FAIL') | trim }}"
+        data_3: "N/A - Logical evaluation"
+        status_3: >-
+          {% if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') %}
+            PASS
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') %}
+            PASS: No separate partition (requirement not applicable) OR separate partition with noexec option set
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
+            FAIL: Separate partition exists but noexec option is missing
+          {% else %}
+            UNKNOWN: Unable to determine compliance status
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.6.4"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.6.4"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

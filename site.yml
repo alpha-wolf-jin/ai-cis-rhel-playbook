@@ -51,10 +51,10 @@
 
     - name: Trigger the audit tasks
       include_tasks: "{{ item }}"
+      ignore_errors: yes
       loop: "{{ audit_task_playbook | list }}"
       loop_control:
         label: "Running: {{ item }}"
-      ignore_errors: yes
 
     - name: Show final result
       debug:

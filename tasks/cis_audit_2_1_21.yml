@@ -1,0 +1,198 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.21
+    req_1: Run the provided CIS audit script to verify Ensure mail transfer agents are configured for local-only mode
+    req_2: 'OVERALL Verify: Ensure mail transfer agents are configured for local-only mode'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+
+    # Check if Postfix is installed before running the script
+- name: Req 1 - Check if postconf command exists
+  command: which postconf
+  register: postconf_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Check if ss command exists
+  command: which ss
+  register: ss_check
+  ignore_errors: true
+  changed_when: false
+
+    # Requirement 1: Run the CIS audit script (only if required commands exist)
+- name: Req 1 - Execute CIS audit script for mail transfer agent local-only mode
+  copy:
+    dest: "/tmp/cis_audit_2.1.21.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+      {
+         l_output="" l_output2=""
+         a_port_list=("25" "465" "587")
+         if [ "$(postconf -n inet_interfaces)" != "inet_interfaces = all" ]; then
+            for l_port_number in "${a_port_list[@]}"; do
+               if ss -plntu | grep -P -- ':'"$l_port_number"'\b' | grep -Pvq -- '\h+(127\.0\.0\.1|\[?::1\]?):'"$l_port_number"'\b'; then
+                     l_output2="$l_output2\n - Port \"$l_port_number\" is listening on a non-loopback network interface"
+               else
+                     l_output="$l_output\n - Port \"$l_port_number\" is not listening on a non-loopback network interface"
+               fi
+            done
+         else
+            l_output2="$l_output2\n - Postfix is bound to all interfaces"
+         fi
+         unset a_port_list
+         if [ -z "$l_output2" ]; then
+            echo -e "\n- Audit Result:\n  ** PASS **\n$l_output\n"
+         else
+            echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
+            [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
+         fi
+      }
+      {% endraw %}
+  register: script_create_1
+  ignore_errors: true
+  when: postconf_check.rc == 0 and ss_check.rc == 0
+
+- name: Req 1 - Execute the audit script
+  shell: "/tmp/cis_audit_2.1.21.sh"
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+  when: postconf_check.rc == 0 and ss_check.rc == 0
+
+- name: Req 1 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_2.1.21.sh"
+    state: absent
+  ignore_errors: true
+  when: postconf_check.rc == 0 and ss_check.rc == 0
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Execute CIS audit script for mail transfer agent local-only mode"
+    task_1_cmd: >-
+      {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+      bash /tmp/cis_audit_2.1.21.sh
+      {% else %}
+      N/A (prerequisite commands not found)
+      {% endif %}
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: >-
+      {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+      stdout:
+      {{ result_1.stdout | default('') | trim }}
+      stderr:
+      {{ result_1.stderr | default('') | trim }}
+      {% else %}
+      Postfix check: postconf command found: {{ postconf_check.rc == 0 }}
+      Network socket check: ss command found: {{ ss_check.rc == 0 }}
+      Cannot run CIS audit script because required commands are not available.
+      {% endif %}
+    status_1: >-
+      {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+        {% set output = result_1.stdout | default('') | trim %}
+        {% if '** PASS **' in output %}
+          PASS
+        {% elif '** FAIL **' in output %}
+          FAIL
+        {% else %}
+          UNKNOWN
+        {% endif %}
+      {% else %}
+        NA
+      {% endif %}
+    rationale_1: >-
+      {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+        {% set output = result_1.stdout | default('') | trim %}
+        {% if '** PASS **' in output %}
+          PASS: Script output shows '** PASS **' indicating compliance with CIS requirement 2.1.21
+        {% elif '** FAIL **' in output %}
+          FAIL: Script output shows '** FAIL **' indicating non-compliance with CIS requirement 2.1.21
+        {% else %}
+          UNKNOWN: Cannot determine PASS/FAIL from script output
+        {% endif %}
+      {% else %}
+        NA: Required commands (postconf and/or ss) are not available, making this requirement not applicable
+      {% endif %}
+
+    # Requirement 2: Overall verification (based on requirement 1)
+- name: Req 2 - Set overall verification status
+  set_fact:
+    task_2_name: "Overall verification based on requirement 1"
+    task_2_cmd: "N/A (derived from requirement 1)"
+    task_2_rc: "0"
+    data_2: "{{ data_1 }}"
+    status_2: >-
+      {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+      {% if status_1_val == 'PASS' %}
+        PASS
+      {% elif status_1_val == 'FAIL' %}
+        FAIL
+      {% elif status_1_val == 'NA' %}
+        NA
+      {% else %}
+        UNKNOWN
+      {% endif %}
+    rationale_2: >-
+      {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+      {% if status_1_val == 'PASS' %}
+        PASS: Requirement 1 passed, indicating mail transfer agents are configured for local-only mode
+      {% elif status_1_val == 'FAIL' %}
+        FAIL: Requirement 1 failed, indicating mail transfer agents are not configured for local-only mode
+      {% elif status_1_val == 'NA' %}
+        NA: Postfix is not installed or required commands not available, making this requirement not applicable
+      {% else %}
+        UNKNOWN: Cannot determine overall compliance status
+      {% endif %}
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.1.21"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | trim }}"
+    - "  Rationale: {{ rationale_2 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_1_21'': status_2 | trim }] }}'

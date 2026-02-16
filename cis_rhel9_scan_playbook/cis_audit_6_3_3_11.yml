@@ -4,12 +4,11 @@
   become: yes
   gather_facts: false
   vars:
+    cis_checkpoint: "6.3.3.11"
     cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.11"
-    req_1: |
-      Check audit rules on disk for session initiation monitoring using command: awk '/^ *-w/ &&(/\/var\/run\/utmp/ ||/\/var\/log\/wtmp/ ||/\/var\/log\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules. Rationale: PASS when output contains exactly three lines matching '-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', and '-w /var/log/btmp -p wa -k session' (order may vary), FAIL otherwise
-    req_2: |
-      Check active audit rules for session initiation monitoring using command: auditctl -l | awk '/^ *-w/ &&(/\/var\/run\/utmp/ ||/\/var\/log\/wtmp/ ||/\/var\/log\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'. Rationale: PASS when output contains exactly three lines matching '-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', and '-w /var/log/btmp -p wa -k session' (order may vary), FAIL otherwise
-    req_3: "OVERALL Verify: Ensure session initiation information is collected. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+    req_1: "Check on-disk audit rules for session initiation monitoring"
+    req_2: "Check loaded audit rules for session initiation monitoring"
+    req_3: "OVERALL Verify: Ensure session initiation information is collected"
 
   tasks:
     - name: Initialize data variables
@@ -20,124 +19,145 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "OVERALL Verify"
+        task_3_name: "Overall verification"
         task_3_cmd: "N/A"
         task_3_rc: 0
 
-    - name: Req 1 - Check on-disk audit rules for session initiation
+    # Requirement 1: Check on-disk audit rules for session initiation monitoring
+    - name: Req 1 - Check on-disk audit rules for session initiation monitoring
       shell: |
-        awk '/^ *-w/ \
-        &&(/\/var\/run\/utmp/ \
-          ||/\/var\/log\/wtmp/ \
-          ||/\/var\/log\/btmp/) \
-        &&/ +-p *wa/ \
-        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        awk '/^ *-w/ &&(/\/var\/run\/utmp/ ||/\/var\/log\/wtmp/ ||/\/var\/log\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
-    - name: Store requirement 1 details - part 1
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Req 1 - Check on-disk audit rules for session initiation"
+        task_1_name: "Check on-disk audit rules for session initiation monitoring"
         task_1_cmd: |
-          awk '/^ *-w/ &&(/\/var\/run\/utmp/ ||/\/var\/log\/wtmp/ ||/\/var\/log\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+          awk '/^ *-w/ &&(/\\/var\\/run\\/utmp/ ||/\\/var\\/log\\/wtmp/ ||/\\/var\\/log\\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-
-    - name: Store requirement 1 details - part 2
-      set_fact:
         status_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% set lines = output.split('\n') | list | select('match', '^-w') | list %}
-          {% set expected = ['-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', '-w /var/log/btmp -p wa -k session'] %}
+          {% set lines = output.split('\n') | select('match', '^-w.*session$') | list %}
+          {% set expected_lines = ['-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', '-w /var/log/btmp -p wa -k session'] %}
           {% if lines | length == 3 %}
-            {% set lines_sorted = lines | sort %}
-            {% set expected_sorted = expected | sort %}
-            {{ 'PASS' if lines_sorted == expected_sorted else 'FAIL' }}
+            {% if '-w /var/run/utmp -p wa -k session' in lines and '-w /var/log/wtmp -p wa -k session' in lines and '-w /var/log/btmp -p wa -k session' in lines %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
             FAIL
           {% endif %}
-        rationale_1: "{{ ('PASS when output contains exactly three lines matching the expected rules (order may vary), FAIL otherwise' if (result_1.stdout | default('') | trim | length > 0) else 'FAIL: Expected exactly three rules for utmp, wtmp, and btmp') | trim }}"
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set lines = output.split('\n') | select('match', '^-w.*session$') | list %}
+          {% set expected_lines = ['-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', '-w /var/log/btmp -p wa -k session'] %}
+          {% if lines | length == 3 %}
+            {% if '-w /var/run/utmp -p wa -k session' in lines and '-w /var/log/wtmp -p wa -k session' in lines and '-w /var/log/btmp -p wa -k session' in lines %}
+              PASS: Output contains exactly the three required lines
+            {% else %}
+              FAIL: Output missing one or more required lines
+            {% endif %}
+          {% else %}
+            FAIL: Expected 3 lines but got {{ lines | length }} lines
+          {% endif %}
 
-    - name: Req 2 - Check active audit rules for session initiation
+    # Requirement 2: Check loaded audit rules for session initiation monitoring
+    - name: Req 2 - Check loaded audit rules for session initiation monitoring
       shell: |
-        auditctl -l | awk '/^ *-w/ \
-        &&(/\/var\/run\/utmp/ \
-          ||/\/var\/log\/wtmp/ \
-          ||/\/var\/log\/btmp/) \
-        &&/ +-p *wa/ \
-        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+        auditctl -l | awk '/^ *-w/ &&(/\/var\/run\/utmp/ ||/\/var\/log\/wtmp/ ||/\/var\/log\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
 
-    - name: Store requirement 2 details - part 1
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Req 2 - Check active audit rules for session initiation"
+        task_2_name: "Check loaded audit rules for session initiation monitoring"
         task_2_cmd: |
-          auditctl -l | awk '/^ *-w/ &&(/\/var\/run\/utmp/ ||/\/var\/log\/wtmp/ ||/\/var\/log\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+          auditctl -l | awk '/^ *-w/ &&(/\\/var\\/run\\/utmp/ ||/\\/var\\/log\\/wtmp/ ||/\\/var\\/log\\/btmp/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-
-    - name: Store requirement 2 details - part 2
-      set_fact:
         status_2: >-
           {% set output = result_2.stdout | default('') | trim %}
-          {% set lines = output.split('\n') | list | select('match', '^-w') | list %}
-          {% set expected = ['-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', '-w /var/log/btmp -p wa -k session'] %}
+          {% set lines = output.split('\n') | select('match', '^-w.*session$') | list %}
+          {% set expected_lines = ['-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', '-w /var/log/btmp -p wa -k session'] %}
           {% if lines | length == 3 %}
-            {% set lines_sorted = lines | sort %}
-            {% set expected_sorted = expected | sort %}
-            {{ 'PASS' if lines_sorted == expected_sorted else 'FAIL' }}
+            {% if '-w /var/run/utmp -p wa -k session' in lines and '-w /var/log/wtmp -p wa -k session' in lines and '-w /var/log/btmp -p wa -k session' in lines %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
             FAIL
           {% endif %}
-        rationale_2: "{{ ('PASS when output contains exactly three lines matching the expected rules (order may vary), FAIL otherwise' if (result_2.stdout | default('') | trim | length > 0) else 'FAIL: Expected exactly three rules for utmp, wtmp, and btmp') | trim }}"
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set lines = output.split('\n') | select('match', '^-w.*session$') | list %}
+          {% set expected_lines = ['-w /var/run/utmp -p wa -k session', '-w /var/log/wtmp -p wa -k session', '-w /var/log/btmp -p wa -k session'] %}
+          {% if lines | length == 3 %}
+            {% if '-w /var/run/utmp -p wa -k session' in lines and '-w /var/log/wtmp -p wa -k session' in lines and '-w /var/log/btmp -p wa -k session' in lines %}
+              PASS: Output contains exactly the three required lines
+            {% else %}
+              FAIL: Output missing one or more required lines
+            {% endif %}
+          {% else %}
+            FAIL: Expected 3 lines but got {{ lines | length }} lines
+          {% endif %}
 
-    - name: Store requirement 3 details - part 1
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Req 3 - OVERALL Verify"
-        task_3_cmd: "Combined evaluation of requirement 1 and 2"
-        data_3: "Combined result of requirement 1 and 2"
-        status_3: "{{ ('PASS' if (status_1 | default('') | trim == 'PASS' and status_2 | default('') | trim == 'PASS') else 'FAIL') | trim }}"
+        data_3: "On-disk status: {{ status_1 | trim }}, Loaded status: {{ status_2 | trim }}"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+            PASS: Both on-disk and loaded audit rules are properly configured
+          {% else %}
+            FAIL: Missing or incorrect audit rules for session initiation monitoring
+          {% endif %}
 
-    - name: Store requirement 3 details - part 2
-      set_fact:
-        rationale_3: "{{ ('PASS when both on-disk and active audit rules are properly configured' if (status_3 | default('') | trim == 'PASS') else 'FAIL: Session initiation information collection is not fully configured') | trim }}"
-
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
-          - "        COMPLIANCE REPORT - CIS 6.3.3.11"
+          - "        COMPLIANCE REPORT - CIS {{ cis_checkpoint }}"
           - "========================================================"
           - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
-          - "REQUIREMENT 1 - {{ req_1 | trim | regex_replace('Rationale:.*', '') | trim }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 2 - {{ req_2 | trim | regex_replace('Rationale:.*', '') | trim }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 | trim | regex_replace('Rationale:.*', '') | trim }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"

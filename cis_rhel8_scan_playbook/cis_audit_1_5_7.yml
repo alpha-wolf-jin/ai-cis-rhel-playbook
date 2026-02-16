@@ -2,66 +2,61 @@
 - name: Data Collection for CIS 1.5.7
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.5.7"
-    req_1: "Verify kernel.yama.ptrace_scope is set to 1, 2, or 3 in the running configuration using command: sysctl kernel.yama.ptrace_scope"
-    req_2: "Run script to verify kernel.yama.ptrace_scope is set to 1, 2, or 3 in a sysctl conf file being used by systemd sysctl"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.7"
+    req_1: "Run the following command to verify kernel.yama.ptrace_scope is set to a value of: 1, 2, or 3 in the running configuration"
+    req_2: "Run the following script to verify kernel.yama.ptrace_scope is set to a value of: 1, 2, or 3 in a sysctl conf file being used by systemd sysctl"
     req_3: "OVERALL Verify: Ensure kernel.yama.ptrace_scope is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify kernel.yama.ptrace_scope is set to 1, 2, or 3 in the running configuration
-    - name: "Req 1 - Check running sysctl configuration"
-      shell: |
-        sysctl kernel.yama.ptrace_scope
+    # Requirement 1: Check running configuration
+    - name: "Req 1 - Check running configuration for kernel.yama.ptrace_scope"
+      shell: sysctl kernel.yama.ptrace_scope
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl configuration"
+        task_1_name: "Check running configuration for kernel.yama.ptrace_scope"
         task_1_cmd: "sysctl kernel.yama.ptrace_scope"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: |
-          {{ ('PASS' if (result_1.stdout | default('') | trim) is regex('kernel\\.yama\\.ptrace_scope\\s*=\\s*[123]') else 'FAIL') | trim }}
-        rationale_1: "PASS when output is 'kernel.yama.ptrace_scope = 1', 'kernel.yama.ptrace_scope = 2', or 'kernel.yama.ptrace_scope = 3', FAIL otherwise"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is match('kernel\.yama\.ptrace_scope\s*=\s*[123]') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when kernel.yama.ptrace_scope is set to 1, 2, or 3 in the running configuration, FAIL otherwise"
 
-    # Requirement 2: Run script to check sysctl configuration files
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Execute the provided CIS audit script
+    - name: Req 2 - Create temporary audit script for kernel.yama.ptrace_scope
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_1.5.7.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
-             l_parameter_name="kernel.yama.ptrace_scope"  
+             l_parameter_name="kernel.yama.ptrace_scope"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
              l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
              || readlink -e /usr/lib/systemd/systemd-sysctl)"
@@ -85,79 +80,92 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
+      register: script_create_2
+      ignore_errors: true
+      changed_when: false
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_audit_1.5.7.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 2 - Remove temporary audit script"
+    - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_1.5.7.sh"
         state: absent
       ignore_errors: true
+      changed_when: false
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sysctl configuration files"
-        task_2_cmd: "Execute CIS audit script for sysctl files"
+        task_2_name: "Execute CIS audit script for kernel.yama.ptrace_scope"
+        task_2_cmd: "/tmp/cis_audit_1.5.7.sh"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: |
-          {{ ('PASS' if (result_2.stdout | default('') | trim) is regex('kernel\\.yama\\.ptrace_scope.*=.*[123]') else 'FAIL') | trim }}
-        rationale_2: "PASS when the script output shows the parameter is set to '1', '2', or '3' in a relevant sysctl configuration file, FAIL if the parameter is not found or is set to an incorrect value (e.g., 0)"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' %}
+            FAIL
+          {% else %}
+            {% set lines = output.split('\n') %}
+            {% set first_line = lines[0] if lines|length > 0 else '' %}
+            {% if first_line is match('.*kernel\.yama\.ptrace_scope\s*=\s*[123].*') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: "PASS when script output shows kernel.yama.ptrace_scope is set to 1, 2, or 3 in a sysctl conf file, FAIL otherwise"
 
-    # Requirement 3: OVERALL Verify
-    - name: "Req 3 - Determine overall compliance"
+    # Requirement 3: Overall verify
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall compliance determination"
+        task_3_name: "Overall verification for kernel.yama.ptrace_scope configuration"
         task_3_cmd: "N/A"
         task_3_rc: 0
-        data_3: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}"
-        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        data_3: "N/A"
+        status_3: "{{ status_1 | trim }}"
+        rationale_3: "PASS when req_1=PASS, FAIL otherwise"
 
-    # Final report
+    # Generate compliance report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.5.7"
           - "========================================================"
-          - "Reference: {{ kcs_article }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.7"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

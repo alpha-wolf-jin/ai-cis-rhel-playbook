@@ -1,0 +1,128 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.2
+    req_1: Check password length configuration in pwquality.conf files
+    req_2: Check for overriding minlen settings in PAM configuration files
+    req_overall: Ensure password length is configured
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_overall_name: "Overall verification"
+    task_overall_cmd: "N/A"
+    task_overall_rc: 0
+
+    # Requirement 1: Check password length configuration in pwquality.conf files
+- name: "Req 1 - Check minlen in pwquality.conf files"
+  shell: |
+    {% raw %}
+    grep -Psi -- '^\h*minlen\h*=\h*(1[4-9]|[2-9][0-9]|[1-9][0-9]{2,})\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check minlen in pwquality.conf files"
+    task_1_cmd: |
+      grep -Psi -- '^\h*minlen\h*=\h*(1[4-9]|[2-9][0-9]|[1-9][0-9]{2,})\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set lines = output.split('\n') %}
+        {% set found_valid = false %}
+        {% for line in lines %}
+          {% if line %}
+            {% set match = line | regex_search('minlen\h*=\h*(\d+)') %}
+            {% if match %}
+              {% set value = line | regex_replace('.*minlen\h*=\h*(\d+).*', '\1') | int %}
+              {% if value >= 14 %}
+                {% set found_valid = true %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        {% if found_valid %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: "PASS when the command returns at least one line where the extracted 'minlen' value is an integer >= 14, FAIL when no such line is found or the extracted value is < 14."
+
+    # Requirement 2: Check for overriding minlen settings in PAM configuration files
+- name: "Req 2 - Check for overriding minlen in PAM files"
+  shell: |
+    {% raw %}
+    grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?minlen\h*=\h*([0-9]|1[0-3])\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check for overriding minlen in PAM files"
+    task_2_cmd: |
+      grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?minlen\h*=\h*([0-9]|1[0-3])\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+    rationale_2: "PASS when the command returns no output (indicating no overriding 'minlen' setting less than 14), FAIL when any output is returned."
+
+    # Overall verification
+- name: Store overall compliance
+  set_fact:
+    status_overall: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
+    rationale_overall: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise.') | trim }}"
+
+    # Generate compliance report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.3.3.2.2"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_3_3_2_2'': status_2 | trim }] }}'

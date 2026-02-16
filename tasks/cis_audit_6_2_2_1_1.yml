@@ -1,0 +1,198 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    req_1: Check if journald is used for logging on the system
+    req_2: 'Verify systemd-journal-remote is installed using command: rpm -q systemd-journal-remote'
+    req_3: 'OVERALL Verify: Ensure systemd-journal-remote is installed'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    data_3: "N/A"
+    status_3: "UNKNOWN"
+    rationale_3: "Not evaluated"
+    journald_used: "false"
+
+    # Requirement 1: Check if journald is used for logging on the system
+    # According to CRITICAL INSTRUCTIONS, we should use the CIS audit procedure
+    # The procedure says: "IF - journald will be used for logging on the system"
+    # We need to check if journald is the primary logger
+- name: Req 1 - Check journald usage
+  shell: |
+    # Check if systemd-journald service is active and enabled
+    journald_active=$(systemctl is-active systemd-journald 2>/dev/null || echo "inactive")
+    journald_enabled=$(systemctl is-enabled systemd-journald 2>/dev/null || echo "disabled")
+
+    # Check if journald is likely used for logging
+    # In RHEL 9, journald is typically the primary logger
+    if [[ "$journald_active" == "active" ]] && [[ "$journald_enabled" == "enabled" ]]; then
+      echo "journald_used=true"
+    else
+      echo "journald_used=false"
+    fi
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check journald usage"
+    task_1_cmd: "Check systemd-journald service status"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == 'journald_used=true' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == 'journald_used=true' %}
+        PASS when journald is the chosen method for client-side logging (e.g., rsyslog is not the primary logger), FAIL otherwise
+      {% else %}
+        FAIL: journald is not the primary logger
+      {% endif %}
+    journald_used: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == 'journald_used=true' %}
+        true
+      {% else %}
+        false
+      {% endif %}
+
+    # Requirement 2: Verify systemd-journal-remote is installed
+    # Only execute if journald is used (Requirement 1 passed)
+    # According to CRITICAL INSTRUCTIONS, use the exact command from the audit procedure
+- name: Req 2 - Check systemd-journal-remote package
+  shell: rpm -q systemd-journal-remote
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: journald_used == 'true'
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check systemd-journal-remote installation"
+    task_2_cmd: "rpm -q systemd-journal-remote"
+    task_2_rc: >-
+      {% if journald_used == 'true' %}
+        {{ result_2.rc | default(-1) }}
+      {% else %}
+        -1
+      {% endif %}
+    data_2: >-
+      {% if journald_used == 'true' %}
+        {{ result_2.stdout | default('') | trim }}
+      {% else %}
+        Not executed - journald not used
+      {% endif %}
+    status_2: >-
+      {% if journald_used == 'true' %}
+        {% set output = result_2.stdout | default('') | trim %}
+        {% if output is regex('^systemd-journal-remote-') %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        NA
+      {% endif %}
+    rationale_2: >-
+      {% if journald_used == 'true' %}
+        {% set output = result_2.stdout | default('') | trim %}
+        {% if output is regex('^systemd-journal-remote-') %}
+          PASS when the output matches the pattern systemd-journal-remote-<version> (where <version> is any version number, indicating the package is installed), FAIL when the output indicates the package is not installed
+        {% else %}
+          FAIL: Package systemd-journal-remote is not installed
+        {% endif %}
+      {% else %}
+        Not applicable because journald is not used
+      {% endif %}
+
+    # Requirement 3: Overall verification
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Overall verification"
+    task_3_cmd: "N/A"
+    task_3_rc: 0
+    data_3: "N/A"
+    status_3: >-
+      {% if status_1|default('FAIL')|trim == 'PASS' and status_2|default('FAIL')|trim == 'PASS' %}
+        PASS
+      {% elif status_1|default('FAIL')|trim == 'FAIL' %}
+        NA
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% if status_1|default('FAIL')|trim == 'PASS' and status_2|default('FAIL')|trim == 'PASS' %}
+        PASS when req_1=PASS AND req_2=PASS (journald is used AND the package is installed)
+      {% elif status_1|default('FAIL')|trim == 'FAIL' %}
+        NA: If journald is not used (req_1=FAIL), this checkpoint is not applicable
+      {% else %}
+        FAIL: journald is used but systemd-journal-remote is not installed
+      {% endif %}
+
+    # Generate compliance report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.2.2.1.1"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.1.1"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_2_2_1_1'': status_3 | trim }] }}'

@@ -1,0 +1,149 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.14
+    req_1: Check on-disk audit rules for SELinux policy directories
+    req_2: Check loaded audit rules for SELinux policy directories
+    req_3: 'OVERALL Verify: Ensure events that modify the system''s Mandatory Access Controls are collected'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+
+    # Requirement 1: Check on-disk audit rules for SELinux policy directories
+- name: Req 1 - Check on-disk audit rules
+  shell: |
+    awk '/^ *-w/ &&(/\/etc\/selinux/ ||/\/usr\/share\/selinux/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check on-disk audit rules for SELinux policy directories"
+    task_1_cmd: |
+      awk '/^ *-w/ &&(/\/etc\/selinux/ ||/\/usr\/share\/selinux/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim | split('\n') | map('trim') | list %}
+      {% set expected1 = '-w /etc/selinux -p wa -k MAC-policy' %}
+      {% set expected2 = '-w /usr/share/selinux -p wa -k MAC-policy' %}
+      {% if expected1 in output and expected2 in output %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim | split('\n') | map('trim') | list %}
+      {% set expected1 = '-w /etc/selinux -p wa -k MAC-policy' %}
+      {% set expected2 = '-w /usr/share/selinux -p wa -k MAC-policy' %}
+      {% if expected1 in output and expected2 in output %}
+        PASS: Output contains both required rules
+      {% else %}
+        FAIL: Missing one or both required rules. Expected: '{{ expected1 }}' and '{{ expected2 }}'. Got: '{{ output | join('; ') }}'
+      {% endif %}
+
+    # Requirement 2: Check loaded audit rules for SELinux policy directories
+- name: Req 2 - Check loaded audit rules
+  shell: |
+    auditctl -l | awk '/^ *-w/ &&(/\/etc\/selinux/ ||/\/usr\/share\/selinux/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check loaded audit rules for SELinux policy directories"
+    task_2_cmd: |
+      auditctl -l | awk '/^ *-w/ &&(/\/etc\/selinux/ ||/\/usr\/share\/selinux/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% set output = result_2.stdout | default('') | trim | split('\n') | map('trim') | list %}
+      {% set expected1 = '-w /etc/selinux -p wa -k MAC-policy' %}
+      {% set expected2 = '-w /usr/share/selinux -p wa -k MAC-policy' %}
+      {% if expected1 in output and expected2 in output %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_2: >-
+      {% set output = result_2.stdout | default('') | trim | split('\n') | map('trim') | list %}
+      {% set expected1 = '-w /etc/selinux -p wa -k MAC-policy' %}
+      {% set expected2 = '-w /usr/share/selinux -p wa -k MAC-policy' %}
+      {% if expected1 in output and expected2 in output %}
+        PASS: Output contains both required rules
+      {% else %}
+        FAIL: Missing one or both required rules. Expected: '{{ expected1 }}' and '{{ expected2 }}'. Got: '{{ output | join('; ') }}'
+      {% endif %}
+
+    # Requirement 3: Overall verification
+- name: Store requirement 3 details
+  set_fact:
+    data_3: "Overall compliance check"
+    status_3: >-
+      {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+        PASS: Both on-disk and loaded audit rules are properly configured
+      {% else %}
+        FAIL: One or both audit rule checks failed. On-disk: {{ status_1 | default('FAIL') }}, Loaded: {{ status_2 | default('FAIL') }}
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.3.3.14"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: Overall verification"
+    - "  Command: N/A"
+    - "  Exit code: N/A"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_3_3_14'': status_3 | trim }] }}'

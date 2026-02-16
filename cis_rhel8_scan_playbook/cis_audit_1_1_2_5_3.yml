@@ -1,83 +1,138 @@
 ---
-- name: Data Collection for CIS 1.1.2.5.3
+- name: Data Collection for CIS checkpoint 1.1.2.5.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.2.5.3"
-    req_1: "Verify that if a separate partition exists for /var/tmp, the nosuid mount option is set"
-    req_2: "OVERALL Verify: Ensure nosuid option set on /var/tmp partition"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.5.3"
+    req_1: "Check if /var/tmp is a separate mount point"
+    req_2: "If /var/tmp is a separate mount, verify the nosuid mount option is set"
+    req_3: "Overall Verify: Ensure nosuid option set on /var/tmp partition"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: "N/A"
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify that if a separate partition exists for /var/tmp, the nosuid mount option is set
-    - name: "Req 1 - Check nosuid option on /var/tmp partition"
-      shell: >
-        findmnt -kn /var/tmp | grep -v nosuid
+    - name: Req 1 - Check if /var/tmp is a separate mount point
+      shell: findmnt -kn /var/tmp
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check nosuid option on /var/tmp partition"
-        task_1_cmd: "findmnt -kn /var/tmp | grep -v nosuid"
+        task_1_name: "Check if /var/tmp is a separate mount point"
+        task_1_cmd: "findmnt -kn /var/tmp"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns no output (nosuid is present), FAIL when output is returned (nosuid is not present)') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when the command returns output (indicating a separate mount exists), FAIL when no output is returned (indicating /var/tmp is not a separate mount and the check is not applicable)' if (result_1.stdout | default('') | trim != '') else 'FAIL: /var/tmp is not a separate mount point') | trim }}"
 
-    # Requirement 2: OVERALL Verify: Ensure nosuid option set on /var/tmp partition
-    - name: "Req 2 - Determine overall compliance"
+    - name: Req 2 - Run CIS audit procedure command to verify nosuid option
+      shell: findmnt -kn /var/tmp | grep -v nosuid
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
+        task_2_name: "Run CIS audit procedure command to verify nosuid option"
+        task_2_cmd: "findmnt -kn /var/tmp | grep -v nosuid"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'FAIL' %}
+            NA
+          {% else %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'FAIL' %}
+            Not applicable because /var/tmp is not a separate mount point
+          {% else %}
+            {{ ('PASS when command returns nothing (no output, meaning nosuid option is set), FAIL when command returns output (meaning nosuid option is not set)' if (result_2.stdout | default('') | trim == '') else 'FAIL: nosuid option is not set on /var/tmp mount') | trim }}
+          {% endif %}
 
-    # Final report
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification for CIS 1.1.2.5.3"
+        task_3_cmd: "N/A"
+        task_3_rc: "0"
+        data_3: "N/A"
+        status_3: >-
+          {% if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') %}
+            PASS
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') %}
+            PASS when req_1=FAIL (no separate partition, so requirement is not applicable) OR (req_1=PASS AND req_2=PASS)
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
+            FAIL when req_1=PASS AND req_2=FAIL
+          {% else %}
+            Cannot determine overall compliance status
+          {% endif %}
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.5.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.5.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Rationale: {{ rationale_1 | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

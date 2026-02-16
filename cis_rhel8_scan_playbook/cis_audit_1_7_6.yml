@@ -2,169 +2,106 @@
 - name: Data Collection for CIS 1.7.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.7.6"
-    req_1: "Verify the file permissions for /etc/issue.net are 644 or more restrictive"
-    req_2: "Verify the owner (UID) of /etc/issue.net is root (0)"
-    req_3: "Verify the group (GID) of /etc/issue.net is root (0)"
-    req_4: "OVERALL Verify: Ensure access to /etc/issue.net is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.6"
+    req_1: "Check file permissions and ownership of /etc/issue.net"
+    req_2: "OVERALL Verify: Ensure access to /etc/issue.net is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        
-        data_3: "Not collected yet"
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
-        
-        data_4: "Not collected yet"
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        status_4: "UNKNOWN"
-        rationale_4: "Not evaluated"
 
-    # Requirement 1: Verify the file permissions for /etc/issue.net are 644 or more restrictive
-    - name: "Req 1 - Check file permissions"
-      shell: >
-        stat -Lc '%#a' /etc/issue.net
+    # Requirement 1: Check file permissions and ownership of /etc/issue.net
+    - name: Req 1 - Check /etc/issue.net permissions and ownership
+      shell: |
+        {% raw %}
+        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/issue.net
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check file permissions"
-        task_1_cmd: "stat -Lc '%#a' /etc/issue.net"
+        task_1_name: "Check /etc/issue.net permissions and ownership"
+        task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/issue.net"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | int <= 644) else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is '0644' or a value with more restrictive permissions (e.g., 0640, 0600), FAIL otherwise"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if "Access:" in output %}
+            {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+            {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+            {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+            {% if mode | int(base=8) <= 420 and uid == '0' and gid == '0' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if "Access:" in output %}
+            {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+            {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+            {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+            {% if mode | int(base=8) <= 420 and uid == '0' and gid == '0' %}
+              PASS when file access mode is {{ mode }} (<= 0644/420) and Uid is {{ uid }} and Gid is {{ gid }}
+            {% else %}
+              FAIL: Mode {{ mode }} (decimal: {{ mode | int(base=8) }}) is not <= 420 OR Uid {{ uid }} is not 0 OR Gid {{ gid }} is not 0
+            {% endif %}
+          {% else %}
+            FAIL: Could not parse stat output
+          {% endif %}
 
-    # Requirement 2: Verify the owner (UID) of /etc/issue.net is root (0)
-    - name: "Req 2 - Check file owner UID"
-      shell: >
-        stat -Lc '%u' /etc/issue.net
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
+    # Requirement 2: OVERALL Verify (no separate command, depends on requirement 1)
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check file owner UID"
-        task_2_cmd: "stat -Lc '%u' /etc/issue.net"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '0') else 'FAIL') | trim }}"
-        rationale_2: "PASS when output is '0', FAIL otherwise"
+        task_2_name: "Overall verification based on requirement 1"
+        task_2_cmd: "N/A - Overall check"
+        task_2_rc: 0
+        data_2: "Based on requirement 1 status: {{ status_1 }}"
+        status_2: "{{ status_1 }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise. Requirement 1 status: {{ status_1 }}"
 
-    # Requirement 3: Verify the group (GID) of /etc/issue.net is root (0)
-    - name: "Req 3 - Check file group GID"
-      shell: >
-        stat -Lc '%g' /etc/issue.net
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Check file group GID"
-        task_3_cmd: "stat -Lc '%g' /etc/issue.net"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '0') else 'FAIL') | trim }}"
-        rationale_3: "PASS when output is '0', FAIL otherwise"
-
-    # Requirement 4: OVERALL Verify: Ensure access to /etc/issue.net is configured
-    - name: "Req 4 - Execute CIS audit command"
-      shell: >
-        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/issue.net
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Execute CIS audit command"
-        task_4_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/issue.net"
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS' and status_3 == 'PASS') else 'FAIL') | trim }}"
-        rationale_4: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS, FAIL otherwise"
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.7.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.6"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
-          - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: Overall status matches requirement 2 status: {{ status_2 }}"
           - "========================================================"

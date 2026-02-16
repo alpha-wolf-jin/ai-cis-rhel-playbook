@@ -1,83 +1,165 @@
 ---
-- name: Data Collection for CIS 1.7.4
+- name: Data Collection for CIS 1.7.4 - Ensure access to /etc/motd is configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.7.4"
-    req_1: "Verify that if /etc/motd exists, its access permissions are 644 or more restrictive, its owner is root, and its group is root"
-    req_2: "OVERALL Verify: Ensure access to /etc/motd is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.4"
+    req_1: "Check if /etc/motd file exists"
+    req_2: "If /etc/motd exists, verify its permissions and ownership"
+    req_3: "OVERALL Verify: Ensure access to /etc/motd is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
 
-    # Requirement 1: Verify that if /etc/motd exists, its access permissions are 644 or more restrictive, its owner is root, and its group is root
-    - name: "Req 1 - Check /etc/motd permissions and ownership"
-      shell: |
-        [ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/motd
+    - name: Req 1 - Check if /etc/motd exists
+      shell: "[ -e /etc/motd ]"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check /etc/motd permissions and ownership"
-        task_1_cmd: "[ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/motd"
+        task_1_name: "Check if /etc/motd exists"
+        task_1_cmd: "[ -e /etc/motd ]"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '' or result_1.stdout | default('') | trim == 'Access: (0644/-rw-r--r--)  Uid: ( 0/ root) Gid: ( 0/ root)') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns no output (file does not exist) OR when the output matches 'Access: (0644/-rw-r--r--)  Uid: ( 0/ root) Gid: ( 0/ root)', FAIL otherwise"
+        file_exists: "{{ result_1.rc == 0 }}"
+        status_1: "{{ ('PASS' if result_1.rc == 0 or result_1.rc == 1 else 'FAIL') | trim }}"
+        rationale_1: >-
+          {{ ('PASS: File exists, proceed to requirement 2.' if result_1.rc == 0 else
+              'PASS: File does not exist, nothing to check.' if result_1.rc == 1 else
+              'FAIL: Command failed with exit code ' ~ (result_1.rc | string)) | trim }}
 
-    # Requirement 2: OVERALL Verify: Ensure access to /etc/motd is configured
-    - name: "Req 2 - Overall verification"
+    - name: Req 2 - Verify permissions and ownership of /etc/motd if it exists
+      shell: |
+        {% raw %}
+        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/motd
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: file_exists
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A (determined by requirement 1)"
-        task_2_rc: 0
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Verify permissions and ownership of /etc/motd if it exists"
+        task_2_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/motd"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if not file_exists %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output != '' %}
+              {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+              {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% if mode | int(base=8) <= 420 and uid == '0' and gid == '0' %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if not file_exists %}
+            File does not exist, requirement not applicable.
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output != '' %}
+              {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+              {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% if mode | int(base=8) <= 420 and uid == '0' and gid == '0' %}
+                PASS: Access is {{ '%04o' % (mode | int(base=8)) }} (<= 0644), Uid is {{ uid }}, Gid is {{ gid }}.
+              {% else %}
+                FAIL: Access is {{ '%04o' % (mode | int(base=8)) }} (not <= 0644) or Uid is {{ uid }} (not 0) or Gid is {{ gid }} (not 0).
+              {% endif %}
+            {% else %}
+              FAIL: stat command returned no output.
+            {% endif %}
+          {% endif %}
 
-    # Final report
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: "N/A"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' and not file_exists %}
+            PASS
+          {% elif status_1 | trim == 'PASS' and file_exists and status_2 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' and not file_exists %}
+            PASS: File does not exist.
+          {% elif status_1 | trim == 'PASS' and file_exists and status_2 | trim == 'PASS' %}
+            PASS: File exists with correct permissions and ownership.
+          {% elif status_1 | trim != 'PASS' %}
+            FAIL: Initial check for /etc/motd failed.
+          {% elif file_exists and status_2 | trim != 'PASS' %}
+            FAIL: File exists but does not meet permissions or ownership requirements.
+          {% else %}
+            FAIL: Unknown condition.
+          {% endif %}
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.7.4"
           - "========================================================"
-          - "Reference: {{ kcs_article }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.4"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

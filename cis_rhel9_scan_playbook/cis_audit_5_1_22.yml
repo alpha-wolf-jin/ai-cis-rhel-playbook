@@ -2,15 +2,22 @@
 - name: Data Collection for CIS 5.1.22
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.22"
-    req_1: "Verify sshd UsePAM configuration using command: `sshd -T | grep -i usepam`. Rationale: PASS when the exact output is 'usepam yes', FAIL otherwise"
-    req_2: "OVERALL Verify: Ensure sshd UsePAM is enabled. Rationale: PASS when req_1=PASS, FAIL otherwise"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.22"
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Verify sshd UsePAM configuration using command: sshd -T | grep -i usepam"
+    req_2: "OVERALL Verify: Ensure sshd UsePAM is enabled"
 
   tasks:
     - name: Initialize data variables
       set_fact:
+        data_1: ""
+        data_2: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -18,8 +25,8 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify sshd UsePAM configuration using command: `sshd -T | grep -i usepam`. Rationale: PASS when the exact output is 'usepam yes', FAIL otherwise
-    - name: Req 1 - Check sshd UsePAM configuration
+    # Requirement 1: Verify sshd UsePAM configuration using command: sshd -T | grep -i usepam
+    - name: Req 1 - Verify sshd UsePAM configuration
       shell: |
         sshd -T | grep -i usepam
       args:
@@ -30,54 +37,38 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check sshd UsePAM configuration"
+        task_1_name: "Verify sshd UsePAM configuration"
         task_1_cmd: "sshd -T | grep -i usepam"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'usepam yes' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'usepam yes') else 'FAIL') | trim }}"
+        # FIXED: Using Jinja2 template block with single quotes for string literals inside
         rationale_1: >-
           {% set output = result_1.stdout | default('') | trim %}
           {% if output == 'usepam yes' %}
-            PASS when the exact output is 'usepam yes', FAIL otherwise
+            PASS when output is exactly "usepam yes", FAIL otherwise
           {% else %}
-            FAIL when output is not exactly 'usepam yes'
+            FAIL: Expected "usepam yes", got "{{ output }}"
           {% endif %}
 
-    # Requirement 2: OVERALL Verify: Ensure sshd UsePAM is enabled. Rationale: PASS when req_1=PASS, FAIL otherwise
-    - name: Req 2 - Overall verification
+    # Requirement 2: OVERALL Verify: Ensure sshd UsePAM is enabled
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A (calculated from requirement 1)"
+        task_2_name: "OVERALL Verify: Ensure sshd UsePAM is enabled"
+        task_2_cmd: "N/A - Overall assessment"
         task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 | default('UNKNOWN') | trim }}"
-        status_2: >-
-          {% set req1_status = status_1 | default('FAIL') | trim %}
-          {% if req1_status == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_2: >-
-          {% set req1_status = status_1 | default('FAIL') | trim %}
-          {% if req1_status == 'PASS' %}
-            PASS when req_1=PASS, FAIL otherwise
-          {% else %}
-            FAIL because req_1 is not PASS
-          {% endif %}
+        data_2: "{{ data_1 }}"
+        status_2: "{{ status_1 }}"
+        rationale_2: '{{ "PASS when req_1=PASS, FAIL otherwise" if (status_1 | default("") | trim == "PASS") else "FAIL: req_1 status is " + (status_1 | default("UNKNOWN") | trim) }}'
 
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.22"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.22"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -98,6 +89,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('FAIL') | trim }}"
-          - "  Rationale: {{ ('Overall PASS when all requirements PASS' if (status_2 | default('FAIL') | trim == 'PASS') else 'Overall FAIL because not all requirements PASS') | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

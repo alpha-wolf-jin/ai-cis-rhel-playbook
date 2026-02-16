@@ -1,83 +1,117 @@
 ---
-- name: Data Collection for CIS 1.1.2.2.3
+- name: Data Collection for CIS 1.1.2.2.3 - Ensure nosuid option set on /dev/shm partition
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.2.2.3"
-    req_1: "Verify that if a separate partition exists for /dev/shm, the nosuid mount option is set"
-    req_2: "OVERALL Verify: Ensure nosuid option set on /dev/shm partition"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.3"
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if /dev/shm is mounted as a separate partition using command: findmnt -kn /dev/shm"
+    req_2: "If a separate partition exists for /dev/shm, verify the nosuid mount option is set using command: findmnt -kn /dev/shm | grep -v 'nosuid'"
+    req_3: "OVERALL Verify: Ensure nosuid option set on /dev/shm partition"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
 
-    # Requirement 1: Verify that if a separate partition exists for /dev/shm, the nosuid mount option is set
-    - name: "Req 1 - Check nosuid option on /dev/shm"
-      shell: >
-        findmnt -kn /dev/shm | grep -v 'nosuid'
+    # Requirement 1: Check if /dev/shm is mounted as a separate partition
+    - name: "Req 1 - Check if /dev/shm is a separate partition"
+      shell: findmnt -kn /dev/shm
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check nosuid option on /dev/shm"
-        task_1_cmd: "findmnt -kn /dev/shm | grep -v 'nosuid'"
+        task_1_name: "Check if /dev/shm is a separate partition"
+        task_1_cmd: "findmnt -kn /dev/shm"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns no output (empty), FAIL when any output is returned"
+        status_1: "{{ ('PASS' if result_1.stdout | trim != '' else 'FAIL') | trim }}"
+        rationale_1: "PASS when the command returns output (indicating a separate mount exists), FAIL when no output is returned (indicating no separate partition, making the nosuid check N/A)"
 
-    # Requirement 2: OVERALL Verify: Ensure nosuid option set on /dev/shm partition
-    - name: "Req 2 - Determine overall compliance"
+    # Requirement 2: If a separate partition exists, verify nosuid option is set
+    - name: "Req 2 - Verify nosuid option is set on /dev/shm"
+      shell: findmnt -kn /dev/shm | grep -v 'nosuid'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 == 'PASS'  # Only execute if separate partition exists
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Verify nosuid option is set on /dev/shm"
+        task_2_cmd: "findmnt -kn /dev/shm | grep -v 'nosuid'"
+        task_2_rc: "{{ result_2.rc | default(-1) if result_2 is defined else -1 }}"
+        data_2: >-
+          {{ result_2.stdout | default('') | trim if result_2 is defined else 'Not executed (no separate partition for /dev/shm)' }}
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') if result_2 is defined else 'NA' }}"
+        rationale_2: >-
+          {% if result_2 is defined %}
+            PASS when the command returns NO output (meaning 'nosuid' is present in the mount options), FAIL when any output is returned (meaning 'nosuid' is NOT set)
+          {% else %}
+            Not applicable because /dev/shm is not mounted as a separate partition (req_1=FAIL).
+          {% endif %}
 
-    # Final report
+    # Requirement 3: Overall verification
+    - name: Store overall requirement details
+      set_fact:
+        task_3_name: "Overall Verify: Ensure nosuid option set on /dev/shm partition"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "req_1 status: {{ status_1 }}, req_2 status: {{ status_2 }}"
+        status_3: "{{ 'PASS' if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and (status_2 | trim) == 'PASS') else 'FAIL' }}"
+        rationale_3: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS). This means PASS if either no separate partition exists OR if a separate partition exists AND the nosuid option is set."
+
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.2.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Rationale: {{ rationale_1 }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 }}"
           - "========================================================"

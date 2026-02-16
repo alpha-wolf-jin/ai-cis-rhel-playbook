@@ -1,0 +1,166 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.4.1
+    req_1: 'Check if /var is mounted as a separate filesystem using command: findmnt -kn /var. Rationale: PASS when the command returns output showing a device (e.g., /dev/sdX) and mount point /var, indicating it is mounted separately. FAIL when the command returns no output or an error, indicating /var is not a separate mount.'
+    req_2: 'Verify the /var mount includes the ''nosuid'' option using command: findmnt -kn /var -o OPTIONS. Rationale: PASS when the output contains the string ''nosuid''. FAIL otherwise.'
+    req_3: 'Verify the /var mount includes the ''nodev'' option using command: findmnt -kn /var -o OPTIONS. Rationale: PASS when the output contains the string ''nodev''. FAIL otherwise.'
+    req_4: 'Verify the /var mount includes the ''noexec'' option using command: findmnt -kn /var -o OPTIONS. Rationale: PASS when the output contains the string ''noexec''. FAIL otherwise.'
+    req_5: 'OVERALL Verify: Ensure separate partition exists for /var. Rationale: PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise.'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    task_4_name: "Not executed"
+    task_4_cmd: "N/A"
+    task_4_rc: -1
+
+    # Req 1 - Check if /var is mounted as separate filesystem
+- name: Req 1 - Check /var separate mount
+  shell: |
+    findmnt -kn /var
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check /var separate mount"
+    task_1_cmd: "findmnt -kn /var"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS: /var is mounted as separate filesystem' if (result_1.stdout | default('') | trim != '') else 'FAIL: /var is not mounted as separate filesystem or command failed') | trim }}"
+
+    # Req 2 - Check nosuid option
+- name: Req 2 - Check nosuid option
+  shell: |
+    findmnt -kn /var -o OPTIONS
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check nosuid option"
+    task_2_cmd: "findmnt -kn /var -o OPTIONS"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{{ ('PASS' if ('nosuid' in (result_2.stdout | default(''))) else 'FAIL') | trim }}"
+    rationale_2: "{{ ('PASS: nosuid option found' if ('nosuid' in (result_2.stdout | default(''))) else 'FAIL: nosuid option not found') | trim }}"
+
+    # Req 3 - Check nodev option
+- name: Req 3 - Check nodev option
+  shell: |
+    findmnt -kn /var -o OPTIONS
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Check nodev option"
+    task_3_cmd: "findmnt -kn /var -o OPTIONS"
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: "{{ ('PASS' if ('nodev' in (result_3.stdout | default(''))) else 'FAIL') | trim }}"
+    rationale_3: "{{ ('PASS: nodev option found' if ('nodev' in (result_3.stdout | default(''))) else 'FAIL: nodev option not found') | trim }}"
+
+    # Req 4 - Check noexec option
+- name: Req 4 - Check noexec option
+  shell: |
+    findmnt -kn /var -o OPTIONS
+  args:
+    executable: /bin/bash
+  register: result_4
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 4 details
+  set_fact:
+    task_4_name: "Check noexec option"
+    task_4_cmd: "findmnt -kn /var -o OPTIONS"
+    task_4_rc: "{{ result_4.rc | default(-1) }}"
+    data_4: "{{ result_4.stdout | default('') | trim }}"
+    status_4: "{{ ('PASS' if ('noexec' in (result_4.stdout | default(''))) else 'FAIL') | trim }}"
+    rationale_4: "{{ ('PASS: noexec option found' if ('noexec' in (result_4.stdout | default(''))) else 'FAIL: noexec option not found') | trim }}"
+
+    # Req 5 - Overall verification
+- name: Store requirement 5 details
+  set_fact:
+    status_5: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL') | trim }}"
+    rationale_5: "{{ ('PASS: All requirements met - /var has separate partition with required mount options' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL: One or more requirements not met - check individual requirement status') | trim }}"
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 1.1.2.4.1"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name | default('Task not recorded') }}"
+    - "  Command: {{ task_4_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_4_rc | default(-1) }}"
+    - "  Data: {{ data_4 | default('') | trim }}"
+    - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 5 - {{ req_5 }}:"
+    - "  Task: Overall verification"
+    - "  Command: N/A (computed from requirements 1-4)"
+    - "  Exit code: N/A"
+    - "  Data: N/A"
+    - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_1_1_2_4_1'': status_5 | trim }] }}'

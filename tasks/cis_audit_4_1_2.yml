@@ -1,0 +1,119 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.1.2
+    req_1: Run the provided CIS audit script to verify Ensure a single firewall configuration utility is in use
+    req_overall: 'OVERALL Verify: Ensure a single firewall configuration utility is in use'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_overall_name: "Not executed"
+    task_overall_cmd: "N/A"
+    task_overall_rc: -1
+
+    # Requirement 1: Run CIS audit script
+- name: Req 1 - Execute CIS audit script for single firewall utility
+  copy:
+    dest: "/tmp/cis_audit_4.1.2.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+
+      {
+         l_output="" l_output2="" l_fwd_status="" l_nft_status="" l_fwutil_status=""
+         # Determine FirewallD utility Status
+         rpm -q firewalld > /dev/null 2>&1 && l_fwd_status="$(systemctl is-enabled firewalld.service):$(systemctl is-active firewalld.service)"
+         # Determine NFTables utility Status
+         rpm -q nftables > /dev/null 2>&1 && l_nft_status="$(systemctl is-enabled nftables.service):$(systemctl is-active nftables.service)"
+         l_fwutil_status="$l_fwd_status:$l_nft_status"
+         case $l_fwutil_status in enabled:active:masked:inactive|enabled:active:disabled:inactive)
+               l_output="\n - FirewallD utility is in use, enabled and active\n - NFTables utility is correctly disabled or masked and inactive\n - Only configure the recommendations found in the Configure Firewalld subsection" ;;
+            masked:inactive:enabled:active|disabled:inactive:enabled:active)
+               l_output="\n - NFTables utility is in use, enabled and active\n - FirewallD utility is correctly disabled or masked and inactive\n - Only configure the recommendations found in the Configure NFTables subsection" ;;
+            enabled:active:enabled:active)
+               l_output2="\n - Both FirewallD and NFTables utilities are enabled and active. Configure only ONE firewall either NFTables OR Firewalld" ;;
+            enabled:*:enabled:*)
+               l_output2="\n - Both FirewallD and NFTables utilities are enabled\n - Configure only ONE firewall: either NFTables OR Firewalld" ;;
+            *:active:*:active)
+               l_output2="\n - Both FirewallD and NFTables utilities are enabled\n - Configure only ONE firewall: either NFTables OR Firewalld" ;;
+            :enabled:active)
+               l_output="\n - NFTables utility is in use, enabled, and active\n - FirewallD package is not installed\n - Only configure the recommendations found in the Configure NFTables subsection" ;;
+            :)
+               l_output2="\n - Neither FirewallD or NFTables is installed. Configure only ONE firewall either NFTables OR Firewalld" ;;
+            *:*:)
+               l_output2="\n - NFTables package is not installed on the system. Install NFTables and Configure only ONE firewall either NFTables OR Firewalld" ;;
+            *)
+               l_output2="\n - Unable to determine firewall state. Configure only ONE firewall either NFTables OR Firewalld" ;;
+         esac
+         if [ -z "$l_output2" ]; then
+            echo -e "\n- Audit Results:\n ** PASS **\n$l_output\n"
+         else
+            echo -e "\n- Audit Results:\n ** FAIL **\n$l_output2\n"
+         fi
+      }
+      {% endraw %}
+  register: script_create_1
+  ignore_errors: true
+
+- name: Req 1 - Execute the audit script
+  shell: "/tmp/cis_audit_4.1.2.sh"
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_4.1.2.sh"
+    state: absent
+  ignore_errors: true
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Execute CIS audit script for single firewall utility"
+    task_1_cmd: "/tmp/cis_audit_4.1.2.sh"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+    rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
+
+    # Overall compliance
+- name: Store overall compliance details
+  set_fact:
+    task_overall_name: "Overall verification of single firewall utility"
+    task_overall_cmd: "Derived from requirement 1 result"
+    task_overall_rc: "0"
+    status_overall: "{{ status_1 | default('FAIL') | trim }}"
+    rationale_overall: "PASS when req_1=PASS, FAIL otherwise"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 4.1.2"
+    - "========================================================"
+    - "Reference: {{ kcs_article }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_4_1_2'': status_1 | trim }] }}'

@@ -1,18 +1,30 @@
 ---
-- name: Data Collection for CIS 2.1.19 - Ensure xinetd services are not in use
+- name: Data Collection for CIS 2.1.19
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.19"
-    req_1: "Check if xinetd package is installed using command: rpm -q xinetd"
-    req_2: "If xinetd package is installed, check if xinetd.service is enabled using command: systemctl is-enabled xinetd.service 2>/dev/null"
-    req_3: "If xinetd package is installed, check if xinetd.service is active using command: systemctl is-active xinetd.service 2>/dev/null"
-    req_4: "OVERALL Verify: Ensure xinetd services are not in use"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.19"
+    req_1: "Check if xinetd package is installed using command: rpm -q xinetd. Rationale: PASS when output is 'package xinetd is not installed' (or any output indicating the package is not installed), FAIL when the package is found to be installed (unless required as a dependency, see next requirement)."
+    req_2: "If xinetd package is installed (as determined by previous step), check if xinetd.service is enabled using command: systemctl is-enabled xinetd.service 2>/dev/null | grep 'enabled'. Rationale: PASS when command returns no output (empty), FAIL when 'enabled' is found in the output."
+    req_3: "If xinetd package is installed (as determined by first step), check if xinetd.service is active using command: systemctl is-active xinetd.service 2>/dev/null | grep '^active'. Rationale: PASS when command returns no output (empty), FAIL when 'active' is found in the output."
+    req_4: "OVERALL Verify: Ensure xinetd services are not in use. Rationale: PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise."
 
   tasks:
     - name: Initialize data variables
       set_fact:
+        data_1: "N/A"
+        data_2: "N/A"
+        data_3: "N/A"
+        data_4: "N/A"
+        status_1: "UNKNOWN"
+        status_2: "NA"
+        status_3: "NA"
+        status_4: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not applicable - package not installed"
+        rationale_3: "Not applicable - package not installed"
+        rationale_4: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -22,12 +34,11 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
+        task_4_name: "Overall verification"
         task_4_cmd: "N/A"
         task_4_rc: -1
 
-    # Requirement 1: Check if xinetd package is installed
-    - name: Req 1 - Check xinetd package installation
+    - name: Req 1 - Check if xinetd package is installed
       shell: rpm -q xinetd
       args:
         executable: /bin/bash
@@ -37,184 +48,89 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check xinetd package installation"
+        task_1_name: "Check if xinetd package is installed"
         task_1_cmd: "rpm -q xinetd"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% if result_1.stdout | default('') | trim == 'package xinetd is not installed' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% if result_1.stdout | default('') | trim == 'package xinetd is not installed' %}
-            PASS when output is "package xinetd is not installed", FAIL when any other output is returned (indicating the package is installed)
-          {% else %}
-            FAIL - xinetd package appears to be installed
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout is search('package xinetd is not installed')) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS: Package not installed' if (result_1.stdout is search('package xinetd is not installed')) else 'FAIL: Package xinetd is installed') | trim }}"
 
-    # Requirement 2: Check if xinetd.service is enabled (only if package is installed)
-    - name: Req 2 - Check if xinetd.service is enabled
-      shell: systemctl is-enabled xinetd.service 2>/dev/null
+    - name: Req 2 - Check if xinetd.service is enabled (if package installed)
+      shell: systemctl is-enabled xinetd.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 == 'FAIL'
 
     - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check if xinetd.service is enabled"
-        task_2_cmd: "systemctl is-enabled xinetd.service 2>/dev/null"
+        task_2_cmd: "systemctl is-enabled xinetd.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA
-          {% else %}
-            {% if result_2.stdout | default('') | trim != 'enabled' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% endif %}
-        rationale_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA - xinetd package not installed
-          {% else %}
-            {% if result_2.stdout | default('') | trim != 'enabled' %}
-              PASS when command returns nothing or returns a value other than "enabled", FAIL when output contains "enabled"
-            {% else %}
-              FAIL - xinetd.service appears to be enabled
-            {% endif %}
-          {% endif %}
-      when: status_1 | trim == 'FAIL'
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS: Service not enabled (no output)' if (result_2.stdout | default('') | trim == '') else 'FAIL: Service is enabled (output: ' ~ (result_2.stdout | default('') | trim) ~ ')') | trim }}"
+      when: status_1 == 'FAIL'
 
-    - name: Set requirement 2 as NA when package not installed
-      set_fact:
-        task_2_name: "Check if xinetd.service is enabled"
-        task_2_cmd: "systemctl is-enabled xinetd.service 2>/dev/null"
-        task_2_rc: -1
-        data_2: "N/A - Package not installed"
-        status_2: "NA"
-        rationale_2: "NA - xinetd package not installed"
-      when: status_1 | trim == 'PASS'
-
-    # Requirement 3: Check if xinetd.service is active (only if package is installed)
-    - name: Req 3 - Check if xinetd.service is active
-      shell: systemctl is-active xinetd.service 2>/dev/null
+    - name: Req 3 - Check if xinetd.service is active (if package installed)
+      shell: systemctl is-active xinetd.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 == 'FAIL'
 
     - name: Store requirement 3 details
       set_fact:
         task_3_name: "Check if xinetd.service is active"
-        task_3_cmd: "systemctl is-active xinetd.service 2>/dev/null"
+        task_3_cmd: "systemctl is-active xinetd.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA
-          {% else %}
-            {% if result_3.stdout | default('') | trim != 'active' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA - xinetd package not installed
-          {% else %}
-            {% if result_3.stdout | default('') | trim != 'active' %}
-              PASS when command returns nothing or returns a value other than "active", FAIL when output contains "active"
-            {% else %}
-              FAIL - xinetd.service appears to be active
-            {% endif %}
-          {% endif %}
-      when: status_1 | trim == 'FAIL'
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS: Service not active (no output)' if (result_3.stdout | default('') | trim == '') else 'FAIL: Service is active (output: ' ~ (result_3.stdout | default('') | trim) ~ ')') | trim }}"
+      when: status_1 == 'FAIL'
 
-    - name: Set requirement 3 as NA when package not installed
+    - name: Determine overall compliance status
       set_fact:
-        task_3_name: "Check if xinetd.service is active"
-        task_3_cmd: "systemctl is-active xinetd.service 2>/dev/null"
-        task_3_rc: -1
-        data_3: "N/A - Package not installed"
-        status_3: "NA"
-        rationale_3: "NA - xinetd package not installed"
-      when: status_1 | trim == 'PASS'
+        status_4: "{{ ('PASS' if (status_1 == 'PASS') or (status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS') else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS: Package not installed' if status_1 == 'PASS' else 'PASS: Package installed but service not enabled and not active' if (status_2 == 'PASS' and status_3 == 'PASS') else 'FAIL: Package installed and service is enabled and/or active') | trim }}"
+        data_4: "req_1={{ status_1 }}, req_2={{ status_2 }}, req_3={{ status_3 }}"
 
-    # Requirement 4: Overall verification
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Overall verification"
-        task_4_cmd: "N/A - Calculated from previous results"
-        task_4_rc: 0
-        data_4: "Package status: {{ status_1 | trim }}, Service enabled: {{ status_2 | default('NA') | trim }}, Service active: {{ status_3 | default('NA') | trim }}"
-        status_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif (status_2 | default('FAIL') | trim == 'PASS' or status_2 | default('FAIL') | trim == 'NA') and (status_3 | default('FAIL') | trim == 'PASS' or status_3 | default('FAIL') | trim == 'NA') %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS - xinetd package is not installed
-          {% elif (status_2 | default('FAIL') | trim == 'PASS' or status_2 | default('FAIL') | trim == 'NA') and (status_3 | default('FAIL') | trim == 'PASS' or status_3 | default('FAIL') | trim == 'NA') %}
-            PASS - xinetd package is installed but service is not enabled and not active
-          {% else %}
-            FAIL - xinetd package is installed and service is either enabled or active
-          {% endif %}
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.1.19"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.19"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Status: {{ status_2 | default('NA') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Status: {{ status_3 | default('NA') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

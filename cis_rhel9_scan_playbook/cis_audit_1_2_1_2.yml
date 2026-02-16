@@ -2,11 +2,11 @@
 - name: Data Collection for CIS 1.2.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.2.1.2"
-    req_1: "Verify global gpgcheck configuration in /etc/dnf/dnf.conf"
-    req_2: "Verify per-repository gpgcheck configuration in /etc/yum.repos.d/"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.2.1.2"
+    req_1: "Check global gpgcheck setting in /etc/dnf/dnf.conf"
+    req_2: "Check for any repository-specific gpgcheck overrides set to 0 or invalid values in /etc/yum.repos.d/"
     req_3: "OVERALL Verify: Ensure gpgcheck is globally activated"
 
   tasks:
@@ -22,9 +22,9 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify global gpgcheck configuration in /etc/dnf/dnf.conf
-    - name: Req 1 - Check global gpgcheck configuration
-      shell: !unsafe |
+    # Requirement 1: Check global gpgcheck setting in /etc/dnf/dnf.conf
+    - name: Req 1 - Check global gpgcheck setting
+      shell: |
         grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
       args:
         executable: /bin/bash
@@ -34,17 +34,17 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global gpgcheck configuration"
+        task_1_name: "Check global gpgcheck setting in /etc/dnf/dnf.conf"
         task_1_cmd: |
           grep -Pi -- '^\h*gpgcheck\h*=\h*(1|true|yes)\b' /etc/dnf/dnf.conf
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | regex_search('gpgcheck=(1|true|yes)')) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output contains gpgcheck=1, gpgcheck=true, or gpgcheck=yes, FAIL otherwise' if (result_1.stdout | default('') | trim | regex_search('gpgcheck=(1|true|yes)')) else 'FAIL: Global gpgcheck not enabled or file not found') | trim }}"
+        status_1: "{{ ('PASS' if result_1.stdout | trim != '' else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS: Global gpgcheck is enabled (found: ' + (result_1.stdout | trim) + ')' if result_1.stdout | trim != '' else 'FAIL: No global gpgcheck setting found or not set to 1/true/yes') | trim }}"
 
-    # Requirement 2: Verify per-repository gpgcheck configuration in /etc/yum.repos.d/
-    - name: Req 2 - Check per-repository gpgcheck configuration
-      shell: !unsafe |
+    # Requirement 2: Check for any repository-specific gpgcheck overrides
+    - name: Req 2 - Check repository overrides
+      shell: |
         grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
       args:
         executable: /bin/bash
@@ -54,25 +54,25 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check per-repository gpgcheck configuration"
+        task_2_name: "Check for any repository-specific gpgcheck overrides set to 0 or invalid values in /etc/yum.repos.d/"
         task_2_cmd: |
           grep -Pris -- '^\h*gpgcheck\h*=\h*(0|[2-9]|[1-9][0-9]+|false|no)\b' /etc/yum.repos.d/
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when command returns no output (no repositories have gpgcheck disabled or set to invalid value)' if (result_2.stdout | default('') | trim == '') else 'FAIL: Found repositories with gpgcheck disabled or set to invalid value') | trim }}"
+        status_2: "{{ ('PASS' if result_2.stdout | trim == '' else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS: No repository overrides found that disable or invalidate gpgcheck' if result_2.stdout | trim == '' else 'FAIL: Found repository override(s) that disable or invalidate gpgcheck: ' + (result_2.stdout | trim)) | trim }}"
 
-    # Requirement 3: OVERALL Verify: Ensure gpgcheck is globally activated
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A (calculated from req_1 and req_2)"
+        task_3_name: "OVERALL Verify: Ensure gpgcheck is globally activated"
+        task_3_cmd: "N/A (combined check)"
         task_3_rc: 0
-        data_3: "Global check: {{ data_1 }}, Repository check: {{ 'No issues found' if data_2 == '' else 'Issues found' }}"
+        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
         status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL: Global gpgcheck not enabled or repositories have gpgcheck disabled') | trim }}"
+        rationale_3: "{{ ('PASS: Both requirements passed, gpgcheck is globally activated' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL: One or both requirements failed') | trim }}"
 
-    # Final report
+    # Generate compliance report
     - name: Generate compliance report
       debug:
         msg:

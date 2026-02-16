@@ -1,23 +1,31 @@
 ---
-- name: Data Collection for CIS checkpoint 3.3.1
+- name: Data Collection for CIS Checkpoint 3.3.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.1"
-    req_1: "Audit CIS checkpoint: 3.3.1 - Ensure IP forwarding is disabled"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.1"
+    req_1: "Run the provided CIS audit script to verify Ensure ip forwarding is disabled"
+    req_2: "OVERALL Verify: Ensure ip forwarding is disabled"
 
   tasks:
     - name: Initialize data variables
       set_fact:
+        data_1: ""
+        data_2: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
 
-    - name: Req 1 - Execute CIS audit script for IP forwarding check
+    # Requirement 1: Run the provided CIS audit script to verify Ensure ip forwarding is disabled
+    - name: Req 1 - Execute CIS audit script for ip forwarding
       copy:
         dest: "/tmp/cis_audit_3.3.1.sh"
         mode: '0700'
@@ -117,12 +125,23 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for IP forwarding check"
+        task_1_name: "Execute CIS audit script for ip forwarding"
         task_1_cmd: "/tmp/cis_audit_3.3.1.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if ('** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
-        rationale_1: "PASS when script output shows '** PASS **', FAIL when script shows '** FAIL **' or indicates non-compliance"
+        status_1: |
+          {{ ('PASS' if (result_1.stdout | default('') | regex_search('\*\* PASS \*\*')) else 'FAIL') | trim }}
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
+
+    # Requirement 2: OVERALL Verify: Ensure ip forwarding is disabled
+    - name: Req 2 - Store overall verification
+      set_fact:
+        task_2_name: "Overall verification check"
+        task_2_cmd: "Based on requirement 1 status"
+        task_2_rc: 0
+        data_2: "Overall verification based on requirement 1 result"
+        status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
     - name: Generate compliance report
       debug:
@@ -130,7 +149,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.1"
           - "========================================================"
-          - "Reference: {{ cis_checkpoint }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -141,8 +160,16 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_1 | trim }}"
-          - "  Rationale: PASS when req_1=PASS, FAIL otherwise"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: Overall compliance is determined by requirement 2 which inherits status from requirement 1"
           - "========================================================"

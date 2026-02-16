@@ -1,0 +1,134 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.7
+    req_1: Check that /etc/pam.d/su contains a pam_wheel.so line with both use_uid and group parameters
+    req_2: Verify the group specified in the pam_wheel.so line contains no users
+    req_3: 'OVERALL Verify: Ensure access to the su command is restricted'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Overall compliance check"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+
+    # Requirement 1: Check pam_wheel.so line in /etc/pam.d/su
+- name: Req 1 - Check pam_wheel.so line in /etc/pam.d/su
+  shell: |
+    {% raw %}
+    grep -Pi '^\h*auth\h+(?:required|requisite)\h+pam_wheel\.so\h+(?:[^#\n\r]+\h+)?((?!\2)(use_uid\b|group=\H+\b))\h+(?:[^#\n\r]+\h+)?((?!\1)(use_uid\b|group=\H+\b))(\h+.*)?$' /etc/pam.d/su
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check pam_wheel.so line in /etc/pam.d/su"
+    task_1_cmd: |
+      grep -Pi '^\h*auth\h+(?:required|requisite)\h+pam_wheel\.so\h+(?:[^#\n\r]+\h+)?((?!\2)(use_uid\b|group=\H+\b))\h+(?:[^#\n\r]+\h+)?((?!\1)(use_uid\b|group=\H+\b))(\h+.*)?$' /etc/pam.d/su
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.rc == 0 and result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+    rationale_1: "PASS when the command returns a line matching the pattern 'auth required pam_wheel.so use_uid group=<group_name>' (or with 'requisite'), FAIL otherwise"
+
+    # Requirement 2: Extract group and verify no users in the group
+- name: Req 2 - Check group membership
+  shell: |
+    # Extract group name from the pam_wheel.so line
+    pam_line="{{ data_1 }}"
+    if [ -n "$pam_line" ]; then
+      # Extract group name from pattern: group=group_name
+      group_name=$(echo "$pam_line" | grep -oP 'group=\K\S+')
+      if [ -n "$group_name" ]; then
+        grep "^$group_name:" /etc/group
+      else
+        echo "ERROR: Could not extract group name from line: $pam_line"
+        exit 1
+      fi
+    else
+      echo "ERROR: No pam_wheel.so line found"
+      exit 1
+    fi
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: data_1 | default('') | trim != ''
+
+- name: Store requirement 2 details when condition met
+  set_fact:
+    task_2_name: "Check group membership"
+    task_2_cmd: "Extract group name from pam_wheel.so line and run grep on /etc/group"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{{ ('PASS' if (result_2.rc == 0 and result_2.stdout | default('') | trim | regex_search('^[^:]+:x:[0-9]+:$')) else 'FAIL') | trim }}"
+    rationale_2: "PASS when the output matches the pattern '<group_name>:x:<GID>:' with no usernames listed after the GID, FAIL otherwise"
+  when: data_1 | default('') | trim != ''
+
+- name: Store requirement 2 details when no pam line found
+  set_fact:
+    task_2_name: "Check group membership"
+    task_2_cmd: "N/A - No pam_wheel.so line found in requirement 1"
+    task_2_rc: -1
+    data_2: "No group to check - requirement 1 failed"
+    status_2: "NA"
+    rationale_2: "Task skipped - requirement 1 failed, cannot check group without pam_wheel.so configuration"
+  when: data_1 | default('') | trim == ''
+
+    # Requirement 3: Overall compliance
+- name: Store requirement 3 details
+  set_fact:
+    status_3: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
+    rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.2.7"
+    - "========================================================"
+    - "Reference: {{ kcs_article }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name }}"
+    - "  Command: {{ task_2_cmd }}"
+    - "  Exit code: {{ task_2_rc }}"
+    - "  Data: {{ data_2 }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name }}"
+    - "  Command: {{ task_3_cmd }}"
+    - "  Exit code: {{ task_3_rc }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_2_7'': status_3 | trim }] }}'

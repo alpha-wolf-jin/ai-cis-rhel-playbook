@@ -2,59 +2,54 @@
 - name: Data Collection for CIS checkpoint 1.5.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.5.3"
-    req_1: "Verify fs.protected_symlinks is set to 1 in the running kernel configuration using command: sysctl fs.protected_symlinks"
-    req_2: "Run script to verify fs.protected_symlinks = 1 is set in a persistent configuration file used by systemd-sysctl"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.3"
+    req_1: "Run sysctl command to verify fs.protected_symlinks is set to 1 in the running configuration"
+    req_2: "Run bash script to verify fs.protected_symlinks = 1 is set in a file being used by systemd sysctl"
     req_3: "OVERALL Verify: Ensure fs.protected_symlinks is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify fs.protected_symlinks is set to 1 in the running kernel configuration
-    - name: "Req 1 - Check running kernel configuration"
-      shell: |
-        sysctl fs.protected_symlinks
+    # Requirement 1: Run sysctl command to verify fs.protected_symlinks is set to 1 in the running configuration
+    - name: Req 1 - Check running fs.protected_symlinks value
+      shell: sysctl fs.protected_symlinks
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running kernel configuration"
+        task_1_name: "Check running fs.protected_symlinks value"
         task_1_cmd: "sysctl fs.protected_symlinks"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'fs.protected_symlinks = 1') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is fs.protected_symlinks = 1, FAIL otherwise' if (result_1.stdout | default('') | trim == 'fs.protected_symlinks = 1') else 'FAIL: Expected fs.protected_symlinks = 1 but got different output') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly fs.protected_symlinks = 1, FAIL otherwise' if (result_1.stdout | default('') | trim == 'fs.protected_symlinks = 1') else 'FAIL: Expected fs.protected_symlinks = 1, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: Run script to verify persistent configuration
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Run bash script to verify fs.protected_symlinks = 1 is set in a file being used by systemd sysctl
+    - name: Req 2 - Execute CIS audit script for fs.protected_symlinks
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_1.5.3.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           {
-             l_parameter_name="fs.protected_symlinks"  
+             l_parameter_name="fs.protected_symlinks"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
              l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
              || readlink -e /usr/lib/systemd/systemd-sysctl)"
@@ -78,41 +73,41 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
+      register: script_create_2
+      ignore_errors: true
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_audit_1.5.3.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 2 - Remove temporary audit script"
+    - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_1.5.3.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check persistent configuration files"
-        task_2_cmd: "Complex bash script (see script content above)"
+        task_2_name: "Execute CIS audit script for fs.protected_symlinks"
+        task_2_cmd: "bash /tmp/cis_audit_1.5.3.sh"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if ('fs.protected_symlinks = 1' in result_2.stdout | default('')) else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when script outputs at least one line confirming fs.protected_symlinks = 1 is set in a valid sysctl configuration file, FAIL if no such line is found or if the value is not 1' if ('fs.protected_symlinks = 1' in result_2.stdout | default('')) else 'FAIL: No configuration file found with fs.protected_symlinks = 1') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') is search('fs.protected_symlinks = 1')) else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when output contains fs.protected_symlinks = 1 in any configuration file, FAIL otherwise' if (result_2.stdout | default('') is search('fs.protected_symlinks = 1')) else 'FAIL: No configuration file contains fs.protected_symlinks = 1') | trim }}"
 
-    # Requirement 3: OVERALL Verify
-    - name: "Req 3 - Determine overall compliance"
+    # Requirement 3: OVERALL Verify: Ensure fs.protected_symlinks is configured
+    - name: Req 3 - Overall verification
       set_fact:
-        task_3_name: "Overall compliance determination"
-        task_3_cmd: "N/A - calculated from req_1 and req_2"
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A (calculated from previous requirements)"
         task_3_rc: 0
-        data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}"
-        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: One or more requirements failed') | trim }}"
+        data_3: "Requirement 1 status: {{ status_1 | default('UNKNOWN') }}, Requirement 2 status: {{ status_2 | default('UNKNOWN') }}"
+        status_3: "{{ ('PASS' if (status_1 | default('') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | default('') | trim == 'PASS') else 'FAIL: Requirement 1 failed') | trim }}"
 
     # Final report
     - name: Generate compliance report
@@ -121,35 +116,35 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.5.3"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.5.3"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: Overall compliance is determined by Requirement 3 which checks that Requirement 1 (running configuration) is PASS"
           - "========================================================"

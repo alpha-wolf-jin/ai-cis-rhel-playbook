@@ -1,13 +1,12 @@
 ---
-- name: Data Collection for CIS 5.2.3
+- name: Data Collection for CIS checkpoint 5.2.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.3"
-    req_1: |
-      Check for configured sudo log file using command: grep -rPsi \"^\\h*Defaults\\h+([^#]+,\\h*)?logfile\\h*=\\h*(\\\"|\\')?\\H+(\\\"|\\')?(,\\h*\\H+\\h*)*\\h*(#.*)?$\" /etc/sudoers*. Rationale: PASS when the command returns at least one line matching the pattern (e.g., 'Defaults logfile=\"/var/log/sudo.log\"'), indicating a dedicated sudo log file is configured, FAIL when no output is returned.
-    req_2: "OVERALL Verify: Ensure sudo log file exists. Rationale: PASS when req_1=PASS, FAIL otherwise"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.3"
+    req_1: "Check that a custom log file is configured for sudo by searching for the pattern in /etc/sudoers*"
+    req_2: "OVERALL Verify: Ensure sudo log file exists"
 
   tasks:
     - name: Initialize data variables
@@ -19,7 +18,7 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Check for configured sudo log file
+    # Requirement 1: Check that a custom log file is configured for sudo by searching for the pattern in /etc/sudoers*
     - name: Req 1 - Check sudo log file configuration
       shell: |
         {% raw %}
@@ -39,26 +38,26 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the command returns at least one line matching the pattern, FAIL when no output is returned' if (result_1.stdout | default('') | trim != '') else 'FAIL when no output is returned') | trim }}"
+        rationale_1: "{{ ('PASS: Found logfile configuration in sudoers' if (result_1.stdout | default('') | trim != '') else 'FAIL: No logfile configuration found in sudoers') | trim }}"
 
-    # Requirement 2: OVERALL Verify
+    # Requirement 2: OVERALL Verify: Ensure sudo log file exists
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "OVERALL Verify: Ensure sudo log file exists"
-        task_2_cmd: "N/A - Overall assessment"
+        task_2_name: "Overall verification - no separate command"
+        task_2_cmd: "N/A (logical check based on req_1)"
         task_2_rc: 0
-        data_2: "Overall assessment based on requirement 1"
+        data_2: "{{ data_1 | default('') }}"
         status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | default('UNKNOWN') | trim == 'PASS') else 'FAIL when req_1=FAIL') | trim }}"
+        rationale_2: "{{ ('PASS: sudo log file configuration found' if (status_1 | default('UNKNOWN') | trim == 'PASS') else 'FAIL: No sudo log file configuration found') | trim }}"
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.2.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -80,5 +79,5 @@
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Rationale: {{ ('PASS when req_1=PASS, FAIL otherwise' if (status_2 | default('UNKNOWN') | trim == 'PASS') else 'FAIL: req_1 did not pass') | trim }}"
           - "========================================================"

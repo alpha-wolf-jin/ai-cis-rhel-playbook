@@ -1,11 +1,13 @@
 ---
-- name: Data Collection for CIS 7.1.12
+- name: Data Collection for CIS checkpoint 7.1.12
   hosts: all
   become: yes
   gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.12"
-    req_1: "Run CIS audit script to check for unowned and ungrouped files and directories"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.12"
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Run the provided CIS audit script to verify no unowned or ungrouped files or directories exist"
+    req_2: "OVERALL Verify: Ensure no files or directories without an owner and a group exist"
 
   tasks:
     - name: Initialize data variables
@@ -16,23 +18,26 @@
         data_1: ""
         status_1: "UNKNOWN"
         rationale_1: "Not evaluated"
-        overall_status: "UNKNOWN"
-        overall_rationale: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
 
-    - name: "Req 1 - Execute CIS audit script for unowned/ungrouped files"
+    # Requirement 1: Execute CIS audit script
+    - name: Req 1 - Create temporary CIS audit script
       copy:
         dest: "/tmp/cis_audit_7.1.12.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+          
           {
              l_output="" l_output2=""
              a_nouser=(); a_nogroup=() # Initialize arrays
-             a_path=(! -path "/run/user/*" -a ! -path "/proc/*" -a ! -path
-             "*/containerd/*" -a ! -path "*/kubelet/pods/*" -a ! -path
-             "*/kubelet/plugins/*" -a ! -path "/sys/fs/cgroup/memory/*" -a ! -path
-             "/var/*/private/*")
+             a_path=(! -path "/run/user/*" -a ! -path "/proc/*" -a ! -path "*/containerd/*" -a ! -path "*/kubelet/pods/*" -a ! -path "*/kubelet/plugins/*" -a ! -path "/sys/fs/cgroup/memory/*" -a ! -path "/var/*/private/*")
              while IFS= read -r l_mount; do
                 while IFS= read -r -d $'\0' l_file; do
                    if [ -e "$l_file" ]; then
@@ -41,43 +46,32 @@
                          [ "$l_group" = "UNKNOWN" ] && a_nogroup+=("$l_file")
                       done < <(stat -Lc '%U:%G' "$l_file")
                    fi
-                done < <(find "$l_mount" -xdev \( "${a_path[@]}" \) \( -type f -o -type
-                d \) \( -nouser -o -nogroup \) -print0 2> /dev/null)
+                done < <(find "$l_mount" -xdev \( "${a_path[@]}" \) \( -type f -o -type d \) \( -nouser -o -nogroup \) -print0 2> /dev/null)
              done < <(findmnt -Dkerno fstype,target | awk '($1 !~ /^\s*(nfs|proc|smb|vfat|iso9660|efivarfs|selinuxfs)/ && $2 !~ /^\/run\/user\//){print $2}')
              if ! (( ${#a_nouser[@]} > 0 )); then
-                l_output="$l_output\n  - No files or directories without a owner exist
-                on the local filesystem."
+                l_output="$l_output\n  - No files or directories without a owner exist on the local filesystem."
              else
-                l_output2="$l_output2\n  - There are \"$(printf '%s'
-                "${#a_nouser[@]}")\" unowned files or directories on the system.\n   - The
-                following is a list of unowned files and/or directories:\n$(printf '%s\n'
-                "${a_nouser[@]}")\n   - end of list"
+                l_output2="$l_output2\n  - There are \"$(printf '%s' "${#a_nouser[@]}")\" unowned files or directories on the system.\n   - The following is a list of unowned files and/or directories:\n$(printf '%s\n' "${a_nouser[@]}")\n   - end of list"
              fi
              if ! (( ${#a_nogroup[@]} > 0 )); then
-                l_output="$l_output\n  - No files or directories without a group exist
-                on the local filesystem."
+                l_output="$l_output\n  - No files or directories without a group exist on the local filesystem."
              else
-                l_output2="$l_output2\n  - There are \"$(printf '%s'
-                "${#a_nogroup[@]}")\" ungrouped files or directories on the system.\n   - The
-                following is a list of ungrouped files and/or directories:\n$(printf '%s\n'
-                "${a_nogroup[@]}")\n   - end of list"
-             fi  
-             unset a_path; unset a_nouser; unset a_nogroup # Remove arrays
+                l_output2="$l_output2\n  - There are \"$(printf '%s' "${#a_nogroup[@]}")\" ungrouped files or directories on the system.\n   - The following is a list of ungrouped files and/or directories:\n$(printf '%s\n' "${a_nogroup[@]}")\n   - end of list"
+             fi
+             unset a_path; unset a_arr ; unset a_nouser; unset a_nogroup # Remove arrays
              if [ -z "$l_output2" ]; then # If l_output2 is empty, we pass
-                echo -e "\n- Audit Result:\n  ** PASS **\n - * Correctly configured *
-                :\n$l_output\n"
+                echo -e "\n- Audit Result:\n  ** PASS **\n - * Correctly configured * :\n$l_output\n"
              else
-                echo -e "\n- Audit Result:\n  ** FAIL **\n - * Reasons for audit
-                failure * :\n$l_output2"
-                [ -n "$l_output" ] && echo -e "\n- * Correctly configured *
-                :\n$l_output\n"
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - * Reasons for audit failure * :\n$l_output2"
+                [ -n "$l_output" ] && echo -e "\n- * Correctly configured * :\n$l_output\n"
              fi
           }
           {% endraw %}
       register: script_create_1
       ignore_errors: true
+      changed_when: false
 
-    - name: "Req 1 - Execute the audit script"
+    - name: Req 1 - Execute CIS audit script
       shell: "/tmp/cis_audit_7.1.12.sh"
       args:
         executable: /bin/bash
@@ -85,33 +79,48 @@
       ignore_errors: true
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
         path: "/tmp/cis_audit_7.1.12.sh"
         state: absent
       ignore_errors: true
+      changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for unowned/ungrouped files"
-        task_1_cmd: "/tmp/cis_audit_7.1.12.sh"
+        task_1_name: "Execute CIS audit script for 7.1.12"
+        task_1_cmd: "Execute /tmp/cis_audit_7.1.12.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if '** PASS **' in (result_1.stdout | default('')) else 'FAIL') | trim }}"
-        rationale_1: '{{ ("PASS when script output shows ** PASS **, FAIL when script shows ** FAIL ** or indicates non-compliance") | trim }}'
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if '** PASS **' in output %}
+            PASS
+          {% elif '** FAIL **' in output %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: "PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance"
 
-    - name: Set overall compliance
+    # Requirement 2: OVERALL Verify
+    - name: Req 2 - Set overall verification status
       set_fact:
-        overall_status: "{{ status_1 | trim }}"
-        overall_rationale: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
+        task_2_name: "OVERALL Verify compliance for CIS 7.1.12"
+        task_2_cmd: "Derived from requirement 1 status"
+        task_2_rc: 0
+        data_2: "Status of requirement 1: {{ status_1 | trim }}"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 7.1.12"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -122,8 +131,16 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ overall_status | trim }}"
-          - "  Rationale: {{ overall_rationale | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

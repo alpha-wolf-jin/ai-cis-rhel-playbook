@@ -1,0 +1,197 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.14
+    req_1: Check if net-snmp package is installed
+    req_2: If net-snmp package is installed, check if snmpd.service is enabled
+    req_3: If net-snmp package is installed, check if snmpd.service is active
+    req_4: 'OVERALL Verify: Ensure snmp services are not in use'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    data_3: ""
+    status_3: "UNKNOWN"
+    rationale_3: "Not evaluated"
+
+    # Requirement 1: Check if net-snmp package is installed
+- name: "Req 1 - Check net-snmp package installation"
+  shell: |
+    rpm -q net-snmp
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check net-snmp package installation"
+    task_1_cmd: "rpm -q net-snmp"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package net-snmp is not installed') else 'FAIL') | trim }}"
+    rationale_1: '{{ ("PASS when output is package net-snmp is not installed, FAIL when a package version is returned" if (result_1.stdout | default("") | trim == "package net-snmp is not installed") else "FAIL: Expected package net-snmp is not installed, got " + (result_1.stdout | default("") | trim)) | trim }}'
+
+    # Requirement 2: If net-snmp package is installed, check if snmpd.service is enabled
+- name: "Req 2 - Check if snmpd.service is enabled"
+  shell: |
+    systemctl is-enabled snmpd.service 2>/dev/null | grep 'enabled'
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: "'package net-snmp is not installed' not in result_1.stdout"
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check if snmpd.service is enabled"
+    task_2_cmd: "systemctl is-enabled snmpd.service 2>/dev/null | grep 'enabled'"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% if 'package net-snmp is not installed' in result_1.stdout %}
+        NA
+      {% elif result_2.stdout | default('') | trim == '' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_2: >-
+      {% if 'package net-snmp is not installed' in result_1.stdout %}
+        NA: Package not installed, check not applicable
+      {% elif result_2.stdout | default('') | trim == '' %}
+        PASS: Command returned no output (service not enabled)
+      {% else %}
+        FAIL: Command returned 'enabled', indicating service is enabled
+      {% endif %}
+
+    # Requirement 3: If net-snmp package is installed, check if snmpd.service is active
+- name: "Req 3 - Check if snmpd.service is active"
+  shell: |
+    systemctl is-active snmpd.service 2>/dev/null | grep '^active'
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+  when: "'package net-snmp is not installed' not in result_1.stdout"
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Check if snmpd.service is active"
+    task_3_cmd: "systemctl is-active snmpd.service 2>/dev/null | grep '^active'"
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: >-
+      {% if 'package net-snmp is not installed' in result_1.stdout %}
+        NA
+      {% elif result_3.stdout | default('') | trim == '' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% if 'package net-snmp is not installed' in result_1.stdout %}
+        NA: Package not installed, check not applicable
+      {% elif result_3.stdout | default('') | trim == '' %}
+        PASS: Command returned no output (service not active)
+      {% else %}
+        FAIL: Command returned 'active', indicating service is active
+      {% endif %}
+
+    # Requirement 4: OVERALL Verify - Ensure snmp services are not in use
+- name: Store requirement 4 details
+  set_fact:
+    req_4: "OVERALL Verify: Ensure snmp services are not in use"
+    task_4_name: "Overall verification"
+    task_4_cmd: "N/A - Calculated from previous checks"
+    task_4_rc: 0
+    data_4: "Package check: {{ status_1 }}, Enabled check: {{ status_2 }}, Active check: {{ status_3 }}"
+    status_4: >-
+      {% if status_1 == 'PASS' %}
+        PASS
+      {% elif status_2 == 'PASS' and status_3 == 'PASS' %}
+        PASS
+      {% elif status_2 == 'NA' and status_3 == 'NA' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_4: >-
+      {% if status_1 == 'PASS' %}
+        PASS: Package net-snmp is not installed
+      {% elif status_2 == 'PASS' and status_3 == 'PASS' %}
+        PASS: Package is installed but service is not enabled and not active
+      {% elif status_2 == 'NA' and status_3 == 'NA' %}
+        PASS: Package not installed (checks NA)
+      {% else %}
+        FAIL: Package is installed and either service is enabled ({{ status_2 }}) or active ({{ status_3 }})
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.1.14"
+    - "========================================================"
+    - "Reference: {{ kcs_article }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name | default('Task not recorded') }}"
+    - "  Command: {{ task_4_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_4_rc | default(-1) }}"
+    - "  Data: {{ data_4 | default('') | trim }}"
+    - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_4 | trim }}"
+    - "  Rationale: {{ rationale_4 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_1_14'': status_4 | trim }] }}'

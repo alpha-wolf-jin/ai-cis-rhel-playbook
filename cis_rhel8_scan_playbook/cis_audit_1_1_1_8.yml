@@ -1,21 +1,18 @@
 ---
-- name: Data Collection for CIS 1.1.1.8
+- name: Data Collection for CIS checkpoint 1.1.1.8
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.8"
-    req_1: "Run script to verify udf kernel module does NOT exist in filesystem"
-    req_2: "Verify udf kernel module is NOT loaded using lsmod"
-    req_3: "Verify udf kernel module is NOT loadable by checking for blacklist and install directives"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.8"
+    req_1: "Run script to determine if udf kernel module is available on the system"
+    req_2: "Verify udf kernel module is not loaded"
+    req_3: "Verify udf kernel module is not loadable"
     req_4: "OVERALL Verify: Ensure udf kernel module is not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
-        data_2: "Not collected yet"
-        data_3: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -25,11 +22,13 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        task_4_name: "OVERALL compliance check"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
 
-    # Requirement 1: Run script to verify udf kernel module does NOT exist in filesystem
-    - name: Req 1 - Create temporary audit script for udf module check
+    - name: Req 1 - Execute CIS audit script for udf module availability
       copy:
-        dest: "/tmp/cis_audit_udf_module_check.sh"
+        dest: "/tmp/cis_audit_1.1.1.8_udf.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -45,104 +44,130 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
+      ignore_errors: true
 
-    - name: Req 1 - Execute audit script for udf module check
-      shell: "/tmp/cis_audit_udf_module_check.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_1.1.1.8_udf.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_udf_module_check.sh"
+        path: "/tmp/cis_audit_1.1.1.8_udf.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if udf module exists in filesystem"
-        task_1_cmd: "Execute CIS audit script for udf module filesystem check"
+        task_1_name: "Execute CIS audit script for udf module availability"
+        task_1_cmd: "bash /tmp/cis_audit_1.1.1.8_udf.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when script returns NO output (module not present in filesystem), FAIL when script returns any output (module exists in filesystem)"
+        rationale_1: "PASS when script returns nothing (udf module not available or built into kernel), FAIL when script returns module path"
 
-    # Requirement 2: Verify udf kernel module is NOT loaded using lsmod
-    - name: Req 2 - Check if udf module is loaded
+    - name: Req 2 - Check if udf module is loaded (only if req_1 found module)
       shell: |
         lsmod | grep 'udf'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
+      when: status_1 | trim == 'FAIL'
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check if udf module is loaded"
         task_2_cmd: "lsmod | grep 'udf'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns NO output (module not loaded), FAIL when command returns any output (module is loaded)"
-      when: data_1 | trim | length > 0
+        status_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            NA
+          {% else %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            Not applicable - udf module not available in step 1
+          {% else %}
+            {{ ('PASS when lsmod returns nothing, FAIL when lsmod returns output' if (result_2.stdout | default('') | trim == '') else 'FAIL: udf module is loaded') | trim }}
+          {% endif %}
 
-    # Requirement 3: Verify udf kernel module is NOT loadable by checking for blacklist and install directives
-    - name: Req 3 - Check if udf module is blacklisted and install directives exist
+    - name: Req 3 - Check if udf module is loadable (only if req_1 found module)
       shell: |
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+udf\b'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
+      when: status_1 | trim == 'FAIL'
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if udf module is blacklisted and has install directives"
+        task_3_name: "Check if udf module is loadable"
         task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\\b(install|blacklist)\\h+udf\\b'
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+udf\b'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if (
-              result_3.stdout | default('') | trim | length > 0 and
-              'blacklist udf' in result_3.stdout and
-              ('install udf /bin/false' in result_3.stdout or 'install udf /bin/true' in result_3.stdout)
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when output includes 'blacklist udf' AND ('install udf /bin/false' OR 'install udf /bin/true'), FAIL otherwise"
-      when: data_1 | trim | length > 0
+        status_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            NA
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'blacklist udf' in output and ('install udf /bin/false' in output or 'install udf /bin/true' in output) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            Not applicable - udf module not available in step 1
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'blacklist udf' in output and ('install udf /bin/false' in output or 'install udf /bin/true' in output) %}
+              PASS: udf module is blacklisted and has install directive
+            {% else %}
+              FAIL: Expected 'blacklist udf' AND ('install udf /bin/false' OR 'install udf /bin/true')
+            {% endif %}
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify: Ensure udf kernel module is not available
-    - name: Store requirement 4 details and determine overall status
+    - name: Store requirement 4 details
       set_fact:
-        status_4: >
-          {{ (
-            'PASS' if (
-              (result_1.stdout | default('') | trim == '') or
-              (result_1.stdout | default('') | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        data_4: "Overall compliance check for CIS 1.1.1.8"
+        status_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and (status_2 | trim == 'NA' or status_3 | trim == 'NA') %}
+            FAIL
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS: udf module is not available on the system (req_1 passed)
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS: udf module is available but disabled (blacklisted) and not loaded
+          {% else %}
+            FAIL: udf module is available and either not disabled or loaded
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.8"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.8"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.8"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -158,22 +183,22 @@
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Task skipped - requirement 1 passed') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name | default('Task not recorded') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Task skipped - requirement 1 passed') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: OVERALL Verify"
-          - "  Command: N/A"
-          - "  Exit code: N/A"
-          - "  Data: N/A"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

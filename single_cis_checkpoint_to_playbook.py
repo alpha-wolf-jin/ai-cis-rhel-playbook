@@ -559,10 +559,8 @@ def extract_audit_steps_from_procedure(audit_procedure: str, checkpoint_id: str 
     # Check if audit_procedure is a complete bash script BEFORE calling LLM
     # If it is, skip JSON parsing and return empty to trigger fallback
     is_complete_script = (
-        audit_procedure.strip().startswith('#!/usr/bin/env bash') or
-        audit_procedure.strip().startswith('#!/bin/bash') or
-        (audit_procedure.strip().startswith('#!') and 'bash' in audit_procedure[:50]) or
-        ('#!/usr/bin/env bash' in audit_procedure and 'l_output' in audit_procedure and 'unset a_' in audit_procedure)
+        '#!/usr/bin/env bash' in audit_procedure or
+        '#!/bin/bash' in audit_procedure
     )
     
     if is_complete_script:

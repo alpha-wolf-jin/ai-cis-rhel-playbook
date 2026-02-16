@@ -2,11 +2,13 @@
 - name: Data Collection for CIS 5.4.1.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.1.5"
-    req_1: "Check default password inactivity setting"
-    req_2: "Verify all users have password inactivity <= 45 days"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.1.5"
+    req_1: "Verify the default INACTIVE setting for new users using command: useradd -D | grep INACTIVE"
+    req_2: |
+      Verify all users with a password have an INACTIVE value conforming to policy using command: awk -F: '($2~/^\$.+\$/) {if($7 > 45 || $7 < 0)print \"User: \" $1 \" INACTIVE: \" $7}' /etc/shadow
+    req_3: "OVERALL Verify: Ensure inactive password lock is configured"
 
   tasks:
     - name: Initialize data variables
@@ -18,8 +20,7 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Check default password inactivity setting
-    - name: Req 1 - Check default INACTIVE setting
+    - name: "Req 1 - Check default INACTIVE setting"
       shell: |
         useradd -D | grep INACTIVE
       args:
@@ -30,15 +31,41 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check default password inactivity setting"
+        task_1_name: "Check default INACTIVE setting"
         task_1_cmd: "useradd -D | grep INACTIVE"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'INACTIVE=45') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when INACTIVE=45, FAIL otherwise' if (result_1.stdout | default('') | trim == 'INACTIVE=45') else 'FAIL - Default INACTIVE setting does not match expected value (INACTIVE=45)') | trim }}"
 
-    # Requirement 2: Verify all users have password inactivity <= 45 days
-    - name: Req 2 - Check user password inactivity in /etc/shadow
+    - name: Set requirement 1 status and rationale
+      set_fact:
+        status_1: >-
+          {% set output = data_1 | default('') | trim %}
+          {% set matches = output | regex_findall('INACTIVE=(-?[0-9]+)') %}
+          {% if matches | length > 0 %}
+            {% set inactive_val = matches[0] | int %}
+            {% if inactive_val >= 0 and inactive_val <= 45 %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = data_1 | default('') | trim %}
+          {% set matches = output | regex_findall('INACTIVE=(-?[0-9]+)') %}
+          {% if matches | length > 0 %}
+            {% set inactive_val = matches[0] | int %}
+            {% if inactive_val >= 0 and inactive_val <= 45 %}
+              PASS: INACTIVE value {{ inactive_val }} is between 0 and 45. Output: {{ output }}
+            {% else %}
+              FAIL: INACTIVE value {{ inactive_val }} is not between 0 and 45. Output: {{ output }}
+            {% endif %}
+          {% else %}
+            FAIL: No INACTIVE value found in output. Output: {{ output }}
+          {% endif %}
+
+    - name: "Req 2 - Check user INACTIVE values in shadow file"
       shell: |
         {% raw %}
         awk -F: '($2~/^\$.+\$/) {if($7 > 45 || $7 < 0)print "User: " $1 " INACTIVE: " $7}' /etc/shadow
@@ -51,22 +78,35 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify all users have password inactivity <= 45 days"
+        task_2_name: "Check user INACTIVE values in shadow file"
         task_2_cmd: |
-          awk -F: '($2~/^\$.+\$/) {if($7 > 45 || $7 < 0)print \"User: \" $1 \" INACTIVE: \" $7}' /etc/shadow
+          awk -F: '($2~/^\\$.+\\$/) {if($7 > 45 || $7 < 0)print \"User: \" $1 \" INACTIVE: \" $7}' /etc/shadow
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when no users have INACTIVE > 45 or < 0, FAIL when users found with non-compliant INACTIVE values' if (result_2.stdout | default('') | trim == '') else 'FAIL - Users found with INACTIVE > 45 days or < 0') | trim }}"
 
-    # Final report
+    - name: Set requirement 2 status and rationale
+      set_fact:
+        status_2: "{{ ('PASS' if (data_2 | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: >-
+          {% set output = data_2 | default('') | trim %}
+          {% if output == '' %}
+            PASS: No users found violating policy. Output: {{ output }}
+          {% else %}
+            FAIL: Found users with INACTIVE values outside 0-45 range. Output: {{ output }}
+          {% endif %}
+
+    - name: Store requirement 3 details
+      set_fact:
+        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise. (req_1: {{ status_1 | default('UNKNOWN') | trim }}, req_2: {{ status_2 | default('UNKNOWN') | trim }})"
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.4.1.5"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -85,8 +125,16 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: Store requirement 3 details"
+          - "  Command: N/A"
+          - "  Exit code: N/A"
+          - "  Data: N/A"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-          - "  Rationale: {{ ('PASS when both requirements pass, FAIL otherwise' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL - One or more requirements failed') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

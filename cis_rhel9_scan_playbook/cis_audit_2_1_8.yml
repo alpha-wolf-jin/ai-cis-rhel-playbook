@@ -2,12 +2,12 @@
 - name: Data Collection for CIS 2.1.8
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.8"
-    req_1: "Check if dovecot and cyrus-imapd packages are installed"
-    req_2: "If a package is installed, check if dovecot.socket, dovecot.service, and cyrus-imapd.service are enabled"
-    req_3: "If a package is installed, check if dovecot.socket, dovecot.service, and cyrus-imapd.service are active"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.8"
+    req_1: "Check if dovecot and cyrus-imapd packages are installed using command: rpm -q dovecot cyrus-imapd"
+    req_2: "If a package from req_1 is installed, check if dovecot.socket, dovecot.service, and cyrus-imapd.service are enabled using command: systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
+    req_3: "If a package from req_1 is installed, check if dovecot.socket, dovecot.service, and cyrus-imapd.service are active using command: systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
     req_4: "OVERALL Verify: Ensure message access server services are not in use"
 
   tasks:
@@ -16,18 +16,30 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        task_4_name: "Overall compliance check"
         task_4_cmd: "N/A"
         task_4_rc: -1
+        data_4: ""
+        status_4: "UNKNOWN"
+        rationale_4: "Not evaluated"
 
-    # Requirement 1: Check if dovecot and cyrus-imapd packages are installed
-    - name: Req 1 - Check if dovecot and cyrus-imapd packages are installed
+    # Requirement 1: Check if packages are installed
+    - name: "Req 1 - Check if dovecot and cyrus-imapd packages are installed"
       shell: rpm -q dovecot cyrus-imapd
       args:
         executable: /bin/bash
@@ -41,11 +53,23 @@
         task_1_cmd: "rpm -q dovecot cyrus-imapd"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is search('package dovecot is not installed') and result_1.stdout | default('') | trim is search('package cyrus-imapd is not installed')) else 'FAIL') | trim }}"
-        rationale_1: "PASS when output for both packages is 'package <name> is not installed', FAIL if either package is installed"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'dovecot is not installed' in output and 'cyrus-imapd is not installed' in output %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'dovecot is not installed' in output and 'cyrus-imapd is not installed' in output %}
+            PASS: Both packages are not installed
+          {% else %}
+            FAIL: One or both packages are installed
+          {% endif %}
 
-    # Requirement 2: If a package is installed, check if services are enabled
-    - name: Req 2 - Check if services are enabled
+    # Requirement 2: Check if services are enabled (only if req_1 failed - packages installed)
+    - name: "Req 2 - Check if message access services are enabled"
       shell: systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
@@ -54,18 +78,29 @@
       changed_when: false
       when: status_1 | trim == 'FAIL'
 
-    - name: Store requirement 2 details
+    - name: Store requirement 2 details when executed
       set_fact:
         task_2_name: "Check if dovecot.socket, dovecot.service, and cyrus-imapd.service are enabled"
         task_2_cmd: "systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns no output (no services are enabled), FAIL if any service is listed as enabled"
+        status_2: "{{ ('PASS' if (result_2.stdout is defined and result_2.stdout | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when command returns no output (no services are enabled), FAIL when any service name is printed' if (result_2.stdout is defined and result_2.stdout | trim == '') else 'FAIL: One or more services are enabled') | trim }}"
       when: status_1 | trim == 'FAIL'
 
-    # Requirement 3: If a package is installed, check if services are active
-    - name: Req 3 - Check if services are active
+    # Set NA status for req_2 when req_1 is PASS (packages not installed)
+    - name: Set NA status for req_2 when packages are not installed
+      set_fact:
+        task_2_name: "Check if dovecot.socket, dovecot.service, and cyrus-imapd.service are enabled"
+        task_2_cmd: "systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: -1
+        data_2: "N/A - packages are not installed"
+        status_2: "NA"
+        rationale_2: "Not applicable per audit procedure - packages are not installed"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 3: Check if services are active (only if req_1 failed - packages installed)
+    - name: "Req 3 - Check if message access services are active"
       shell: systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
@@ -74,23 +109,30 @@
       changed_when: false
       when: status_1 | trim == 'FAIL'
 
-    - name: Store requirement 3 details
+    - name: Store requirement 3 details when executed
       set_fact:
         task_3_name: "Check if dovecot.socket, dovecot.service, and cyrus-imapd.service are active"
         task_3_cmd: "systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when command returns no output (no services are active), FAIL if any service is listed as active"
+        status_3: "{{ ('PASS' if (result_3.stdout is defined and result_3.stdout | trim == '') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when command returns no output (no services are active), FAIL when active is printed' if (result_3.stdout is defined and result_3.stdout | trim == '') else 'FAIL: One or more services are active') | trim }}"
       when: status_1 | trim == 'FAIL'
 
-    # Requirement 4: OVERALL Verify
-    - name: Store requirement 4 details
+    # Set NA status for req_3 when req_1 is PASS (packages not installed)
+    - name: Set NA status for req_3 when packages are not installed
       set_fact:
-        task_4_name: "OVERALL Verify: Ensure message access server services are not in use"
-        task_4_cmd: "N/A - Calculated from previous results"
-        task_4_rc: 0
-        data_4: "N/A"
+        task_3_name: "Check if dovecot.socket, dovecot.service, and cyrus-imapd.service are active"
+        task_3_cmd: "systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
+        task_3_rc: -1
+        data_3: "N/A - packages are not installed"
+        status_3: "NA"
+        rationale_3: "Not applicable per audit procedure - packages are not installed"
+      when: status_1 | trim == 'PASS'
+
+    # Requirement 4: Overall compliance check
+    - name: Determine overall compliance
+      set_fact:
         status_4: >-
           {% if status_1 | trim == 'PASS' %}
             PASS
@@ -99,7 +141,14 @@
           {% else %}
             FAIL
           {% endif %}
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        rationale_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS: Packages are not installed
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS: Packages are installed but services are not enabled or active
+          {% else %}
+            FAIL: Message access server services are in use (packages installed and services enabled/active)
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -112,33 +161,33 @@
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not executed') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not applicable') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not executed') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not applicable') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
           - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"

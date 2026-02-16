@@ -2,12 +2,14 @@
 - name: Data Collection for CIS 2.4.1.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.4.1.1"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.1"
     req_1: "Check if cron is installed on the system"
-    req_2: "Verify cron service is enabled"
-    req_3: "Verify cron service is active"
+    req_2: |
+      Verify cron service is enabled using command: systemctl list-unit-files | awk '$1~/^crond?\.service/{print $2}'
+    req_3: |
+      Verify cron service is active using command: systemctl list-units | awk '$1~/^crond?\.service/{print $3}'
     req_4: "OVERALL Verify: Ensure cron daemon is enabled and active"
 
   tasks:
@@ -28,7 +30,8 @@
 
     # Requirement 1: Check if cron is installed on the system
     - name: Req 1 - Check cron installation
-      shell: rpm -q cronie
+      shell: |
+        rpm -q cronie
       args:
         executable: /bin/bash
       register: result_1
@@ -42,64 +45,68 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.rc == 0) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when cron is installed (e.g., command returns a package version), FAIL otherwise' if (result_1.rc == 0) else 'FAIL - cron not installed or command failed') | trim }}"
+        rationale_1: "{{ ('PASS when cron is installed (package query returns version), FAIL otherwise') | trim }}"
 
-    # Requirement 2: Verify cron service is enabled
-    - name: Req 2 - Check cron service enabled
-      shell: systemctl list-unit-files | awk '$1~/^crond?\.service/{print $2}'
+    # Requirement 2: Verify cron service is enabled (only if cron is installed)
+    - name: Req 2 - Check cron service enabled status
+      shell: |
+        systemctl list-unit-files | awk '$1~/^crond?\.service/{print $2}'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
+      when: result_1.rc == 0  # Only check if cron is installed
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check cron service enabled"
+        task_2_name: "Check cron service enabled status"
         task_2_cmd: |
           systemctl list-unit-files | awk '$1~/^crond?\.service/{print $2}'
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | trim == 'enabled') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when the output is exactly enabled, FAIL otherwise' if (result_2.stdout | trim == 'enabled') else 'FAIL - output not exactly enabled') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'enabled') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when output is exactly enabled, FAIL otherwise') | trim }}"
 
-    # Requirement 3: Verify cron service is active
-    - name: Req 3 - Check cron service active
-      shell: systemctl list-units | awk '$1~/^crond?\.service/{print $3}'
+    # Requirement 3: Verify cron service is active (only if cron is installed)
+    - name: Req 3 - Check cron service active status
+      shell: |
+        systemctl list-units | awk '$1~/^crond?\.service/{print $3}'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
+      when: result_1.rc == 0  # Only check if cron is installed
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check cron service active"
+        task_3_name: "Check cron service active status"
         task_3_cmd: |
           systemctl list-units | awk '$1~/^crond?\.service/{print $3}'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | trim == 'active') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when the output is exactly active, FAIL otherwise' if (result_3.stdout | trim == 'active') else 'FAIL - output not exactly active') | trim }}"
+        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == 'active') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when output is exactly active, FAIL otherwise') | trim }}"
 
-    # Requirement 4: OVERALL Verify: Ensure cron daemon is enabled and active
+    # Requirement 4: OVERALL Verify
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Overall compliance check"
-        task_4_cmd: "N/A - Combined check"
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A (calculated from previous results)"
         task_4_rc: 0
-        data_4: "Req1: {{ status_1 }}, Req2: {{ status_2 }}, Req3: {{ status_3 }}"
-        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_4: "{{ ('PASS when req_1=PASS AND req_2=PASS AND req_3=PASS, FAIL otherwise' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL - not all requirements passed') | trim }}"
+        data_4: "N/A"
+        status_4: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' and status_3 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS when cron is installed AND enabled AND active, FAIL otherwise') | trim }}"
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.4.1.1"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.4.1.1"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

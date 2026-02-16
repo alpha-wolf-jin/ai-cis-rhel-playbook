@@ -1,66 +1,36 @@
 ---
-- name: Data Collection for CIS Checkpoint 1.8.1
+- name: Data Collection for CIS checkpoint 1.8.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.8.1"
-    req_1: "Verify the login banner configuration is locked (users cannot disable the banner)"
-    req_2: "Verify the login banner configuration is locked (users cannot modify the banner text)"
-    req_3: "Verify the system-wide text banner on the login screen is enabled"
-    req_4: "Verify the system-wide text banner on the login screen is configured and meets local site policy"
-    req_5: "OVERALL Verify: Ensure GDM login banner is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.1"
+    req_1: "Verify the login banner enable setting is locked (not user-writable)"
+    req_2: "Verify the login banner text setting is locked (not user-writable)"
+    req_3: "Verify the system-wide login banner is enabled"
+    req_4: "Verify the system-wide login banner text is configured"
+    req_5: "Ensure GDM login banner is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "NOT APPLICABLE"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "NA"
-        rationale_1: "GDM not installed or not applicable"
-        data_2: "NOT APPLICABLE"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "NA"
-        rationale_2: "GDM not installed or not applicable"
-        data_3: "NOT APPLICABLE"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "NA"
-        rationale_3: "GDM not installed or not applicable"
-        data_4: "NOT APPLICABLE"
         task_4_name: "Not executed"
         task_4_cmd: "N/A"
         task_4_rc: -1
-        status_4: "NA"
-        rationale_4: "GDM not installed or not applicable"
-        data_5: "NOT APPLICABLE"
         task_5_name: "Not executed"
         task_5_cmd: "N/A"
         task_5_rc: -1
-        status_5: "NA"
-        rationale_5: "GDM not installed or not applicable"
-        gdm_installed: false
 
-    - name: Check if GDM is installed
-      shell: |
-        rpm -q gdm 2>/dev/null || echo "GDM_NOT_INSTALLED"
-      args:
-        executable: /bin/bash
-      register: gdm_check
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Set GDM installation status
-      set_fact:
-        gdm_installed: "{{ 'GDM_NOT_INSTALLED' not in gdm_check.stdout }}"
-
-    # Requirement 1: Verify the login banner configuration is locked (users cannot disable the banner)
+    # Requirement 1: Verify the login banner enable setting is locked (not user-writable)
     - name: "Req 1 - Check if banner enable setting is locked"
       shell: |
         gsettings writable org.gnome.login-screen banner-message-enable
@@ -68,9 +38,7 @@
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_installed
 
     - name: Store requirement 1 details
       set_fact:
@@ -79,10 +47,9 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'false') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'false', FAIL otherwise"
-      when: gdm_installed
+        rationale_1: "{{ ('PASS when output is false, FAIL otherwise' if (result_1.stdout | default('') | trim == 'false') else 'FAIL: Expected false, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: Verify the login banner configuration is locked (users cannot modify the banner text)
+    # Requirement 2: Verify the login banner text setting is locked (not user-writable)
     - name: "Req 2 - Check if banner text setting is locked"
       shell: |
         gsettings writable org.gnome.login-screen banner-message-text
@@ -90,9 +57,7 @@
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_installed
 
     - name: Store requirement 2 details
       set_fact:
@@ -101,63 +66,55 @@
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'false') else 'FAIL') | trim }}"
-        rationale_2: "PASS when output is 'false', FAIL otherwise"
-      when: gdm_installed
+        rationale_2: "{{ ('PASS when output is false, FAIL otherwise' if (result_2.stdout | default('') | trim == 'false') else 'FAIL: Expected false, got ' + (result_2.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 3: Verify the system-wide text banner on the login screen is enabled
-    - name: "Req 3 - Check if banner is enabled"
+    # Requirement 3: Verify the system-wide login banner is enabled
+    - name: "Req 3 - Check if system-wide login banner is enabled"
       shell: |
         gsettings get org.gnome.login-screen banner-message-enable
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_installed
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if banner is enabled"
+        task_3_name: "Check if system-wide login banner is enabled"
         task_3_cmd: "gsettings get org.gnome.login-screen banner-message-enable"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == 'true') else 'FAIL') | trim }}"
-        rationale_3: "PASS when output is 'true', FAIL otherwise"
-      when: gdm_installed
+        rationale_3: "{{ ('PASS when output is true, FAIL otherwise' if (result_3.stdout | default('') | trim == 'true') else 'FAIL: Expected true, got ' + (result_3.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 4: Verify the system-wide text banner on the login screen is configured and meets local site policy
-    - name: "Req 4 - Check banner text content"
+    # Requirement 4: Verify the system-wide login banner text is configured
+    - name: "Req 4 - Check if system-wide login banner text is configured"
       shell: |
         gsettings get org.gnome.login-screen banner-message-text
       args:
         executable: /bin/bash
       register: result_4
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: gdm_installed
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check banner text content"
+        task_4_name: "Check if system-wide login banner text is configured"
         task_4_cmd: "gsettings get org.gnome.login-screen banner-message-text"
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim != '' and result_4.stdout | default('') | trim != "''") else 'FAIL') | trim }}"
-        rationale_4: "PASS when output is a non-empty string containing the approved banner message, FAIL otherwise"
-      when: gdm_installed
+        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim != '' and result_4.stdout | default('') | trim != 'false') else 'FAIL') | trim }}"
+        rationale_4: '{{ ("PASS when output is non-empty string, FAIL otherwise" if (result_4.stdout | default("") | trim != "" and result_4.stdout | default("") | trim != "false") else "FAIL: Expected non-empty string, got " + (result_4.stdout | default("") | trim)) | trim }}'
 
-    # Requirement 5: OVERALL Verify: Ensure GDM login banner is configured
+    # Requirement 5: Overall - Ensure GDM login banner is configured
     - name: Store requirement 5 details
       set_fact:
-        task_5_name: "Overall verification of GDM login banner configuration"
-        task_5_cmd: "N/A - Composite check"
+        task_5_name: "Overall compliance check"
+        task_5_cmd: "N/A - Aggregate of req 1-4"
         task_5_rc: 0
-        data_5: "Composite check of requirements 1-4"
-        status_5: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS') else ('NA' if not gdm_installed else 'FAIL')) | trim }}"
-        rationale_5: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise"
-      when: gdm_installed
+        data_5: "Aggregated statuses: req1={{ status_1 | default('UNKNOWN') }}, req2={{ status_2 | default('UNKNOWN') }}, req3={{ status_3 | default('UNKNOWN') }}, req4={{ status_4 | default('UNKNOWN') }}"
+        status_5: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' and status_3 | default('FAIL') == 'PASS' and status_4 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
+        rationale_5: '{{ ("PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise" if (status_1 | default("FAIL") == "PASS" and status_2 | default("FAIL") == "PASS" and status_3 | default("FAIL") == "PASS" and status_4 | default("FAIL") == "PASS") else "FAIL: One or more requirements failed") | trim }}'
 
     - name: Generate compliance report
       debug:
@@ -165,7 +122,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.8.1"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.1"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -210,6 +167,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_5 | trim }}"
+          - "  Rationale: {{ rationale_5 | trim }}"
           - "========================================================"

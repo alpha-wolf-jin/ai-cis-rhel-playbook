@@ -1,0 +1,91 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.5
+    req_1: 'Verify sshd KexAlgorithms configuration using command: `sshd -T | grep -Pi -- ''kexalgorithms\h+([^#\n\r]+,)?(diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1)\b''`. Rationale: PASS when the command returns no output (i.e., no weak KEX algorithms are configured), FAIL when any of the weak algorithms (diffie-hellman-group1-sha1, diffie-hellman-group14-sha1, diffie-hellman-group-exchange-sha1) are found in the sshd configuration
+
+      '
+    req_2: 'OVERALL Verify: Ensure sshd KexAlgorithms is configured. Rationale: PASS when req_1=PASS, FAIL otherwise'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+
+    # Requirement 1: Check for weak KEX algorithms in sshd configuration
+- name: Req 1 - Check for weak KEX algorithms in sshd configuration
+  shell: |
+    {% raw %}
+    sshd -T | grep -Pi -- 'kexalgorithms\h+([^#\n\r]+,)?(diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1)\b'
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check for weak KEX algorithms in sshd configuration"
+    task_1_cmd: |
+      sshd -T | grep -Pi -- 'kexalgorithms\h+([^#\n\r]+,)?(diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1)\b'
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+    rationale_1: '{{ ("PASS: No weak KEX algorithms found in sshd configuration" if (result_1.stdout | default("") | trim == "") else "FAIL: Found weak KEX algorithms in sshd configuration: " + (result_1.stdout | default("") | trim)) | trim }}'
+
+    # Requirement 2: Overall verification
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Overall verification of sshd KexAlgorithms configuration"
+    task_2_cmd: "N/A (calculated from requirement 1)"
+    task_2_rc: 0
+    data_2: "Requirement 1 status: {{ status_1 }}"
+    status_2: "{{ status_1 }}"
+    rationale_2: '{{ ("PASS: sshd KexAlgorithms is properly configured (no weak algorithms)" if status_1 | trim == "PASS" else "FAIL: sshd KexAlgorithms is not properly configured (weak algorithms detected)") | trim }}'
+
+    # Final report - MUST include Status and Rationale for each requirement
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.1.5"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.5"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | trim }}"
+    - "  Rationale: {{ rationale_2 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_1_5'': status_2 | trim }] }}'

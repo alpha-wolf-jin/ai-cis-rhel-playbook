@@ -1,14 +1,14 @@
 ---
-- name: Data Collection for CIS checkpoint 2.1.2
+- name: Data Collection for CIS 2.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.2"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.2"
     req_1: "Verify avahi package is not installed"
     req_2: "If avahi package is installed, verify avahi-daemon.socket and avahi-daemon.service are not enabled"
     req_3: "If avahi package is installed, verify avahi-daemon.socket and avahi-daemon.service are not active"
-    req_4: "OVERALL Verify: Ensure avahi daemon services are not in use"
+    req_4: "Ensure avahi daemon services are not in use"
 
   tasks:
     - name: Initialize data variables
@@ -22,12 +22,9 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
 
     # Requirement 1: Verify avahi package is not installed
-    - name: Req 1 - Check if avahi package is installed
+    - name: Req 1 - Check avahi package installation
       shell: rpm -q avahi
       args:
         executable: /bin/bash
@@ -37,75 +34,111 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if avahi package is installed"
+        task_1_name: "Check avahi package installation"
         task_1_cmd: "rpm -q avahi"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package avahi is not installed') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is "package avahi is not installed", FAIL when any other output is returned' if (result_1.stdout | default('') | trim == 'package avahi is not installed') else 'FAIL when any other output is returned (including version numbers indicating installation)') | trim }}"
+        avahi_installed: "{{ not (result_1.stdout | default('') | trim == 'package avahi is not installed') }}"
+        rationale_1: >-
+          {% if result_1.stdout | default('') | trim == 'package avahi is not installed' %}
+            PASS when output is exactly "package avahi is not installed", FAIL otherwise
+          {% else %}
+            FAIL: Expected "package avahi is not installed"
+          {% endif %}
 
-    # Requirement 2: If avahi package is installed, verify avahi-daemon.socket and avahi-daemon.service are not enabled
-    - name: Req 2 - Check if avahi services are enabled
+    # Requirement 2: If avahi installed, check services not enabled
+    - name: Req 2 - Check avahi services enabled status
       shell: systemctl is-enabled avahi-daemon.socket avahi-daemon.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0 and data_1 != 'package avahi is not installed'
+      when: avahi_installed
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if avahi services are enabled"
+        task_2_name: "Check avahi services enabled status"
         task_2_cmd: "systemctl is-enabled avahi-daemon.socket avahi-daemon.service 2>/dev/null | grep 'enabled'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when no output is returned (no lines containing "enabled")' if (result_2.stdout | default('') | trim == '') else 'FAIL when any output is returned') | trim }}"
-      when: data_1 | length > 0 and data_1 != 'package avahi is not installed'
+        task_2_rc: "{{ result_2.rc | default(-1) if avahi_installed else -1 }}"
+        data_2: "{{ (result_2.stdout | default('') | trim) if avahi_installed else 'N/A - avahi not installed' }}"
+        status_2: >-
+          {% if not avahi_installed %}
+            NA
+          {% elif result_2.rc == 1 and result_2.stdout | default('') | trim == '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% if not avahi_installed %}
+            N/A - avahi package not installed
+          {% elif result_2.rc == 1 and result_2.stdout | default('') | trim == '' %}
+            PASS when no output is returned (no lines containing 'enabled')
+          {% elif result_2.rc == 0 %}
+            FAIL: Found enabled services: {{ result_2.stdout | default('') | trim }}
+          {% else %}
+            FAIL: Unexpected result - exit code {{ result_2.rc | default(-1) }}, output: {{ result_2.stdout | default('') | trim }}
+          {% endif %}
 
-    # Requirement 3: If avahi package is installed, verify avahi-daemon.socket and avahi-daemon.service are not active
-    - name: Req 3 - Check if avahi services are active
+    # Requirement 3: If avahi installed, check services not active
+    - name: Req 3 - Check avahi services active status
       shell: systemctl is-active avahi-daemon.socket avahi-daemon.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: data_1 | length > 0 and data_1 != 'package avahi is not installed'
+      when: avahi_installed
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if avahi services are active"
+        task_3_name: "Check avahi services active status"
         task_3_cmd: "systemctl is-active avahi-daemon.socket avahi-daemon.service 2>/dev/null | grep '^active'"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when no output is returned (no lines starting with "active")' if (result_3.stdout | default('') | trim == '') else 'FAIL when any output is returned') | trim }}"
-      when: data_1 | length > 0 and data_1 != 'package avahi is not installed'
+        task_3_rc: "{{ result_3.rc | default(-1) if avahi_installed else -1 }}"
+        data_3: "{{ (result_3.stdout | default('') | trim) if avahi_installed else 'N/A - avahi not installed' }}"
+        status_3: >-
+          {% if not avahi_installed %}
+            NA
+          {% elif result_3.rc == 1 and result_3.stdout | default('') | trim == '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if not avahi_installed %}
+            N/A - avahi package not installed
+          {% elif result_3.rc == 1 and result_3.stdout | default('') | trim == '' %}
+            PASS when no output is returned (no lines starting with 'active')
+          {% elif result_3.rc == 0 %}
+            FAIL: Found active services: {{ result_3.stdout | default('') | trim }}
+          {% else %}
+            FAIL: Unexpected result - exit code {{ result_3.rc | default(-1) }}, output: {{ result_3.stdout | default('') | trim }}
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify: Ensure avahi daemon services are not in use
+    # Requirement 4: Overall compliance
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Overall compliance check"
-        task_4_cmd: "N/A - Calculated from previous checks"
-        task_4_rc: 0
-        data_4: "Package check: {{ status_1 | trim }}, Enabled check: {{ status_2 | default('NA') | trim }}, Active check: {{ status_3 | default('NA') | trim }}"
         status_4: >-
-          {% if status_1 | trim == 'PASS' %}
+          {% if status_1 | default('UNKNOWN') | trim == 'PASS' %}
             PASS
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('NA') | trim == 'PASS' and status_3 | default('NA') | trim == 'PASS' %}
+          {% elif status_1 | default('UNKNOWN') | trim == 'FAIL' and 
+                 status_2 | default('UNKNOWN') | trim == 'PASS' and 
+                 status_3 | default('UNKNOWN') | trim == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when package is not installed
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('NA') | trim == 'PASS' and status_3 | default('NA') | trim == 'PASS' %}
-            PASS when package is installed but services are not enabled and not active
+          {% if status_1 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS when req_1=PASS (avahi not installed)
+          {% elif status_1 | default('UNKNOWN') | trim == 'FAIL' and 
+                 status_2 | default('UNKNOWN') | trim == 'PASS' and 
+                 status_3 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS when req_1=FAIL (avahi installed) AND req_2=PASS (services not enabled) AND req_3=PASS (services not active)
           {% else %}
-            FAIL when package is installed and services are either enabled or active
+            FAIL: req_1={{ status_1 | default('UNKNOWN') | trim }}, req_2={{ status_2 | default('UNKNOWN') | trim }}, req_3={{ status_3 | default('UNKNOWN') | trim }}
           {% endif %}
 
     # Final report
@@ -130,23 +163,23 @@
           - "  Task: {{ task_2_name | default('Task not recorded') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('NA') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('NA - Package not installed') | trim }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name | default('Task not recorded') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('NA') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('NA - Package not installed') | trim }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Task: Overall compliance evaluation"
+          - "  Command: N/A (logical evaluation)"
+          - "  Exit code: N/A"
+          - "  Data: N/A"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

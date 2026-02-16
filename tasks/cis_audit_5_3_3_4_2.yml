@@ -1,0 +1,193 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.4.2
+    req_1: Check for the presence of pam_unix.so module lines in /etc/pam.d/password-auth and /etc/pam.d/system-auth files
+    req_2: Verify that the pam_unix.so module lines do NOT contain a 'remember' parameter
+    req_3: OVERALL Verify - Ensure pam_unix does not include remember
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    status_2: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    rationale_2: "Not evaluated"
+    rationale_3: "Not evaluated"
+
+    # Requirement 1: Check for the presence of pam_unix.so module lines
+- name: "Req 1 - Check pam_unix.so module lines"
+  shell: |
+    {% raw %}
+    grep -Pi '^\h*password\h+([^#\n\r]+\h+)?pam_unix\.so\b' /etc/pam.d/{password,system}-auth
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check pam_unix.so module lines"
+    task_1_cmd: |
+      grep -Pi '^\h*password\h+([^#\n\r]+\h+)?pam_unix\.so\b' /etc/pam.d/{password,system}-auth
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% if '/etc/pam.d/password-auth' in output and '/etc/pam.d/system-auth' in output %}
+          FAIL
+        {% else %}
+          PASS
+        {% endif %}
+      {% else %}
+        PASS
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% if '/etc/pam.d/password-auth' in output and '/etc/pam.d/system-auth' in output %}
+          FAIL: Module lines found in both files (must check for remember parameter)
+        {% else %}
+          PASS: Module lines not found in both files (nothing to check)
+        {% endif %}
+      {% else %}
+        PASS: No module lines found (nothing to check)
+      {% endif %}
+
+    # Requirement 2: Verify no 'remember' parameter - only execute if module exists in both files
+- name: "Req 2 - Check for remember parameter"
+  shell: |
+    {% raw %}
+    grep -Pi '^\h*password\h+([^#\n\r]+\h+)?pam_unix\.so\b' /etc/pam.d/{password,system}-auth | grep -Pv '\bremember=\d\b'
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: status_1 | trim == 'FAIL'
+
+- name: Store requirement 2 details when module exists
+  set_fact:
+    task_2_name: "Check for remember parameter"
+    task_2_cmd: |
+      grep -Pi '^\h*password\h+([^#\n\r]+\h+)?pam_unix\.so\b' /etc/pam.d/{password,system}-auth | grep -Pv '\bremember=\d\b'
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% set output1 = data_1 | default('') | trim %}
+      {% set output2 = result_2.stdout | default('') | trim %}
+      {% if output1 != '' and output2 != '' %}
+        {% set lines1 = output1.split('\n') | select('match', '.*') | list %}
+        {% set lines2 = output2.split('\n') | select('match', '.*') | list %}
+        {% if lines1 | length == lines2 | length %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% elif output1 == '' and output2 == '' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_2: >-
+      {% set output1 = data_1 | default('') | trim %}
+      {% set output2 = result_2.stdout | default('') | trim %}
+      {% if output1 != '' and output2 != '' %}
+        {% set lines1 = output1.split('\n') | select('match', '.*') | list %}
+        {% set lines2 = output2.split('\n') | select('match', '.*') | list %}
+        {% if lines1 | length == lines2 | length %}
+          PASS: Output contains same number of lines as first command (indicating no remember parameter)
+        {% else %}
+          FAIL: Output lines filtered due to remember parameter present
+        {% endif %}
+      {% elif output1 == '' and output2 == '' %}
+        PASS: No module lines to check
+      {% else %}
+        FAIL: Error in data collection
+      {% endif %}
+  when: status_1 | trim == 'FAIL'
+
+- name: Store requirement 2 details when module does not exist
+  set_fact:
+    task_2_name: "Check for remember parameter"
+    task_2_cmd: "N/A - Module not found in both files"
+    task_2_rc: 0
+    data_2: "Module not found in both files - nothing to check"
+    status_2: "PASS"
+    rationale_2: "PASS: Module not found in both files (nothing to check per audit procedure)"
+  when: status_1 | trim == 'PASS'
+
+    # Requirement 3: Overall verification
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Overall verification"
+    task_3_cmd: "N/A - Combined result of requirements 1 and 2"
+    task_3_rc: 0
+    data_3: "Combined status: {{ status_1 | default('UNKNOWN') | trim }} and {{ status_2 | default('UNKNOWN') | trim }}"
+    status_3: >-
+      {% if status_2 | default('FAIL') | trim == 'PASS' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% if status_2 | default('FAIL') | trim == 'PASS' %}
+        PASS: Either module not found in both files or found without remember parameter
+      {% else %}
+        FAIL: Module found with remember parameter
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.3.3.4.2"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.4.2"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_3_3_4_2'': status_3 | trim }] }}'

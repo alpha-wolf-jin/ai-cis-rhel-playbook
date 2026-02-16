@@ -1,0 +1,128 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.4.1
+    req_1: Run the provided CIS audit script to verify Ensure the audit log file directory mode is configured
+    req_2: 'OVERALL Verify: Ensure the audit log file directory mode is configured'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+
+    # Requirement 1: Execute CIS audit script
+- name: Req 1 - Create temporary audit script
+  copy:
+    dest: "/tmp/cis_audit_6.3.4.1.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+
+      {
+         l_perm_mask="0027"
+         if [ -e "/etc/audit/auditd.conf" ]; then
+            l_audit_log_directory="$(dirname "$(awk -F= '/^\s*log_file\s*/{print $2}' /etc/audit/auditd.conf | xargs)")"
+            if [ -d "$l_audit_log_directory" ]; then
+               l_maxperm="$(printf '%o' $(( 0777 & ~$l_perm_mask )) )"
+               l_directory_mode="$(stat -Lc '%#a' "$l_audit_log_directory")"
+               if [ $(( $l_directory_mode & $l_perm_mask )) -gt 0 ]; then
+                  echo -e "\n- Audit Result:\n  ** FAIL **\n  - Directory: \"$l_audit_log_directory\" is mode: \"$l_directory_mode\"\n     (should be mode: \"$l_maxperm\" or more restrictive)\n"
+               else
+                  echo -e "\n- Audit Result:\n  ** PASS **\n  - Directory: \"$l_audit_log_directory\" is mode: \"$l_directory_mode\"\n     (should be mode: \"$l_maxperm\" or more restrictive)\n"
+               fi
+            else
+               echo -e "\n- Audit Result:\n  ** FAIL **\n  - Log file directory not set in \"/etc/audit/auditd.conf\" please set log file directory"
+            fi
+         else
+            echo -e "\n- Audit Result:\n  ** FAIL **\n  - File: \"/etc/audit/auditd.conf\" not found\n  - ** Verify auditd is installed **"
+         fi
+      }
+      {% endraw %}
+  register: script_create_1
+  ignore_errors: true
+
+- name: Req 1 - Execute the audit script
+  shell: "/tmp/cis_audit_6.3.4.1.sh"
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_6.3.4.1.sh"
+    state: absent
+  ignore_errors: true
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Execute CIS audit script for audit log directory mode"
+    task_1_cmd: "/tmp/cis_audit_6.3.4.1.sh"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% if result_1.stdout is defined and '** PASS **' in result_1.stdout %}
+        PASS
+      {% elif result_1.stdout is defined and '** FAIL **' in result_1.stdout %}
+        FAIL
+      {% else %}
+        UNKNOWN
+      {% endif %}
+    rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
+
+    # Overall verify (requirement 2)
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Overall verification"
+    task_2_cmd: "N/A"
+    task_2_rc: "0"
+    data_2: "Based on requirement 1"
+    status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
+    rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.3.4.1"
+    - "========================================================"
+    - "Reference: {{ kcs_article }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | trim }}"
+    - "  Rationale: {{ rationale_2 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_3_4_1'': status_2 | trim }] }}'

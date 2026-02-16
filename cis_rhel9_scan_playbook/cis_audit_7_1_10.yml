@@ -1,12 +1,12 @@
 ---
-- name: Data Collection for CIS 7.1.10 - Ensure permissions on /etc/security/opasswd are configured
+- name: Data Collection for CIS 7.1.10
   hosts: all
   become: yes
   gather_facts: false
   vars:
     cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.10"
-    req_1: "Check if /etc/security/opasswd exists and verify its permissions, ownership, and group"
-    req_2: "Check if /etc/security/opasswd.old exists and verify its permissions, ownership, and group"
+    req_1: "Check if /etc/security/opasswd exists and verify its permissions, owner, and group"
+    req_2: "Check if /etc/security/opasswd.old exists and verify its permissions, owner, and group"
     req_3: "OVERALL Verify: Ensure permissions on /etc/security/opasswd are configured"
 
   tasks:
@@ -15,14 +15,28 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
         task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    - name: "Req 1 - Check opasswd permissions"
+    # Requirement 1: Check /etc/security/opasswd
+    - name: Req 1 - Check /etc/security/opasswd permissions
       shell: |
+        {% raw %}
         [ -e "/etc/security/opasswd" ] && stat -Lc '%n Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/security/opasswd
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -31,8 +45,8 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check opasswd permissions"
-        task_1_cmd: "[ -e /etc/security/opasswd ] && stat -Lc '%n Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/security/opasswd"
+        task_1_name: "Check /etc/security/opasswd permissions"
+        task_1_cmd: '[ -e "/etc/security/opasswd" ] && stat -Lc ''%n Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'' /etc/security/opasswd'
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
@@ -40,8 +54,15 @@
           {% if output == '' %}
             PASS
           {% else %}
-            {% if output is regex('Access: \\(0[0-6]00/') and output is regex('Uid: \\( 0/') and output is regex('Gid: \\( 0/') %}
-              PASS
+            {% if "Access:" in output %}
+              {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+              {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% if mode | int(base=8) <= 384 and uid == '0' and gid == '0' %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
             {% else %}
               FAIL
             {% endif %}
@@ -51,16 +72,27 @@
           {% if output == '' %}
             PASS: File does not exist
           {% else %}
-            {% if output is regex('Access: \\(0[0-6]00/') and output is regex('Uid: \\( 0/') and output is regex('Gid: \\( 0/') %}
-              PASS: File exists with mode 600 or more restrictive, UID=0, GID=0
+            {% if "Access:" in output %}
+              {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+              {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set mode_decimal = mode | int(base=8) %}
+              {% if mode_decimal <= 384 and uid == '0' and gid == '0' %}
+                PASS: File exists with permissions {{ mode }} ({{ mode_decimal }} decimal, <= 384 decimal / <= 0600 octal), UID {{ uid }}, GID {{ gid }}
+              {% else %}
+                FAIL: File exists with permissions {{ mode }} ({{ mode_decimal }} decimal, > 384 decimal / > 0600 octal), UID {{ uid }}, GID {{ gid }}
+              {% endif %}
             {% else %}
-              FAIL: File exists but permissions/ownership incorrect
+              FAIL: Unable to parse stat output
             {% endif %}
           {% endif %}
 
-    - name: "Req 2 - Check opasswd.old permissions"
+    # Requirement 2: Check /etc/security/opasswd.old
+    - name: Req 2 - Check /etc/security/opasswd.old permissions
       shell: |
+        {% raw %}
         [ -e "/etc/security/opasswd.old" ] && stat -Lc '%n Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/security/opasswd.old
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
@@ -69,8 +101,8 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check opasswd.old permissions"
-        task_2_cmd: "[ -e /etc/security/opasswd.old ] && stat -Lc '%n Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/security/opasswd.old"
+        task_2_name: "Check /etc/security/opasswd.old permissions"
+        task_2_cmd: '[ -e "/etc/security/opasswd.old" ] && stat -Lc ''%n Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'' /etc/security/opasswd.old'
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
@@ -78,8 +110,15 @@
           {% if output == '' %}
             PASS
           {% else %}
-            {% if output is regex('Access: \\(0[0-6]00/') and output is regex('Uid: \\( 0/') and output is regex('Gid: \\( 0/') %}
-              PASS
+            {% if "Access:" in output %}
+              {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+              {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% if mode | int(base=8) <= 384 and uid == '0' and gid == '0' %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
             {% else %}
               FAIL
             {% endif %}
@@ -89,13 +128,22 @@
           {% if output == '' %}
             PASS: File does not exist
           {% else %}
-            {% if output is regex('Access: \\(0[0-6]00/') and output is regex('Uid: \\( 0/') and output is regex('Gid: \\( 0/') %}
-              PASS: File exists with mode 600 or more restrictive, UID=0, GID=0
+            {% if "Access:" in output %}
+              {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
+              {% set uid = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set gid = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+              {% set mode_decimal = mode | int(base=8) %}
+              {% if mode_decimal <= 384 and uid == '0' and gid == '0' %}
+                PASS: File exists with permissions {{ mode }} ({{ mode_decimal }} decimal, <= 384 decimal / <= 0600 octal), UID {{ uid }}, GID {{ gid }}
+              {% else %}
+                FAIL: File exists with permissions {{ mode }} ({{ mode_decimal }} decimal, > 384 decimal / > 0600 octal), UID {{ uid }}, GID {{ gid }}
+              {% endif %}
             {% else %}
-              FAIL: File exists but permissions/ownership incorrect
+              FAIL: Unable to parse stat output
             {% endif %}
           {% endif %}
 
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
         status_3: >-
@@ -104,12 +152,7 @@
           {% else %}
             FAIL
           {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS: Both opasswd and opasswd.old (if they exist) have correct permissions
-          {% else %}
-            FAIL: One or both files have incorrect permissions or ownership
-          {% endif %}
+        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
 
     - name: Generate compliance report
       debug:
@@ -138,14 +181,14 @@
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: N/A (calculated from req1 and req2)"
-          - "  Exit code: N/A"
-          - "  Data: N/A"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

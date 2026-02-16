@@ -1,0 +1,151 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.17
+    req_1: Check if squid package is installed
+    req_2: If squid package is installed, check if squid.service is enabled
+    req_3: If squid package is installed, check if squid.service is active
+    req_4: 'OVERALL Verify: Ensure web proxy server services are not in use'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    data_3: ""
+    status_3: "UNKNOWN"
+    rationale_3: "Not evaluated"
+    task_4_name: "OVERALL Verify"
+    task_4_cmd: "N/A"
+    task_4_rc: 0
+    data_4: ""
+    status_4: "UNKNOWN"
+    rationale_4: "Not evaluated"
+
+    # Requirement 1: Check if squid package is installed
+- name: Req 1 - Check squid package installation
+  shell: rpm -q squid
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check squid package installation"
+    task_1_cmd: "rpm -q squid"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package squid is not installed') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS: squid package is not installed' if (result_1.stdout | default('') | trim == 'package squid is not installed') else 'FAIL: squid package is installed') | trim }}"
+
+    # Requirement 2: Check if squid.service is enabled (only if package is installed)
+- name: Req 2 - Check if squid service is enabled
+  shell: |
+    systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: status_1 | trim == 'FAIL'
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check if squid service is enabled"
+    task_2_cmd: "systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{% if status_1 | trim == 'PASS' %}NA{% else %}{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}{% endif %}"
+    rationale_2: "{% if status_1 | trim == 'PASS' %}Not applicable because squid package is not installed{% elif result_2.stdout | default('') | trim == '' %}PASS: squid.service is not enabled{% else %}FAIL: squid.service is enabled{% endif %}"
+
+    # Requirement 3: Check if squid.service is active (only if package is installed)
+- name: Req 3 - Check if squid service is active
+  shell: |
+    systemctl is-active squid.service 2>/dev/null | grep '^active'
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+  when: status_1 | trim == 'FAIL'
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Check if squid service is active"
+    task_3_cmd: "systemctl is-active squid.service 2>/dev/null | grep '^active'"
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: "{% if status_1 | trim == 'PASS' %}NA{% else %}{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}{% endif %}"
+    rationale_3: "{% if status_1 | trim == 'PASS' %}Not applicable because squid package is not installed{% elif result_3.stdout | default('') | trim == '' %}PASS: squid.service is not active{% else %}FAIL: squid.service is active{% endif %}"
+
+    # Requirement 4: OVERALL Verify
+- name: Store requirement 4 details
+  set_fact:
+    data_4: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}, Requirement 3: {{ status_3 }}"
+    status_4: "{% set s1 = status_1 | trim %}{% set s2 = status_2 | trim %}{% set s3 = status_3 | trim %}{% if s1 == 'PASS' %}PASS{% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}PASS{% elif s1 == 'FAIL' and s2 == 'NA' and s3 == 'NA' %}FAIL{% elif s1 == 'FAIL' and (s2 == 'FAIL' or s3 == 'FAIL') %}FAIL{% else %}UNKNOWN{% endif %}"
+    rationale_4: "{% set s1 = status_1 | trim %}{% set s2 = status_2 | trim %}{% set s3 = status_3 | trim %}{% if s1 == 'PASS' %}PASS: squid package is not installed{% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}PASS: squid is installed but service is not enabled and not active{% elif s1 == 'FAIL' and s2 == 'NA' and s3 == 'NA' %}FAIL: squid package is installed (service status not checked){% elif s1 == 'FAIL' and s2 == 'FAIL' %}FAIL: squid is installed and service is enabled{% elif s1 == 'FAIL' and s3 == 'FAIL' %}FAIL: squid is installed and service is active{% else %}UNKNOWN: cannot determine overall status from collected data{% endif %}"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.1.17"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 }}"
+    - "  Status: {{ status_1 }}"
+    - "  Rationale: {{ rationale_1 }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name }}"
+    - "  Command: {{ task_2_cmd }}"
+    - "  Exit code: {{ task_2_rc }}"
+    - "  Data: {{ data_2 }}"
+    - "  Status: {{ status_2 }}"
+    - "  Rationale: {{ rationale_2 }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name }}"
+    - "  Command: {{ task_3_cmd }}"
+    - "  Exit code: {{ task_3_rc }}"
+    - "  Data: {{ data_3 }}"
+    - "  Status: {{ status_3 }}"
+    - "  Rationale: {{ rationale_3 }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name }}"
+    - "  Command: {{ task_4_cmd }}"
+    - "  Exit code: {{ task_4_rc }}"
+    - "  Data: {{ data_4 }}"
+    - "  Status: {{ status_4 }}"
+    - "  Rationale: {{ rationale_4 }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_4 }}"
+    - "  Rationale: {{ rationale_4 }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_1_17'': status_4 | trim }] }}'

@@ -2,12 +2,12 @@
 - name: Data Collection for CIS 5.1.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.6"
-    req_1: "Check that the SSH daemon's configured MACs do not include any weak MACs"
-    req_2: "Verify the system has been patched for CVE-2023-48795"
-    req_3: "OVERALL Verify: Ensure sshd MACs are configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.6"
+    req_1: |
+      Verify that none of the weak MAC algorithms are configured in the running sshd configuration using command: `sshd -T | grep -Pi -- 'macs\h+([^#\n\r]+,)?(hmac-md5|hmac-md5-96|hmac-ripemd160|hmac-sha1-96|umac-64@openssh\.com|hmac-md5-etm@openssh\.com|hmac-md5-96-etm@openssh\.com|hmac-ripemd160-etm@openssh\.com|hmac-sha1-96-etm@openssh\.com|umac-64-etm@openssh\.com|umac-128-etm@openssh\.com)\b'`. Rationale: PASS when the command returns no output (i.e., no weak MACs are found), FAIL when any output is returned (indicating a weak MAC is configured).
+    req_2: "OVERALL Verify: Ensure sshd MACs are configured. Rationale: PASS when req_1=PASS, FAIL otherwise."
 
   tasks:
     - name: Initialize data variables
@@ -18,14 +18,13 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
-    # Requirement 1: Check that the SSH daemon's configured MACs do not include any weak MACs
-    - name: Req 1 - Check for weak SSH MACs
-      shell: !unsafe |
+    # Requirement 1: Verify that none of the weak MAC algorithms are configured
+    - name: "Req 1 - Check for weak MAC algorithms in sshd configuration"
+      shell: |
+        {% raw %}
         sshd -T | grep -Pi -- 'macs\h+([^#\n\r]+,)?(hmac-md5|hmac-md5-96|hmac-ripemd160|hmac-sha1-96|umac-64@openssh\.com|hmac-md5-etm@openssh\.com|hmac-md5-96-etm@openssh\.com|hmac-ripemd160-etm@openssh\.com|hmac-sha1-96-etm@openssh\.com|umac-64-etm@openssh\.com|umac-128-etm@openssh\.com)\b'
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -34,116 +33,32 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for weak SSH MACs"
+        task_1_name: "Check for weak MAC algorithms in sshd configuration"
         task_1_cmd: |
           sshd -T | grep -Pi -- 'macs\h+([^#\n\r]+,)?(hmac-md5|hmac-md5-96|hmac-ripemd160|hmac-sha1-96|umac-64@openssh\.com|hmac-md5-etm@openssh\.com|hmac-md5-96-etm@openssh\.com|hmac-ripemd160-etm@openssh\.com|hmac-sha1-96-etm@openssh\.com|umac-64-etm@openssh\.com|umac-128-etm@openssh\.com)\b'
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when no weak MACs are configured (empty output), FAIL when any weak MAC is found"
+        rationale_1: "{{ ('PASS: No weak MAC algorithms found in sshd configuration' if (result_1.stdout | default('') | trim == '') else 'FAIL: Found weak MAC algorithm(s) in sshd configuration') | trim }}"
 
-    # Requirement 2: Verify the system has been patched for CVE-2023-48795
-    # Only execute if weak MACs were found in Requirement 1
-    - name: Req 2 - Check patch status for CVE-2023-48795
-      shell: !unsafe |
-        # Check OpenSSH version to determine if patched for CVE-2023-48795
-        # Vulnerable versions: OpenSSH < 9.6p1
-        # This is a simplified check - actual patch status may depend on vendor backports
-        sshd -V 2>&1 | head -1 | grep -o 'OpenSSH_[0-9]\+\.[0-9]\+[^, ]*' || echo "Version check failed"
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: data_1 | default('') | trim != ''
-
-    - name: Store requirement 2 details
+    # Requirement 2: OVERALL Verify - Ensure sshd MACs are configured
+    - name: "Req 2 - Overall verification of sshd MAC configuration"
       set_fact:
-        task_2_name: "Check patch status for CVE-2023-48795"
-        task_2_cmd: |
-          sshd -V 2>&1 | head -1 | grep -o 'OpenSSH_[0-9]\+\\.[0-9]\+[^, ]*' || echo 'Version check failed'
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% set version_output = result_2.stdout | default('') | trim %}
-          {% if version_output == '' or version_output == 'Version check failed' %}
-            UNKNOWN
-          {% else %}
-            {% set version_match = version_output | regex_search('OpenSSH_([0-9]+)\.([0-9]+)(p([0-9]+))?') %}
-            {% if version_match %}
-              {% set major = version_match[1] | int %}
-              {% set minor = version_match[2] | int %}
-              {% set patch = version_match[4] | default('0') | int %}
-              {% if major > 9 or (major == 9 and minor > 6) or (major == 9 and minor == 6 and patch >= 1) %}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% else %}
-              UNKNOWN
-            {% endif %}
-          {% endif %}
-        rationale_2: "PASS when OpenSSH version is 9.6p1 or higher (patched), FAIL when version is vulnerable to CVE-2023-48795, UNKNOWN when version cannot be determined"
-      when: data_1 | default('') | trim != ''
+        task_2_name: "Overall verification of sshd MAC configuration"
+        task_2_cmd: "Derived from requirement 1 status"
+        task_2_rc: 0
+        data_2: "Overall status based on requirement 1"
+        status_2: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS: sshd MACs are properly configured (no weak MACs found)' if (status_1 | default('FAIL') | trim == 'PASS') else 'FAIL: sshd MACs are not properly configured (weak MACs found)') | trim }}"
 
-    # Requirement 3: OVERALL Verify: Ensure sshd MACs are configured
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Combined status from requirements 1 and 2"
-        status_3: >-
-          {% if data_1 | default('') | trim == '' %}
-            PASS
-          {% else %}
-            {% if status_2 | default('UNKNOWN') | trim == 'PASS' %}
-              PASS
-            {% elif status_2 | default('UNKNOWN') | trim == 'FAIL' %}
-              FAIL
-            {% else %}
-              UNKNOWN
-            {% endif %}
-          {% endif %}
-        rationale_3: >-
-          {% if data_1 | default('') | trim == '' %}
-            PASS - no weak MACs found, no further audit steps required per audit procedure
-          {% else %}
-            {% if status_2 | default('UNKNOWN') | trim == 'PASS' %}
-              PASS - weak MACs found but system is patched for CVE-2023-48795
-            {% elif status_2 | default('UNKNOWN') | trim == 'FAIL' %}
-              FAIL - weak MACs found and system is unpatched for CVE-2023-48795
-            {% else %}
-              UNKNOWN - weak MACs found but patch status cannot be determined
-            {% endif %}
-          {% endif %}
-      when: data_1 | default('') | trim != ''
-
-    # Set default values for requirements 2 and 3 when they were not executed
-    - name: Set default values for skipped requirements
-      set_fact:
-        task_2_name: "Not executed - no weak MACs found"
-        task_2_cmd: "N/A"
-        task_2_rc: -1
-        data_2: "No weak MACs found, requirement skipped per audit procedure"
-        status_2: "NA"
-        rationale_2: "Skipped - no weak MACs found, no further audit steps required per audit procedure"
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "No weak MACs found"
-        status_3: "PASS"
-        rationale_3: "PASS - no weak MACs found, no further audit steps required per audit procedure"
-      when: data_1 | default('') | trim == ''
-
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.6"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -162,16 +77,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

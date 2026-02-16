@@ -1,0 +1,114 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_checkpoint: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.1.1
+    req_1: Check that /tmp is mounted as a separate filesystem
+    req_2: Check that the tmp.mount service is enabled to mount /tmp at boot
+    req_3: 'OVERALL Verify: Ensure /tmp is a separate partition'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    data_3: ""
+    status_3: "UNKNOWN"
+    rationale_3: "Not evaluated"
+
+- name: Req 1 - Check if /tmp is mounted as separate filesystem
+  shell: findmnt -kn /tmp
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check /tmp mount status"
+    task_1_cmd: "findmnt -kn /tmp"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if result_1.stdout | default('') | trim != '' else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when command returns output showing a mount point for /tmp' if result_1.stdout | default('') | trim != '' else 'FAIL: No output returned or /tmp is not a separate mount') | trim }}"
+
+- name: Req 2 - Check if tmp.mount service is enabled
+  shell: systemctl is-enabled tmp.mount
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check tmp.mount service status"
+    task_2_cmd: "systemctl is-enabled tmp.mount"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: "{{ ('PASS' if result_2.stdout | default('') | trim in ['generated', 'enabled', 'static'] else 'FAIL') | trim }}"
+    rationale_2: "{{ ('PASS when output is generated, enabled, or static' if result_2.stdout | default('') | trim in ['generated', 'enabled', 'static'] else 'FAIL: Output is masked, disabled, or service does not exist') | trim }}"
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Overall verification"
+    task_3_cmd: "N/A - Combined check"
+    task_3_rc: 0
+    data_3: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}"
+    status_3: "{{ ('PASS' if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' else 'FAIL') | trim }}"
+    rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS' if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' else 'FAIL: One or more requirements failed') | trim }}"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 1.1.2.1.1"
+    - "========================================================"
+    - "Reference: {{ cis_checkpoint }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 }}"
+    - "  Status: {{ status_1 }}"
+    - "  Rationale: {{ rationale_1 }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name }}"
+    - "  Command: {{ task_2_cmd }}"
+    - "  Exit code: {{ task_2_rc }}"
+    - "  Data: {{ data_2 }}"
+    - "  Status: {{ status_2 }}"
+    - "  Rationale: {{ rationale_2 }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name }}"
+    - "  Command: {{ task_3_cmd }}"
+    - "  Exit code: {{ task_3_rc }}"
+    - "  Data: {{ data_3 }}"
+    - "  Status: {{ status_3 }}"
+    - "  Rationale: {{ rationale_3 }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 }}"
+    - "  Rationale: {{ rationale_3 }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_1_1_2_1_1'': status_3 | trim }] }}'

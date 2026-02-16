@@ -2,16 +2,22 @@
 - name: Data Collection for CIS 5.1.17
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.17"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.17"
     req_1: |
-      Verify sshd MaxStartups configuration using command: `sshd -T | awk '$1 ~ /^\s*maxstartups/{split($2, a, \":\");{if(a[1] > 10 || a[2] > 30 || a[3] > 60) print $0}}'`. Rationale: PASS when the command returns NO OUTPUT (indicating MaxStartups is 10:30:60 or more restrictive), FAIL when any output is returned (indicating a value is less restrictive than 10:30:60).
-    req_2: "OVERALL Verify: Ensure sshd MaxStartups is configured. Rationale: PASS when req_1=PASS, FAIL otherwise."
+      Verify sshd MaxStartups configuration using command: `sshd -T | awk '$1 ~ /^\s*maxstartups/{split($2, a, \":\");{if(a[1] > 10 || a[2] > 30 || a[3] > 60) print $0}}'`
+    req_2: "OVERALL Verify: Ensure sshd MaxStartups is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
+        data_1: ""
+        data_2: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -19,12 +25,10 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify sshd MaxStartups configuration using command: `sshd -T | awk '$1 ~ /^\s*maxstartups/{split($2, a, ":");{if(a[1] > 10 || a[2] > 30 || a[3] > 60) print $0}}'`. Rationale: PASS when the command returns NO OUTPUT (indicating MaxStartups is 10:30:60 or more restrictive), FAIL when any output is returned (indicating a value is less restrictive than 10:30:60).
+    # Requirement 1: Verify sshd MaxStartups configuration
     - name: Req 1 - Check MaxStartups configuration
       shell: |
-        {% raw %}
         sshd -T | awk '$1 ~ /^\s*maxstartups/{split($2, a, ":");{if(a[1] > 10 || a[2] > 30 || a[3] > 60) print $0}}'
-        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -39,25 +43,26 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns NO OUTPUT (MaxStartups is 10:30:60 or more restrictive), FAIL when any output is returned (value is less restrictive)' if (result_1.stdout | default('') | trim == '') else 'FAIL: Output returned indicating MaxStartups is less restrictive than 10:30:60') | trim }}"
+        rationale_1: "{{ ('PASS: Command returned no output (MaxStartups is 10:30:60 or more restrictive)' if (result_1.stdout | default('') | trim == '') else 'FAIL: Command returned output indicating MaxStartups is less restrictive than 10:30:60') | trim }}"
 
-    # Requirement 2: OVERALL Verify: Ensure sshd MaxStartups is configured. Rationale: PASS when req_1=PASS, FAIL otherwise.
-    - name: Store requirement 2 details
+    # Requirement 2: OVERALL Verify - Ensure sshd MaxStartups is configured
+    - name: Req 2 - Overall verification
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A (based on requirement 1 result)"
+        task_2_name: "Overall verification based on requirement 1"
+        task_2_cmd: "N/A (evaluates status of requirement 1)"
         task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 | default('UNKNOWN') }}"
-        status_2: "{{ status_1 | default('FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS' if (status_1 | default('FAIL') | trim == 'PASS') else 'FAIL: req_1 is not PASS') | trim }}"
+        data_2: "Based on requirement 1 status: {{ status_1 | default('UNKNOWN') }}"
+        status_2: "{{ status_1 | default('UNKNOWN') }}"
+        rationale_2: "{{ ('PASS: MaxStartups is properly configured (10:30:60 or more restrictive)' if (status_1 | default('UNKNOWN') == 'PASS') else 'FAIL: MaxStartups is not properly configured') | trim }}"
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.17"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -78,6 +83,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('FAIL') | trim }}"
-          - "  Rationale: {{ ('Overall PASS when all requirements PASS' if (status_2 | default('FAIL') | trim == 'PASS') else 'Overall FAIL: requirement 2 is not PASS') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: {{ ('OVERALL PASS: MaxStartups is properly configured per CIS requirement' if (status_2 | default('UNKNOWN') == 'PASS') else 'OVERALL FAIL: MaxStartups is not properly configured per CIS requirement') | trim }}"
           - "========================================================"

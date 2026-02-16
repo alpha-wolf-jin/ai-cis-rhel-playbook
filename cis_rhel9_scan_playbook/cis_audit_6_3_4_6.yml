@@ -1,34 +1,29 @@
 ---
-- name: Data Collection for CIS 6.3.4.6
+- name: Data Collection for CIS Checkpoint 6.3.4.6
   hosts: all
   become: yes
   gather_facts: false
   vars:
     cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.4.6"
     req_1: |
-      Verify audit configuration files are owned by root user using command: find /etc/audit/ -type f \( -name '*.conf' -o -name '*.rules' \) ! -user root
-    req_2: "OVERALL Verify: Ensure audit configuration files owner is configured"
+      Verify audit configuration files in /etc/audit/ have correct ownership using command: find /etc/audit/ -type f \( -name '*.conf' -o -name '*.rules' \) ! -user root. Rationale: PASS when command returns no output (no files are owned by a user other than root), FAIL when any file is listed.
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: ""
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        task_2_name: "Not executed"
-        task_2_cmd: "N/A"
-        task_2_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
 
-    # Requirement 1: Verify audit configuration files are owned by root user
-    - name: Req 1 - Check audit config file ownership
+    # Requirement 1: Check audit configuration files ownership
+    - name: "Req 1 - Check audit configuration files ownership"
       shell: |
+        {% raw %}
         find /etc/audit/ -type f \( -name '*.conf' -o -name '*.rules' \) ! -user root
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -37,23 +32,13 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Req 1 - Check audit config file ownership"
+        task_1_name: "Check audit configuration files ownership"
         task_1_cmd: |
           find /etc/audit/ -type f \( -name '*.conf' -o -name '*.rules' \) ! -user root
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns no output (no files found not owned by root), FAIL when any output is returned (files found not owned by root)' if (result_1.stdout | default('') | trim == '') else 'FAIL: Found files not owned by root') | trim }}"
-
-    # Requirement 2: OVERALL Verify - Ensure audit configuration files owner is configured
-    - name: Req 2 - Overall verification
-      set_fact:
-        task_2_name: "Req 2 - Overall verification"
-        task_2_cmd: "N/A - Overall assessment"
-        task_2_rc: 0
-        data_2: "N/A"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | trim == 'PASS') else 'FAIL: req_1 status is ' + (status_1 | default('UNKNOWN') | trim)) | trim }}"
+        rationale_1: "{{ ('PASS: No audit configuration files found with non-root ownership' if (result_1.stdout | default('') | trim == '') else 'FAIL: Found audit configuration files not owned by root user') | trim }}"
 
     # Final report
     - name: Generate compliance report
@@ -73,16 +58,8 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | trim }}"
-          - "  Rationale: {{ ('PASS when all requirements pass, FAIL if any requirement fails' if (status_2 | trim == 'PASS') else 'FAIL: One or more requirements failed') | trim }}"
+          - "  Result: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ ('PASS when req_1=PASS, FAIL otherwise. Result: ' + status_1 | default('UNKNOWN')) | trim }}"
           - "========================================================"

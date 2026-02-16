@@ -1,10 +1,10 @@
 ---
-- name: Data Collection for CIS 1.1.2.7.2
+- name: Data Collection for CIS Checkpoint 1.1.2.7.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.2.7.2"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.7.2"
     req_1: "Check if a separate partition exists for /var/log/audit"
     req_2: "IF a separate partition exists, verify the nodev mount option is set"
     req_3: "OVERALL Verify: Ensure nodev option set on /var/log/audit partition"
@@ -18,13 +18,10 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
-    # Requirement 1: Check if a separate partition exists for /var/log/audit
-    - name: Req 1 - Check if separate partition exists for /var/log/audit
-      shell: findmnt -kn /var/log/audit
+    - name: "Req 1 - Check if /var/log/audit has separate partition"
+      shell: |
+        findmnt /var/log/audit
       args:
         executable: /bin/bash
       register: result_1
@@ -33,86 +30,70 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if separate partition exists for /var/log/audit"
-        task_1_cmd: "findmnt -kn /var/log/audit"
+        task_1_name: "Check if /var/log/audit has separate partition"
+        task_1_cmd: "findmnt /var/log/audit"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the command returns output (indicating a separate partition exists), FAIL when no output is returned (indicating no separate partition, making the check N/A)' if (result_1.stdout | default('') | trim != '') else 'FAIL when no output is returned (indicating no separate partition, making the check N/A)') | trim }}"
+        status_1: "{{ ('PASS' if result_1.stdout | default('') | trim != '' else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS: Separate partition exists (output shows filesystem, device, type, and options)' if result_1.stdout | default('') | trim != '' else 'FAIL: No separate partition (no output returned)') | trim }}"
 
-    # Requirement 2: IF a separate partition exists, verify the nodev mount option is set
-    - name: Req 2 - Verify nodev mount option on /var/log/audit partition
-      shell: findmnt -kn /var/log/audit | grep -v nodev
+    - name: "Req 2 - Verify nodev option set on /var/log/audit partition"
+      shell: |
+        findmnt -kn /var/log/audit | grep -v nodev
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'PASS'
+      when: result_1.stdout | default('') | trim != ''
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify nodev mount option on /var/log/audit partition"
+        task_2_name: "Verify nodev option set on /var/log/audit partition"
         task_2_cmd: "findmnt -kn /var/log/audit | grep -v nodev"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            {% if result_2.stdout | default('') | trim == '' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
+          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
             NA
+          {% else %}
+            {{ ('PASS' if result_2.stdout | default('') | trim == '' else 'FAIL') | trim }}
           {% endif %}
         rationale_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            {% if result_2.stdout | default('') | trim == '' %}
-              PASS when the command returns NO output (meaning 'nodev' is present in the mount options)
-            {% else %}
-              FAIL when the command returns any output (meaning 'nodev' is NOT present)
-            {% endif %}
+          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
+            NA: No separate partition to check (req_1 FAILED)
+          {% elif result_2.stdout | default('') | trim == '' %}
+            PASS: nodev option is set (command returned no output)
           {% else %}
-            NA - No separate partition exists, requirement not applicable
+            FAIL: nodev option is missing (command returned output)
           {% endif %}
 
-    # Requirement 3: OVERALL Verify
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Logical check"
-        task_3_rc: 0
-        data_3: "Req1: {{ status_1 }}, Req2: {{ status_2 }}"
-        status_3: >-
-          {% if status_1 | trim == 'FAIL' %}
+        req_3_result: >-
+          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
             PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+          {% elif status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
             PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL
           {% else %}
-            UNKNOWN
+            FAIL
           {% endif %}
         rationale_3: >-
-          {% if status_1 | trim == 'FAIL' %}
-            PASS when req_1=FAIL (no separate partition, check N/A)
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS when req_1=PASS AND req_2=PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL when req_1=PASS AND req_2=FAIL
+          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
+            PASS: No separate partition exists, so nothing to check
+          {% elif status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+            PASS: Separate partition exists AND nodev option is set
           {% else %}
-            UNKNOWN - Cannot determine overall status
+            FAIL: Separate partition exists BUT nodev option is missing
           {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.7.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.7.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -132,15 +113,15 @@
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Task: Overall verification"
+          - "  Command: N/A (logical check)"
+          - "  Exit code: N/A"
+          - "  Data: N/A"
+          - "  Status: {{ req_3_result | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Result: {{ req_3_result | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

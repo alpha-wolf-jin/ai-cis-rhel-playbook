@@ -1,0 +1,59 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.1
+    req_1: Check if GNOME Display Manager (gdm) package is installed
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+
+    # Requirement 1: Check if GNOME Display Manager (gdm) package is installed
+- name: Req 1 - Check if gdm package is installed
+  shell: rpm -q gdm
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check if gdm package is installed"
+    task_1_cmd: "rpm -q gdm"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if result_1.stdout | default('') | trim == 'package gdm is not installed' else 'FAIL') | trim }}"
+    rationale_1: '{{ ("PASS when output is exactly package gdm is not installed, FAIL otherwise" if result_1.stdout | default("") | trim == "package gdm is not installed" else "FAIL: Expected package gdm is not installed, got " + (result_1.stdout | default("") | trim)) | trim }}'
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 1.8.1"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.1"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_1 | trim }}"
+    - "  Rationale: {{ 'PASS when req_1=PASS, FAIL otherwise' if status_1 | trim == 'PASS' else 'FAIL: Requirement 1 failed' | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_1_8_1'': status_1 | trim }] }}'

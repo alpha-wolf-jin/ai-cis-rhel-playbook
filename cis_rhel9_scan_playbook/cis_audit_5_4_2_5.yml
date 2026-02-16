@@ -1,11 +1,12 @@
 ---
-- name: Data Collection for CIS checkpoint 5.4.2.5
+- name: Data Collection for CIS 5.4.2.5 - Ensure root path integrity
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.5"
-    req_1: "Audit CIS checkpoint: 5.4.2.5 - Ensure root path integrity"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.5"
+    req_1: "Run the provided CIS audit script to verify Ensure root path integrity"
+    req_2: "OVERALL Verify: Ensure root path integrity"
 
   tasks:
     - name: Initialize data variables
@@ -13,10 +14,11 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
 
+    # Requirement 1: Run the provided CIS audit script to verify Ensure root path integrity
     - name: Req 1 - Execute CIS audit script for root path integrity
       copy:
         dest: "/tmp/cis_audit_5.4.2.5.sh"
@@ -70,19 +72,30 @@
     - name: Store requirement 1 details
       set_fact:
         task_1_name: "Execute CIS audit script for root path integrity"
-        task_1_cmd: "/tmp/cis_audit_5.4.2.5.sh"
+        task_1_cmd: "Execute /tmp/cis_audit_5.4.2.5.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if ('*** PASS ***' in result_1.stdout) else 'FAIL') | trim }}"
-        rationale_1: "PASS when script output shows '*** PASS ***' or indicates compliance, FAIL when script shows '** FAIL **' or indicates non-compliance"
+        status_1: "{{ 'PASS' if '*** PASS ***' in result_1.stdout | default('') else 'FAIL' }}"
+        rationale_1: "{{ 'PASS when script output shows *** PASS ***, FAIL otherwise' | trim }}"
 
+    # Requirement 2: OVERALL Verify: Ensure root path integrity
+    - name: Req 2 - Overall verification of root path integrity
+      set_fact:
+        task_2_name: "Overall verification of root path integrity"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: "N/A"
+        status_2: "{{ 'PASS' if status_1 == 'PASS' else 'FAIL' }}"
+        rationale_2: "{{ 'PASS when req_1=PASS, FAIL otherwise' | trim }}"
+
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.4.2.5"
           - "========================================================"
-          - "Reference: {{ cis_checkpoint }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.5"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -93,8 +106,16 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_1 | trim }}"
-          - "  Rationale: PASS when req_1=PASS, FAIL otherwise"
+          - "  Result: {{ status_2 | trim }}"
+          - '  Rationale: {{ "PASS when req_1=PASS, FAIL otherwise" | trim }}'
           - "========================================================"

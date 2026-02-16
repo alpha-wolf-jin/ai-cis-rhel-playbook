@@ -1,18 +1,12 @@
 ---
-# CIS RHEL 9 Benchmark v4.0.0, checkpoint 1.8.4
 - name: Data Collection for CIS 1.8.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.8.4"
-    req_1: "Check if GNOME Desktop Manager is installed using package manager"
-    req_2: "If GDM is installed, locate the dconf key file containing idle-delay setting"
-    req_3: "Extract the idle-delay value from the key file and verify it is set"
-    req_4: "Extract the lock-delay value from the key file and verify it is set"
-    req_5: "Verify the dconf profile referencing the database exists in /etc/dconf/profile/*"
-    req_6: "Verify the dconf profile database file exists at /etc/dconf/db/<profile_name>"
-    req_7: "OVERALL Verify: Ensure GDM screen locks when the user is idle"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.4"
+    req_1: "Run the provided CIS audit script to verify Ensure GDM screen locks when the user is idle"
+    req_2: "OVERALL Verify: Ensure GDM screen locks when the user is idle"
 
   tasks:
     - name: Initialize data variables
@@ -23,33 +17,17 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
-        task_6_name: "Not executed"
-        task_6_cmd: "N/A"
-        task_6_rc: -1
-        task_7_name: "Not executed"
-        task_7_cmd: "N/A"
-        task_7_rc: -1
-      ignore_errors: true
 
-    # Requirement 1: Check if GNOME Desktop Manager is installed using package manager
-    - name: Req 1 - Execute CIS audit script for GDM package check
+    # Requirement 1: Run the provided CIS audit script to verify Ensure GDM screen locks when the user is idle
+    - name: Req 1 - Create temporary CIS audit script
       copy:
-        dest: "/tmp/cis_audit_1.8.4_req1.sh"
+        dest: "/tmp/cis_audit_1.8.4.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           {
-             # Check if GNMOE Desktop Manager is installed.  If package isn't installed, recommendation is Not Applicable\n
+             # Check if GNOME Desktop Manager is installed.  If package isn't installed, recommendation is Not Applicable
              # determine system's package manager
              l_pkgoutput=""
              if command -v dpkg-query > /dev/null 2>&1; then
@@ -62,12 +40,59 @@
              for l_pn in $l_pcl; do
                 $l_pq "$l_pn" > /dev/null 2>&1 && l_pkgoutput="$l_pkgoutput\n - Package: \"$l_pn\" exists on the system\n - checking configuration"
              done
-             # Output results
+             # Check configuration (If applicable)
              if [ -n "$l_pkgoutput" ]; then
-                echo "GDM_INSTALLED"
-                echo "$l_pkgoutput"
+                l_output="" l_output2=""
+                l_idmv="900" # Set for max value for idle-delay in seconds
+                l_ldmv="5" # Set for max value for lock-delay in seconds
+                # Look for idle-delay to determine profile in use, needed for remaining tests
+                l_kfile="$(grep -Psril '^\h*idle-delay\h*=\h*uint32\h+\d+\b' /etc/dconf/db/*/)" # Determine file containing idle-delay key
+                if [ -n "$l_kfile" ]; then
+                   # set profile name (This is the name of a dconf database)
+                   l_profile="$(awk -F'/' '{split($(NF-1),a,".");print a[1]}' <<< "$l_kfile")" #Set the key profile name
+                   l_pdbdir="/etc/dconf/db/$l_profile.d" # Set the key file dconf db directory
+                   # Confirm that idle-delay exists, includes unit32, and value is between 1 and max value for idle-delay
+                   l_idv="$(awk -F 'uint32' '/idle-delay/{print $2}' "$l_kfile" | xargs)"
+                   if [ -n "$l_idv" ]; then
+                      [ "$l_idv" -gt "0" -a "$l_idv" -le "$l_idmv" ] && l_output="$l_output\n - The \"idle-delay\" option is set to \"$l_idv\" seconds in \"$l_kfile\""
+                      [ "$l_idv" = "0" ] && l_output2="$l_output2\n - The \"idle- delay\" option is set to \"$l_idv\" (disabled) in \"$l_kfile\""
+                      [ "$l_idv" -gt "$l_idmv" ] && l_output2="$l_output2\n - The \"idle-delay\" option is set to \"$l_idv\" seconds (greater than $l_idmv) in \"$l_kfile\""
+                   else
+                      l_output2="$l_output2\n - The \"idle-delay\" option is not set in \"$l_kfile\""
+                   fi
+                   # Confirm that lock-delay exists, includes unit32, and value is between 0 and max value for lock-delay
+                   l_ldv="$(awk -F 'uint32' '/lock-delay/{print $2}' "$l_kfile" | xargs)"
+                   if [ -n "$l_ldv" ]; then
+                      [ "$l_ldv" -ge "0" -a "$l_ldv" -le "$l_ldmv" ] && l_output="$l_output\n - The \"lock-delay\" option is set to \"$l_ldv\" seconds in \"$l_kfile\""
+                      [ "$l_ldv" -gt "$l_ldmv" ] && l_output2="$l_output2\n - The \"lock-delay\" option is set to \"$l_ldv\" seconds (greater than $l_ldmv) in \"$l_kfile\""
+                   else
+                      l_output2="$l_output2\n - The \"lock-delay\" option is not set in \"$l_kfile\""
+                   fi
+                   # Confirm that dconf profile exists
+                   if grep -Psq "^\h*system-db:$l_profile" /etc/dconf/profile/*; then
+                      l_output="$l_output\n - The \"$l_profile\" profile exists"
+                   else
+                      l_output2="$l_output2\n - The \"$l_profile\" doesn't exist"
+                   fi
+                   # Confirm that dconf profile database file exists
+                   if [ -f "/etc/dconf/db/$l_profile" ]; then
+                      l_output="$l_output\n - The \"$l_profile\" profile exists in the dconf database"
+                   else
+                      l_output2="$l_output2\n - The \"$l_profile\" profile doesn't exist in the dconf database"
+                   fi
+                else
+                   l_output2="$l_output2\n - The \"idle-delay\" option doesn't exist, remaining tests skipped"
+                fi
              else
-                echo "GDM_NOT_INSTALLED"
+                l_output="$l_output\n - GNOME Desktop Manager package is not installed on the system\n  - Recommendation is not applicable"
+             fi
+             # Report results. If no failures output in l_output2, we pass
+             [ -n "$l_pkgoutput" ] && echo -e "\n$l_pkgoutput"
+             if [ -z "$l_output2" ]; then
+                echo -e "\n- Audit Result:\n  ** PASS **\n$l_output\n"
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
+                [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
              fi
           }
           {% endraw %}
@@ -75,7 +100,7 @@
       ignore_errors: true
 
     - name: Req 1 - Execute the audit script
-      shell: "/tmp/cis_audit_1.8.4_req1.sh"
+      shell: "/tmp/cis_audit_1.8.4.sh"
       args:
         executable: /bin/bash
       register: result_1
@@ -84,270 +109,56 @@
 
     - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_1.8.4_req1.sh"
+        path: "/tmp/cis_audit_1.8.4.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if GDM package is installed"
-        task_1_cmd: "Execute CIS audit script for GDM package check"
+        task_1_name: "Execute CIS audit script for GDM screen lock"
+        task_1_cmd: "/tmp/cis_audit_1.8.4.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout is search('GDM_NOT_INSTALLED')) else 'FAIL') | trim }}"
-        rationale_1: "PASS when GDM package (gdm or gdm3) is NOT installed (recommendation not applicable), FAIL when GDM is installed and subsequent checks are required"
-        gdm_installed: "{{ result_1.stdout is search('GDM_INSTALLED') }}"
-        pkg_output: "{{ result_1.stdout | default('') }}"
-      ignore_errors: true
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance') | trim }}"
 
-    # Requirement 2: If GDM is installed, locate the dconf key file containing idle-delay setting
-    - name: Req 2 - Execute CIS audit script for idle-delay key file location
-      copy:
-        dest: "/tmp/cis_audit_1.8.4_req2.sh"
-        mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          {
-             # Look for idle-delay to determine profile in use, needed for remaining tests
-             l_kfile="$(grep -Psril '^\h*idle-delay\h*=\h*uint32\h+\d+\b' /etc/dconf/db/*/)" # Determine file containing idle-delay key
-             if [ -n "$l_kfile" ]; then
-                # set profile name (This is the name of a dconf database)
-                l_profile="$(awk -F'/' '{split($(NF-1),a,".");print a[1]}' <<< "$l_kfile")" #Set the key profile name
-                echo "KEY_FILE_FOUND:$l_kfile"
-                echo "PROFILE_NAME:$l_profile"
-             else
-                echo "KEY_FILE_NOT_FOUND"
-             fi
-          }
-          {% endraw %}
-      register: script_create_2
-      ignore_errors: true
-      when: gdm_installed
-
-    - name: Req 2 - Execute the audit script
-      shell: "/tmp/cis_audit_1.8.4_req2.sh"
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: gdm_installed
-
-    - name: Req 2 - Remove temporary audit script
-      file:
-        path: "/tmp/cis_audit_1.8.4_req2.sh"
-        state: absent
-      ignore_errors: true
-      when: gdm_installed
-
-    - name: Store requirement 2 details when GDM installed
+    # Requirement 2: OVERALL Verify: Ensure GDM screen locks when the user is idle
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Locate dconf key file with idle-delay setting"
-        task_2_cmd: "Execute CIS audit script for idle-delay key file location"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output is search('KEY_FILE_FOUND') %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_2: "PASS when a file path is returned (idle-delay key exists), FAIL when no output (idle-delay key not found)"
-        key_file: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output is search('KEY_FILE_FOUND:') %}
-            {{ output.split('KEY_FILE_FOUND:')[1].split('\n')[0] | trim }}
-          {% else %}
-            ''
-          {% endif %}
-        profile_name: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output is search('PROFILE_NAME:') %}
-            {{ output.split('PROFILE_NAME:')[1].split('\n')[0] | trim }}
-          {% else %}
-            ''
-          {% endif %}
-      ignore_errors: true
-      when: gdm_installed
-
-    - name: Store requirement 2 details when GDM not installed
-      set_fact:
-        task_2_name: "Locate dconf key file with idle-delay setting"
-        task_2_cmd: "N/A - GDM not installed"
+        task_2_name: "Overall verification based on requirement 1"
+        task_2_cmd: "N/A"
         task_2_rc: 0
-        data_2: "GDM not installed - check not applicable"
-        status_2: "NA"
-        rationale_2: "GDM not installed - check not applicable"
-        key_file: ""
-        profile_name: ""
-      ignore_errors: true
-      when: not gdm_installed
+        data_2: "N/A"
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
 
-    # Requirement 3: Extract the idle-delay value from the key file and verify it is set
-    - name: Req 3 - Execute CIS audit script for idle-delay verification
-      copy:
-        dest: "/tmp/cis_audit_1.8.4_req3.sh"
-        mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          {
-             l_idmv="900" # Set for max value for idle-delay in seconds
-             l_output="" l_output2=""
-             
-             # Confirm that idle-delay exists, includes unit32, and value is between 1 and max value for idle-delay
-             l_idv="$(awk -F 'uint32' '/idle-delay/{print $2}' "$1" | xargs)"
-             if [ -n "$l_idv" ]; then
-                [ "$l_idv" -gt "0" -a "$l_idv" -le "$l_idmv" ] && l_output="$l_output\n - The \"idle-delay\" option is set to \"$l_idv\" seconds in \"$1\""
-                [ "$l_idv" = "0" ] && l_output2="$l_output2\n - The \"idle-delay\" option is set to \"$l_idv\" (disabled) in \"$1\""
-                [ "$l_idv" -gt "$l_idmv" ] && l_output2="$l_output2\n - The \"idle-delay\" option is set to \"$l_idv\" seconds (greater than $l_idmv) in \"$1\""
-                echo "IDLE_DELAY_VALUE:$l_idv"
-                echo "IDLE_OUTPUT:$l_output"
-                echo "IDLE_OUTPUT2:$l_output2"
-             else
-                l_output2="$l_output2\n - The \"idle-delay\" option is not set in \"$1\""
-                echo "IDLE_DELAY_VALUE:NOT_SET"
-                echo "IDLE_OUTPUT2:$l_output2"
-             fi
-          }
-          {% endraw %}
-      register: script_create_3
-      ignore_errors: true
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Req 3 - Execute the audit script
-      shell: "/tmp/cis_audit_1.8.4_req3.sh '{{ key_file }}'"
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      changed_when: false
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Req 3 - Remove temporary audit script
-      file:
-        path: "/tmp/cis_audit_1.8.4_req3.sh"
-        state: absent
-      ignore_errors: true
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Store requirement 3 details when applicable
-      set_fact:
-        task_3_name: "Extract and verify idle-delay value"
-        task_3_cmd: "Execute CIS audit script for idle-delay verification"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >-
-          {% set output = result_3.stdout | default('') | trim %}
-          {% if output is search('IDLE_DELAY_VALUE:') %}
-            {% set idle_line = output.split('IDLE_DELAY_VALUE:')[1].split('\n')[0] | trim %}
-            {% if idle_line == 'NOT_SET' %}
-              FAIL
-            {% else %}
-              {% set idle_int = idle_line | int %}
-              {% if idle_int > 0 and idle_int <= 900 %}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% endif %}
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: "PASS when idle-delay value is an integer greater than 0 and less than or equal to 900 seconds, FAIL when value is 0 (disabled), greater than 900, or not set"
-        idle_delay_value: >-
-          {% set output = result_3.stdout | default('') | trim %}
-          {% if output is search('IDLE_DELAY_VALUE:') %}
-            {{ output.split('IDLE_DELAY_VALUE:')[1].split('\n')[0] | trim }}
-          {% else %}
-            ''
-          {% endif %}
-      ignore_errors: true
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Store requirement 3 details when not applicable
-      set_fact:
-        task_3_name: "Extract and verify idle-delay value"
-        task_3_cmd: "N/A - GDM not installed or key file not found"
-        task_3_rc: 0
-        data_3: "Check not applicable"
-        status_3: "NA"
-        rationale_3: "GDM not installed or key file not found - check not applicable"
-        idle_delay_value: ""
-      ignore_errors: true
-      when: not gdm_installed or key_file | trim == ''
-
-    # Requirement 4: Extract the lock-delay value from the key file and verify it is set
-    - name: Req 4 - Execute CIS audit script for lock-delay verification
-      copy:
-        dest: "/tmp/cis_audit_1.8.4_req4.sh"
-        mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          {
-             l_ldmv="5" # Set for max value for lock-delay in seconds
-             l_output="" l_output2=""
-             
-             # Confirm that lock-delay exists, includes unit32, and value is between 0 and max value for lock-delay
-             l_ldv="$(awk -F 'uint32' '/lock-delay/{print $2}' "$1" | xargs)"
-             if [ -n "$l_ldv" ]; then
-                [ "$l_ldv" -ge "0" -a "$l_ldv" -le "$l_ldmv" ] && l_output="$l_output\n - The \"lock-delay\" option is set to \"$l_ldv\" seconds in \"$1\""
-                [ "$l_ldv" -gt "$l_ldmv" ] && l_output2="$l_output2\n - The \"lock-delay\" option is set to \"$l_ldv\" seconds (greater than $l_ldmv) in \"$1\""
-                echo "LOCK_DELAY_VALUE:$l_ldv"
-                echo "LOCK_OUTPUT:$l_output"
-                echo "LOCK_OUTPUT2:$l_output2"
-             else
-                l_output2="$l_output2\n - The \"lock-delay\" option is not set in \"$1\""
-                echo "LOCK_DELAY_VALUE:NOT_SET"
-                echo "LOCK_OUTPUT2:$l_output2"
-             fi
-          }
-          {% endraw %}
-      register: script_create_4
-      ignore_errors: true
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Req 4 - Execute the audit script
-      shell: "/tmp/cis_audit_1.8.4_req4.sh '{{ key_file }}'"
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      changed_when: false
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Req 4 - Remove temporary audit script
-      file:
-        path: "/tmp/cis_audit_1.8.4_req4.sh"
-        state: absent
-      ignore_errors: true
-      when: gdm_installed and key_file | trim != ''
-
-    - name: Store requirement 4 details when applicable
-      set_fact:
-        task_4_name: "Extract and verify lock-delay value"
-        task_4_cmd: "Execute CIS audit script for lock-delay verification"
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: >-
-          {% set output = result_4.stdout | default('') | trim %}
-          {% if output is search('LOCK_DELAY_VALUE:') %}
-            {% set lock_line = output.split('LOCK_DELAY_VALUE:')[1].split('\n')[0] | trim %}
-            {% if lock_line == 'NOT_SET' %}
-              FAIL
-            {% else %}
-              {% set lock_int = lock_line | int %}
-              {% if lock_int >= 0 and lock_int <= 5 %}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% endif %}
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_4: "PASS when lock-delay value is an integer between 0 and 5 seconds (inclusive), FAIL when value is greater than 5 or not set"
-        lock
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.8.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "========================================================"

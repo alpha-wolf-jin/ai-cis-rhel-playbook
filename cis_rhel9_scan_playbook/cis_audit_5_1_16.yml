@@ -1,15 +1,13 @@
 ---
-- name: Data Collection for CIS 5.1.16
+- name: Data Collection for CIS 5.1.16 - Ensure sshd MaxAuthTries is configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.16"
-    req_1: "Check sshd MaxAuthTries in global configuration"
-    req_2: "Check sshd MaxAuthTries for specific user context (if Match blocks used)"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.16"
+    req_1: "Verify sshd MaxAuthTries in the default configuration"
+    req_2: "If Match blocks are used in the sshd configuration, for each relevant Match block, verify sshd MaxAuthTries"
     req_3: "OVERALL Verify: Ensure sshd MaxAuthTries is configured"
-    # Variable for test user as specified in audit procedure
-    test_user: "sshuser"
 
   tasks:
     - name: Initialize data variables
@@ -20,32 +18,13 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
+        task_3_name: "Generate compliance report"
         task_3_cmd: "N/A"
-        task_3_rc: -1
-        # Variable to track if Match blocks are used
-        match_blocks_used: "false"
-        # Initialize data_2 to prevent undefined variable error
-        data_2: ""
+        task_3_rc: 0
 
-    # First, check if Match blocks exist in sshd_config
-    - name: Check for Match blocks in sshd configuration
-      shell: |
-        grep -q "^Match" /etc/ssh/sshd_config
-      args:
-        executable: /bin/bash
-      register: match_blocks_check
-      ignore_errors: true
-      changed_when: false
-
-    - name: Set match_blocks_used fact
-      set_fact:
-        match_blocks_used: "{{ 'true' if match_blocks_check.rc == 0 else 'false' }}"
-
-    # Requirement 1: Check sshd MaxAuthTries in global configuration
-    - name: Req 1 - Check global sshd MaxAuthTries
-      shell: |
-        sshd -T | grep maxauthtries
+    # Requirement 1: Verify sshd MaxAuthTries in the default configuration
+    - name: Req 1 - Check default sshd MaxAuthTries configuration
+      shell: sshd -T | grep maxauthtries
       args:
         executable: /bin/bash
       register: result_1
@@ -54,105 +33,261 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global sshd MaxAuthTries"
+        task_1_name: "Check default sshd MaxAuthTries configuration"
         task_1_cmd: "sshd -T | grep maxauthtries"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        # FIX: Reference result_1.stdout directly instead of data_1
         status_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'maxauthtries 4' or output | regex_search('^maxauthtries [0-3]$') %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'maxauthtries 4' or output | regex_search('^maxauthtries [0-3]$') %}
-            PASS when output is maxauthtries 4 (or lower number based on site policy)
-          {% else %}
-            FAIL when output is not maxauthtries 4 or lower number
-          {% endif %}
-
-    # Requirement 2: Check sshd MaxAuthTries for specific user context (if Match blocks used)
-    - name: Req 2 - Check sshd MaxAuthTries with user context
-      shell: |
-        sshd -T -C user={{ test_user }} | grep maxauthtries
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: match_blocks_used == "true"
-
-    - name: Store requirement 2 details when Match blocks are used
-      set_fact:
-        task_2_name: "Check sshd MaxAuthTries with user context"
-        task_2_cmd: "sshd -T -C user={{ test_user }} | grep maxauthtries"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        # FIX: Reference result_2.stdout directly instead of data_2
-        status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == 'maxauthtries 4' or output | regex_search('^maxauthtries [0-3]$') %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == 'maxauthtries 4' or output | regex_search('^maxauthtries [0-3]$') %}
-            PASS when output is maxauthtries 4 (or lower number based on site policy)
-          {% else %}
-            FAIL when output is not maxauthtries 4 or lower number
-          {% endif %}
-      when: match_blocks_used == "true"
-
-    - name: Store requirement 2 details when no Match blocks are used
-      set_fact:
-        task_2_name: "Check sshd MaxAuthTries with user context"
-        task_2_cmd: "Not executed - No Match blocks in configuration"
-        task_2_rc: 0
-        data_2: "No Match blocks in sshd_config - check not required"
-        status_2: "NA"
-        rationale_2: "No Match blocks in sshd_config - check not required per audit procedure"
-      when: match_blocks_used == "false"
-
-    # Requirement 3: OVERALL Verify
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Logical check"
-        task_3_rc: 0
-        data_3: "Global: {{ data_1 }}, User context: {{ data_2 }}, Match blocks used: {{ match_blocks_used }}"
-        status_3: >-
-          {% if status_1 == 'PASS' %}
-            {% if match_blocks_used == 'true' %}
-              {% if status_2 == 'PASS' %}
+          {% if output %}
+            {% set value_match = output | regex_search('maxauthtries[[:space:]]+([0-9]+)') %}
+            {% if value_match %}
+              {% set value = value_match | regex_replace('.*maxauthtries[[:space:]]+([0-9]+).*', '\1') | int %}
+              {% if value <= 4 %}
                 PASS
               {% else %}
                 FAIL
               {% endif %}
             {% else %}
-              PASS
+              FAIL
             {% endif %}
           {% else %}
             FAIL
           {% endif %}
-        rationale_3: >-
-          {% if status_1 == 'PASS' %}
-            {% if match_blocks_used == 'true' %}
-              {% if status_2 == 'PASS' %}
-                PASS when req_1=PASS AND req_2=PASS (Match blocks used)
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output %}
+            {% set value_match = output | regex_search('maxauthtries[[:space:]]+([0-9]+)') %}
+            {% if value_match %}
+              {% set value = value_match | regex_replace('.*maxauthtries[[:space:]]+([0-9]+).*', '\1') | int %}
+              {% if value <= 4 %}
+                PASS when the extracted numeric value is <= 4, FAIL otherwise. Found value: {{ value }}
               {% else %}
-                FAIL when req_1=PASS BUT req_2=FAIL (Match blocks used)
+                FAIL when the extracted numeric value is <= 4, FAIL otherwise. Found value: {{ value }} which is > 4
               {% endif %}
             {% else %}
-              PASS when req_1=PASS (no Match blocks used)
+              FAIL: Could not extract numeric value from output: {{ output }}
             {% endif %}
           {% else %}
-            FAIL when req_1=FAIL
+            FAIL: No output from command
           {% endif %}
+
+    # Requirement 2: Check Match blocks if they exist
+    - name: Req 2 - Check if Match blocks exist in sshd config
+      shell: |
+        # Check if sshd_config has any Match blocks
+        if grep -q "^[[:space:]]*Match[[:space:]]" /etc/ssh/sshd_config 2>/dev/null; then
+          echo "true"
+        else
+          echo "false"
+        fi
+      args:
+        executable: /bin/bash
+      register: match_blocks_exist
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 2 - Extract and test Match block conditions
+      copy:
+        dest: "/tmp/cis_audit_match_blocks.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          
+          sshd_config="/etc/ssh/sshd_config"
+          
+          if [ ! -f "$sshd_config" ]; then
+            echo "sshd_config not found at $sshd_config"
+            exit 1
+          fi
+          
+          # Check if there are Match blocks
+          if ! grep -q "^[[:space:]]*Match[[:space:]]" "$sshd_config"; then
+            echo "No Match blocks to test"
+            exit 0
+          fi
+          
+          # Parse Match blocks from sshd_config
+          # We'll extract the conditions from each Match block
+          output_lines=""
+          
+          # Read the sshd_config line by line
+          while IFS= read -r line; do
+            # Look for Match lines
+            if [[ "$line" =~ ^[[:space:]]*Match[[:space:]]+(.*)$ ]]; then
+              conditions="${BASH_REMATCH[1]}"
+              
+              # Build -C options from conditions
+              c_options=""
+              
+              # Process each condition (split by space)
+              set -- $conditions
+              while [ $# -gt 0 ]; do
+                condition_type="$1"
+                shift
+                
+                # Get the value for this condition (if available)
+                if [ $# -gt 0 ] && [[ ! "$1" =~ ^(User|Group|Host|Address|LocalAddress|LocalPort|RDomain)$ ]]; then
+                  condition_value="$1"
+                  
+                  # Map condition type to -C parameter
+                  case "$condition_type" in
+                    User)
+                      c_options="$c_options -C user=$condition_value"
+                      ;;
+                    Host)
+                      c_options="$c_options -C host=$condition_value"
+                      ;;
+                    Address)
+                      c_options="$c_options -C addr=$condition_value"
+                      ;;
+                    LocalAddress)
+                      c_options="$c_options -C laddr=$condition_value"
+                      ;;
+                    LocalPort)
+                      c_options="$c_options -C lport=$condition_value"
+                      ;;
+                    RDomain)
+                      c_options="$c_options -C rdomain=$condition_value"
+                      ;;
+                    # Group doesn't have a corresponding -C parameter
+                    *)
+                      # Unknown condition type, skip
+                      ;;
+                  esac
+                  shift
+                else
+                  # No value or next condition type, skip
+                  continue
+                fi
+              done
+              
+              # Test this Match block if we have any -C options
+              if [ -n "$c_options" ]; then
+                result=$(sshd -T $c_options 2>/dev/null | grep maxauthtries)
+                if [ -n "$result" ]; then
+                  output_lines="${output_lines}Match$c_options: $result\n"
+                fi
+              fi
+            fi
+          done < "$sshd_config"
+          
+          # Output results
+          if [ -n "$output_lines" ]; then
+            printf "%b" "$output_lines"
+          else
+            echo "No supported Match block conditions found for testing"
+          fi
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: match_blocks_exist.stdout is defined and match_blocks_exist.stdout|trim == 'true'
+
+    - name: Req 2 - Execute Match block test script
+      shell: "/tmp/cis_audit_match_blocks.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: match_blocks_exist.stdout is defined and match_blocks_exist.stdout|trim == 'true'
+
+    - name: Req 2 - Remove temporary script
+      file:
+        path: "/tmp/cis_audit_match_blocks.sh"
+        state: absent
+      ignore_errors: true
+      when: match_blocks_exist.stdout is defined and match_blocks_exist.stdout|trim == 'true'
+
+    - name: Req 2 - Store requirement details (no Match blocks)
+      set_fact:
+        task_2_name: "Extract and test Match block conditions"
+        task_2_cmd: "Conditional: Test with connection parameters from actual Match blocks"
+        task_2_rc: "{{ result_2.rc | default(-1) if (match_blocks_exist.stdout|default('')|trim == 'true') else 0 }}"
+        data_2: "{{ result_2.stdout | default('') | trim if (match_blocks_exist.stdout|default('')|trim == 'true') else 'No Match blocks to test' }}"
+        status_2: >-
+          {% set match_exists = match_blocks_exist.stdout | default('false') | trim %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if match_exists == 'false' %}
+            PASS
+          {% elif output == 'No Match blocks to test' %}
+            PASS
+          {% elif output == 'No supported Match block conditions found for testing' %}
+            PASS
+          {% elif output %}
+            {% set lines = output.split('\n') %}
+            {% set all_pass = true %}
+            {% for line in lines %}
+              {% if line %}
+                {% set value_match = line | regex_search('maxauthtries[[:space:]]+([0-9]+)') %}
+                {% if value_match %}
+                  {% set value = value_match | regex_replace('.*maxauthtries[[:space:]]+([0-9]+).*', '\1') | int %}
+                  {% if value > 4 %}
+                    {% set all_pass = false %}
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if all_pass %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% set match_exists = match_blocks_exist.stdout | default('false') | trim %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if match_exists == 'false' %}
+            PASS: No Match blocks found in sshd configuration
+          {% elif output == 'No Match blocks to test' %}
+            PASS: No Match blocks to test
+          {% elif output == 'No supported Match block conditions found for testing' %}
+            PASS: Match blocks exist but no testable conditions found
+          {% elif output %}
+            {% set lines = output.split('\n') %}
+            {% set all_pass = true %}
+            {% set found_values = [] %}
+            {% for line in lines %}
+              {% if line %}
+                {% set value_match = line | regex_search('maxauthtries[[:space:]]+([0-9]+)') %}
+                {% if value_match %}
+                  {% set value = value_match | regex_replace('.*maxauthtries[[:space:]]+([0-9]+).*', '\1') | int %}
+                  {% set found_values = found_values + [value] %}
+                  {% if value > 4 %}
+                    {% set all_pass = false %}
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if all_pass %}
+              PASS when for all tested Match blocks the extracted numeric value is <= 4, FAIL if any tested block yields a value > 4. Found values: {{ found_values | join(', ') }}
+            {% else %}
+              FAIL when for all tested Match blocks the extracted numeric value is <= 4, FAIL if any tested block yields a value > 4. Found values: {{ found_values | join(', ') }} (some > 4)
+            {% endif %}
+          {% else %}
+            UNKNOWN: Could not determine status
+          {% endif %}
+      when: match_blocks_exist.stdout is defined
+
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
+      set_fact:
+        data_3: "Combined result of requirements 1 and 2"
+        status_3: >-
+          {% set status1 = status_1 | default('FAIL') | trim %}
+          {% set status2 = status_2 | default('PASS') | trim %}
+          {% if status1 == 'PASS' and status2 == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% set status1 = status_1 | default('FAIL') | trim %}
+          {% set status2 = status_2 | default('PASS') | trim %}
+          PASS when req_1=PASS AND (Match blocks are not used OR req_2=PASS), FAIL otherwise. req_1={{ status1 }}, req_2={{ status2 }}
 
     # Final report
     - name: Generate compliance report
@@ -161,29 +296,29 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.16"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"

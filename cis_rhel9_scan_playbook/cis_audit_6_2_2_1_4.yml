@@ -1,10 +1,10 @@
 ---
-- name: Data Collection for CIS 6.2.2.1.4
+- name: Data Collection for CIS checkpoint 6.2.2.1.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.1.4"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.1.4"
     req_1: "Check if systemd-journal-remote.socket is enabled"
     req_2: "Check if systemd-journal-remote.service is enabled"
     req_3: "Check if systemd-journal-remote.socket is active"
@@ -31,7 +31,7 @@
         task_5_rc: -1
 
     # Requirement 1: Check if systemd-journal-remote.socket is enabled
-    - name: Req 1 - Check socket enabled status
+    - name: "Req 1 - Check if systemd-journal-remote.socket is enabled"
       shell: |
         systemctl is-enabled systemd-journal-remote.socket
       args:
@@ -47,10 +47,10 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != 'enabled') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is not enabled (e.g., disabled, masked, or error), FAIL when enabled' if (result_1.stdout | default('') | trim != 'enabled') else 'FAIL when output is enabled') | trim }}"
+        rationale_1: "{{ ('PASS: systemd-journal-remote.socket is not enabled' if (result_1.stdout | default('') | trim != 'enabled') else 'FAIL: systemd-journal-remote.socket is enabled') | trim }}"
 
     # Requirement 2: Check if systemd-journal-remote.service is enabled
-    - name: Req 2 - Check service enabled status
+    - name: "Req 2 - Check if systemd-journal-remote.service is enabled"
       shell: |
         systemctl is-enabled systemd-journal-remote.service
       args:
@@ -66,10 +66,10 @@
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != 'enabled') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when output is not enabled (e.g., disabled, masked, or error), FAIL when enabled' if (result_2.stdout | default('') | trim != 'enabled') else 'FAIL when output is enabled') | trim }}"
+        rationale_2: "{{ ('PASS: systemd-journal-remote.service is not enabled' if (result_2.stdout | default('') | trim != 'enabled') else 'FAIL: systemd-journal-remote.service is enabled') | trim }}"
 
     # Requirement 3: Check if systemd-journal-remote.socket is active
-    - name: Req 3 - Check socket active status
+    - name: "Req 3 - Check if systemd-journal-remote.socket is active"
       shell: |
         systemctl is-active systemd-journal-remote.socket
       args:
@@ -85,10 +85,10 @@
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim != 'active') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when output is not active (e.g., inactive, failed, or error), FAIL when active' if (result_3.stdout | default('') | trim != 'active') else 'FAIL when output is active') | trim }}"
+        rationale_3: "{{ ('PASS: systemd-journal-remote.socket is not active' if (result_3.stdout | default('') | trim != 'active') else 'FAIL: systemd-journal-remote.socket is active') | trim }}"
 
     # Requirement 4: Check if systemd-journal-remote.service is active
-    - name: Req 4 - Check service active status
+    - name: "Req 4 - Check if systemd-journal-remote.service is active"
       shell: |
         systemctl is-active systemd-journal-remote.service
       args:
@@ -104,26 +104,41 @@
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
         status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim != 'active') else 'FAIL') | trim }}"
-        rationale_4: "{{ ('PASS when output is not active (e.g., inactive, failed, or error), FAIL when active' if (result_4.stdout | default('') | trim != 'active') else 'FAIL when output is active') | trim }}"
+        rationale_4: "{{ ('PASS: systemd-journal-remote.service is not active' if (result_4.stdout | default('') | trim != 'active') else 'FAIL: systemd-journal-remote.service is active') | trim }}"
 
-    # Requirement 5: OVERALL Verify
-    - name: Store requirement 5 details
+    # Requirement 5: Overall compliance determination
+    - name: "Req 5 - Determine overall compliance"
       set_fact:
-        task_5_name: "OVERALL Verify: Ensure systemd-journal-remote service is not in use"
-        task_5_cmd: "N/A - Overall assessment"
+        task_5_name: "Overall compliance determination"
+        task_5_cmd: "N/A - Calculated from requirements 1-4"
         task_5_rc: 0
-        data_5: "Combined assessment of requirements 1-4"
-        status_5: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_5: "{{ ('PASS when all individual requirements pass (socket and service not enabled and not active)' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL when any requirement fails') | trim }}"
+        data_5: "Socket enabled: {{ data_1 }}, Service enabled: {{ data_2 }}, Socket active: {{ data_3 }}, Service active: {{ data_4 }}"
+        status_5: >-
+          {% if status_1 | default('FAIL') == 'PASS' and
+                status_2 | default('FAIL') == 'PASS' and
+                status_3 | default('FAIL') == 'PASS' and
+                status_4 | default('FAIL') == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_5: >-
+          {% if status_1 | default('FAIL') == 'PASS' and
+                status_2 | default('FAIL') == 'PASS' and
+                status_3 | default('FAIL') == 'PASS' and
+                status_4 | default('FAIL') == 'PASS' %}
+            PASS: All individual checks passed - systemd-journal-remote service is not in use
+          {% else %}
+            FAIL: One or more individual checks failed - systemd-journal-remote service may be in use
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.2.2.1.4"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

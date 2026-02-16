@@ -1,40 +1,52 @@
 ---
-- name: Data Collection for CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.2
+- name: Data Collection for CIS checkpoint 6.2.2.2
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.2"
-    req_1: "Check if journald is the method for capturing logs. Rationale: PASS when journald is the chosen method for client side logging (this is a prerequisite for the next check; if rsyslog is used, this checkpoint is not applicable), FAIL otherwise"
-    req_2: "Verify ForwardToSyslog is set to no using command: systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E ^ForwardToSyslog=no. Rationale: PASS when the exact output line is 'ForwardToSyslog=no', FAIL otherwise"
-    req_3: "OVERALL Verify: Ensure journald ForwardToSyslog is disabled. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.2"
+    req_1: "Check if journald is the method for capturing logs"
+    req_2: "Verify ForwardToSyslog is disabled in journald configuration"
+    req_3: "Overall Verify: Ensure journald ForwardToSyslog is disabled"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        data_2: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Overall verification"
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
         task_3_cmd: "N/A"
-        task_3_rc: 0
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    - name: "Req 1 - Check if journald is the logging method"
+    # Requirement 1: Check if journald is the method for capturing logs
+    - name: Req 1 - Check if journald is the method for capturing logs
       shell: |
-        # First check if journald is active - if yes, we check ForwardToSyslog
-        if systemctl is-active systemd-journald --quiet; then
-          echo "journald"
-        # If journald is not active but rsyslog is, then checkpoint is not applicable
-        elif systemctl is-active rsyslog --quiet; then
-          echo "rsyslog"
-        # If neither is active, we cannot determine
+        # Check if journald is active and rsyslog is not active
+        journald_active=$(systemctl is-active systemd-journald 2>/dev/null || echo "inactive")
+        rsyslog_active=$(systemctl is-active rsyslog 2>/dev/null || echo "inactive")
+        if [ "$journald_active" = "active" ] && [ "$rsyslog_active" != "active" ]; then
+          echo "journald_active: $journald_active"
+          echo "rsyslog_active: $rsyslog_active"
+          echo "Result: journald is the chosen method"
+          exit 0
         else
-          echo "unknown"
+          echo "journald_active: $journald_active"
+          echo "rsyslog_active: $rsyslog_active"
+          echo "Result: journald is NOT the chosen method"
+          exit 1
         fi
       args:
         executable: /bin/bash
@@ -44,103 +56,67 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if journald is the logging method"
+        task_1_name: "Req 1 - Check if journald is the method for capturing logs"
         task_1_cmd: "Check systemd-journald and rsyslog service status"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'journald' %}
-            PASS
-          {% elif output == 'rsyslog' %}
-            NA
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'journald' %}
-            PASS when journald is the chosen method for client side logging
-          {% elif output == 'rsyslog' %}
-            NA: Checkpoint not applicable (rsyslog is the logging method)
-          {% else %}
-            FAIL: Cannot determine logging method. Expected 'journald' or 'rsyslog', got: '{{ output }}'
-          {% endif %}
+        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS if journald is active and rsyslog is not active (journald is chosen method), FAIL otherwise' if result_1.rc == 0 else 'FAIL: journald is not the chosen method or rsyslog is active') | trim }}"
 
-    - name: "Req 2 - Verify ForwardToSyslog is set to no"
+    # Requirement 2: Verify ForwardToSyslog is disabled in journald configuration
+    # Only execute if journald is the chosen method (Requirement 1 passed)
+    - name: Req 2 - Verify ForwardToSyslog is disabled in journald configuration
       shell: |
-        systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E "^ForwardToSyslog=no"
+        systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E "^ForwardToSyslog="
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: data_1 == 'journald'
+      when: status_1 == 'PASS'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify ForwardToSyslog setting"
-        task_2_cmd: "systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E '^ForwardToSyslog=no'"
-        task_2_rc: "{{ result_2.rc | default(-1) if result_2 is defined else -1 }}"
-        data_2: "{{ result_2.stdout | default('') | trim if result_2 is defined else '' }}"
+        task_2_name: "Req 2 - Verify ForwardToSyslog is disabled in journald configuration"
+        task_2_cmd: |
+          systemd-analyze cat-config systemd/journald.conf systemd/journald.conf.d/* | grep -E \"^ForwardToSyslog=\"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if result_2 is defined %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output == 'ForwardToSyslog=no' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% elif data_1 == 'journald' %}
-            FAIL
-          {% elif data_1 == 'rsyslog' %}
-            NA
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' or output == 'ForwardToSyslog=no' %}
+            PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_2: >-
-          {% if result_2 is defined %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output == 'ForwardToSyslog=no' %}
-              PASS when the exact output line is ForwardToSyslog=no
-            {% else %}
-              FAIL: Expected ForwardToSyslog=no, got: '{{ output }}'
-            {% endif %}
-          {% elif data_1 == 'journald' %}
-            FAIL: Command not executed due to unknown error
-          {% elif data_1 == 'rsyslog' %}
-            NA: ForwardToSyslog check not applicable (rsyslog is the logging method)
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' or output == 'ForwardToSyslog=no' %}
+            PASS when the output is exactly 'ForwardToSyslog=no' or the setting is absent (default is 'no', so absence is PASS)
           {% else %}
-            FAIL: ForwardToSyslog check not applicable (cannot determine logging method)
+            FAIL when the output is 'ForwardToSyslog=yes' or other value
           {% endif %}
+      when: status_1 == 'PASS'
 
-    - name: Store overall compliance details
+    # Requirement 3: Overall Verify - Only evaluate if we have results from requirements 1 and 2
+    - name: Store requirement 3 details
       set_fact:
-        data_3: ""
-        status_3: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'NA' %}
-            NA
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS when req_1=PASS AND req_2=PASS
-          {% elif status_1 | trim == 'NA' %}
-            NA: Checkpoint not applicable (rsyslog is the logging method)
-          {% else %}
-            FAIL: Requirement 1 status: {{ status_1 | default('UNKNOWN') | trim }}, Requirement 2 status: {{ status_2 | default('UNKNOWN') | trim }}
-          {% endif %}
+        task_3_name: "Req 3 - Overall Verify: Ensure journald ForwardToSyslog is disabled"
+        task_3_cmd: "Overall check based on requirements 1 and 2"
+        task_3_rc: 0
+        data_3: "Combined result of requirements 1 and 2"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: req_1=' + status_1 + ' and req_2=' + status_2) | trim }}"
+      when: status_1 is defined and status_2 is defined
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.2.2.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -169,6 +145,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

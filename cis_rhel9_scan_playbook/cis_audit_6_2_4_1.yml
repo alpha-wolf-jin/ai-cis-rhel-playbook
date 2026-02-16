@@ -1,11 +1,12 @@
 ---
-- name: Data Collection for CIS checkpoint 6.2.4.1
+- name: Data Collection for CIS 6.2.4.1 - Ensure access to all logfiles has been configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.4.1"
-    req_1: "Verify files in /var/log/ have appropriate permissions and ownership"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.4.1"
+    req_1: "Run the provided CIS audit script to verify that files in /var/log/ have appropriate permissions and ownership"
+    req_2: "Ensure access to all logfiles has been configured"
 
   tasks:
     - name: Initialize data variables
@@ -13,19 +14,21 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
 
-    # Requirement 1: Verify files in /var/log/ have appropriate permissions and ownership
-    - name: Req 1 - Execute CIS audit script for 6.2.4.1 (audit-only version)
+    # Requirement 1: Run the provided CIS audit script
+    - name: Req 1 - Create CIS audit script for 6.2.4.1
       copy:
         dest: "/tmp/cis_audit_6.2.4.1.sh"
         mode: '0700'
         content: |
-          {% raw %}
           #!/usr/bin/env bash
           {
-             l_output2=""
+             l_op2="" l_output2=""
              l_uidmin="$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)"
-             file_test_audit()
+             file_test_chk()
              {
                 l_op2=""
                 if [ $(( $l_mode & $perm_mask )) -gt 0 ]; then
@@ -52,35 +55,35 @@
                       maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
                       l_auser="root"
                       l_agroup="(root|utmp)"
-                      file_test_audit
+                      file_test_chk
                       ;;
                    secure | auth.log | syslog | messages)
                       perm_mask='0137'
                       maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
                       l_auser="(root|syslog)"
                       l_agroup="(root|adm)"
-                      file_test_audit
+                      file_test_chk
                       ;;
                    SSSD | sssd)
                       perm_mask='0117'
                       maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
                       l_auser="(root|SSSD)"
                       l_agroup="(root|SSSD)"
-                      file_test_audit             
+                      file_test_chk
                       ;;
                    gdm | gdm3)
                       perm_mask='0117'
                       maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
                       l_auser="root"
                       l_agroup="(root|gdm|gdm3)"
-                      file_test_audit    
+                      file_test_chk
                       ;;
                    *.journal | *.journal~)
                       perm_mask='0137'
                       maxperm="$( printf '%o' $(( 0777 & ~$perm_mask)) )"
                       l_auser="root"
-                      l_agroup="(root|systemd-journal)"        
-                      file_test_audit
+                      l_agroup="(root|systemd-journal)"
+                      file_test_chk
                       ;;
                    *)
                       perm_mask='0137'
@@ -99,20 +102,19 @@
                             [ "$l_tst" != "failed" ] && l_agroup="(root|adm|$l_group)"
                          fi
                       fi
-                      file_test_audit
+                      file_test_chk
                       ;;
                 esac
              done <<< "$(printf '%s\n' "${a_file[@]}")"
              unset a_file # Clear array
-             # If all files passed, then we report compliance
+             # If all files passed, then we pass
              if [ -z "$l_output2" ]; then
-                echo -e "** PASS **\n- All files in \"/var/log/\" have appropriate permissions and ownership"
+                echo -e "\n- Audit Results:\n ** Pass **\n- All files in \"/var/log/\" have appropriate permissions and ownership\n"
              else
-                # print audit findings
-                echo -e "** FAIL **\n$l_output2"
+                # print the reason why we are failing
+                echo -e "\n- Audit Results:\n ** Fail **\n$l_output2"
              fi
           }
-          {% endraw %}
       register: script_create_1
       ignore_errors: true
 
@@ -132,31 +134,45 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for 6.2.4.1"
+        task_1_name: "Execute CIS audit script for logfile permissions"
         task_1_cmd: "/tmp/cis_audit_6.2.4.1.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output is search('^\*\* PASS \*\*') %}
+          {% set output = result_1.stdout | default('') %}
+          {% if '** Pass **' in output %}
             PASS
-          {% elif output is search('^\*\* FAIL \*\*') %}
+          {% elif '** Fail **' in output %}
             FAIL
-          {% elif result_1.rc | default(-1) != 0 %}
+          {% else %}
             UNKNOWN
+          {% endif %}
+        rationale_1: "PASS when script output shows ** Pass ** or indicates compliance, FAIL when script output shows ** Fail ** or indicates non-compliance"
+
+    # Requirement 2: Overall verification - Conditional execution based on Requirement 1
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Overall verification of logfile access configuration"
+        task_2_cmd: "N/A - Based on requirement 1 result"
+        task_2_rc: "N/A"
+        data_2: "Requirement 1 status: {{ status_1 | default('UNKNOWN') }}"
+        status_2: >-
+          {% set req1_status = status_1 | default('UNKNOWN') | trim %}
+          {% if req1_status == 'PASS' %}
+            PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_1: "PASS when script output shows '** PASS **', FAIL when script shows '** FAIL **' or indicates non-compliance"
+        rationale_2: "PASS when req_1 is PASS, FAIL otherwise"
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.2.4.1"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -167,8 +183,16 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default('N/A') }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: CIS checkpoint 6.2.4.1 PASS when req_1=PASS, FAIL otherwise"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: Overall compliance is determined by requirement 1 result. PASS when requirement 1 passes, FAIL otherwise."
           - "========================================================"

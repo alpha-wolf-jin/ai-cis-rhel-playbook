@@ -1,14 +1,15 @@
 ---
-- name: Data Collection for CIS 5.1.18
+- name: Data Collection for CIS 5.1.18 - MaxSessions configuration
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.18"
-    req_1: "Verify MaxSessions in the effective sshd configuration using command: sshd -T | grep -i maxsessions. Rationale: PASS when the output is exactly 'maxsessions 10' or a numeric value less than 10 (e.g., 'maxsessions 4'), FAIL when the value is 11 or greater or the parameter is not found."
-    req_2: |
-      Verify no MaxSessions directives in static config files are set to 11 or greater using command: grep -Psi -- '^\h*MaxSessions\h+\"?([1-9][1-9]|[2-9][0-9]|[1-9][0-9][0-9]+)\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf. Rationale: PASS when the command returns no output (no lines matching the pattern), FAIL when any line is returned.
-    req_3: "OVERALL Verify: Ensure sshd MaxSessions is configured. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise."
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.18"
+    req_1: "Check the effective MaxSessions value from the running sshd configuration"
+    req_2: "Check for any explicit MaxSessions configuration in sshd_config files that sets a value greater than 10"
+    req_3: "If Match blocks are used in the environment, check the effective MaxSessions value for a specific user"
+    req_4: "OVERALL Verify: Ensure sshd MaxSessions is configured"
+    match_test_user: "root"
 
   tasks:
     - name: Initialize data variables
@@ -16,25 +17,35 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_2: ""
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        task_3_name: "Overall compliance check"
-        task_3_cmd: "N/A (derived from req_1 and req_2)"
-        task_3_rc: 0
-        data_3: "Derived from requirement 1 and 2"
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Overall compliance check"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
 
-    # Requirement 1: Check effective MaxSessions setting
-    - name: Req 1 - Check effective MaxSessions setting via sshd -T
-      shell: sshd -T | grep -i maxsessions
+    # Check for Match blocks in sshd configuration
+    - name: Check if Match blocks exist in sshd config
+      shell: |
+        grep -r "^\s*Match" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | head -1
+      args:
+        executable: /bin/bash
+      register: match_blocks_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set match_blocks_used fact
+      set_fact:
+        match_blocks_used: "{{ 'true' if match_blocks_check.stdout | trim != '' else 'false' }}"
+        match_blocks_exist: "{{ match_blocks_check.stdout | trim != '' }}"
+
+    # Requirement 1: Check effective MaxSessions from running sshd
+    - name: Req 1 - Check effective MaxSessions value
+      shell: |
+        sshd -T | grep -i maxsessions
       args:
         executable: /bin/bash
       register: result_1
@@ -43,16 +54,18 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check effective MaxSessions setting via sshd -T"
+        task_1_name: "Check effective MaxSessions value"
         task_1_cmd: "sshd -T | grep -i maxsessions"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% set output = result_1.stdout | default('') | trim | lower %}
-          {% if output.startswith('maxsessions ') %}
-            {% set value_str = output.split(' ')[1] | default('') | trim %}
-            {% if value_str is match('^[0-9]+$') %}
-              {% set value = value_str | int %}
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == '' %}
+            FAIL
+          {% else %}
+            {% set match = output | regex_search('maxsessions\s+([0-9]+)', ignorecase=true) %}
+            {% if match %}
+              {% set value = match | regex_replace('.*maxsessions\s+([0-9]+).*', '\1', ignorecase=true) | int %}
               {% if value <= 10 %}
                 PASS
               {% else %}
@@ -61,17 +74,29 @@
             {% else %}
               FAIL
             {% endif %}
-          {% else %}
-            FAIL
           {% endif %}
-        rationale_1: "{{ ('PASS when MaxSessions ≤ 10, FAIL when >10 or not found. Found: ' + (result_1.stdout | default('') | trim) if (result_1.stdout | default('') | trim != '') else 'FAIL: MaxSessions parameter not found in effective configuration') | trim }}"
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == '' %}
+            FAIL: No MaxSessions parameter found in sshd configuration (default may be too high)
+          {% else %}
+            {% set match = output | regex_search('maxsessions\s+([0-9]+)', ignorecase=true) %}
+            {% if match %}
+              {% set value = match | regex_replace('.*maxsessions\s+([0-9]+).*', '\1', ignorecase=true) | int %}
+              {% if value <= 10 %}
+                PASS: MaxSessions is set to {{ value }} which is 10 or less
+              {% else %}
+                FAIL: MaxSessions is set to {{ value }} which is greater than 10
+              {% endif %}
+            {% else %}
+              FAIL: Could not parse MaxSessions value from output: {{ output }}
+            {% endif %}
+          {% endif %}
 
-    # Requirement 2: Check static config files for MaxSessions > 10
-    - name: Req 2 - Check static config files for MaxSessions > 10
+    # Requirement 2: Check for explicit MaxSessions >10 in config files
+    - name: Req 2 - Check for explicit MaxSessions >10 in config files
       shell: |
-        {% raw %}
-        grep -Psi -- '^\h*MaxSessions\h+\"?(1[1-9]|[2-9][0-9]|[1-9][0-9][0-9]+)\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null || true
-        {% endraw %}
+        grep -Psi -- '^\h*MaxSessions\h+"?([1-9][1-9]|[2-9][0-9]|[1-9][0-9][0-9]+)\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
       args:
         executable: /bin/bash
       register: result_2
@@ -80,27 +105,151 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check static config files for MaxSessions > 10"
+        task_2_name: "Check for explicit MaxSessions >10 in config files"
         task_2_cmd: |
           grep -Psi -- '^\h*MaxSessions\h+\"?([1-9][1-9]|[2-9][0-9]|[1-9][0-9][0-9]+)\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when no MaxSessions > 10 found in static configs, FAIL when found. Found: ' + (result_2.stdout | default('') | trim) if (result_2.stdout | default('') | trim != '') else 'PASS: No MaxSessions > 10 found in static config files') | trim }}"
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' %}
+            PASS: No explicit MaxSessions configuration found with value greater than 10
+          {% else %}
+            FAIL: Found explicit MaxSessions configuration with value greater than 10: {{ output | trim }}
+          {% endif %}
 
-    # Requirement 3: Overall compliance
+    # Requirement 3: Check MaxSessions in Match blocks if they exist
+    - name: Req 3 - Test Match blocks if they exist
+      shell: |
+        # Check if we have match blocks to test
+        match_blocks_exist="{{ match_blocks_exist }}"
+        
+        {% raw %}
+        if [ "$match_blocks_exist" = "false" ]; then
+          echo "No Match blocks present in configuration"
+          exit 0
+        fi
+        
+        # Test with the specified user
+        sshd -T -C user=root | grep -i maxsessions
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+
     - name: Store requirement 3 details
       set_fact:
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when both req_1 and req_2 are PASS. req_1=' + (status_1 | trim) + ', req_2=' + (status_2 | trim)) | trim }}"
+        task_3_name: "Check MaxSessions in Match blocks for user {{ match_test_user }}"
+        task_3_cmd: "sshd -T -C user={{ match_test_user }} | grep -i maxsessions"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if match_blocks_exist == false %}
+            NA
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% set rc = result_3.rc | default(-1) %}
+            {% if rc == 0 %}
+              {% if output == '' %}
+                PASS: No MaxSessions found in Match blocks, global setting applies
+              {% else %}
+                {% set match = output | regex_search('maxsessions\s+([0-9]+)', ignorecase=true) %}
+                {% if match %}
+                  {% set value = match | regex_replace('.*maxsessions\s+([0-9]+).*', '\1', ignorecase=true) | int %}
+                  {% if value <= 10 %}
+                    PASS
+                  {% else %}
+                    FAIL
+                  {% endif %}
+                {% else %}
+                  UNKNOWN
+                {% endif %}
+              {% endif %}
+            {% elif rc == 1 and output == '' %}
+              PASS: No MaxSessions found in Match blocks, global setting applies
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if match_blocks_exist == false %}
+            NA: No Match blocks present in configuration
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% set rc = result_3.rc | default(-1) %}
+            {% if rc == 0 %}
+              {% if output == '' %}
+                PASS: No MaxSessions found in Match blocks for user {{ match_test_user }}, global setting applies
+              {% else %}
+                {% set match = output | regex_search('maxsessions\s+([0-9]+)', ignorecase=true) %}
+                {% if match %}
+                  {% set value = match | regex_replace('.*maxsessions\s+([0-9]+).*', '\1', ignorecase=true) | int %}
+                  {% if value <= 10 %}
+                    PASS: MaxSessions in Match blocks for user {{ match_test_user }} is set to {{ value }} which is 10 or less
+                  {% else %}
+                    FAIL: MaxSessions in Match blocks for user {{ match_test_user }} is set to {{ value }} which is greater than 10
+                  {% endif %}
+                {% else %}
+                  UNKNOWN: Could not parse MaxSessions value from Match block output: {{ output }}
+                {% endif %}
+              {% endif %}
+            {% elif rc == 1 and output == '' %}
+              PASS: No MaxSessions found in Match blocks for user {{ match_test_user }}, global setting applies (grep returned no matches)
+            {% else %}
+              UNKNOWN: Command execution failed with exit code {{ rc }} and output: {{ output }}
+            {% endif %}
+          {% endif %}
 
+    # Requirement 4: Overall compliance
+    - name: Store requirement 4 details
+      set_fact:
+        data_4: "Combined status from requirements 1, 2, and 3"
+        status_4: >-
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('FAIL') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s1 == 'PASS' and s2 == 'PASS' %}
+            {% if match_blocks_exist == true %}
+              {% if s3 == 'PASS' or s3 == 'NA' %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              PASS
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: >-
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('FAIL') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s1 == 'PASS' and s2 == 'PASS' %}
+            {% if match_blocks_exist == true %}
+              {% if s3 == 'PASS' or s3 == 'NA' %}
+                PASS: All requirements met (req1={{ s1 }}, req2={{ s2 }}, req3={{ s3 }}, match_blocks_exist={{ match_blocks_exist }})
+              {% else %}
+                FAIL: Match blocks exist and req3 failed (req1={{ s1 }}, req2={{ s2 }}, req3={{ s3 }}, match_blocks_exist={{ match_blocks_exist }})
+              {% endif %}
+            {% else %}
+              PASS: All requirements met (req1={{ s1 }}, req2={{ s2 }}, no match blocks found)
+            {% endif %}
+          {% else %}
+            FAIL: One or more requirements failed (req1={{ s1 }}, req2={{ s2 }}, match_blocks_exist={{ match_blocks_exist }})
+          {% endif %}
+
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.18"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -127,8 +276,16 @@
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - "========================================================"

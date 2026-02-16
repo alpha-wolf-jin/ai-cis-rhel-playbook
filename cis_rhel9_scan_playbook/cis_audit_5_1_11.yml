@@ -1,12 +1,13 @@
 ---
-- name: Data Collection for CIS 5.1.11
+- name: Data Collection for CIS checkpoint 5.1.11
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
     cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.11"
-    req_1: "Verify sshd GSSAPIAuthentication setting in the main configuration"
-    req_2: "If Match blocks are used, verify GSSAPIAuthentication setting for each applicable connection parameter set"
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Verify sshd GSSAPIAuthentication is disabled in the global configuration using command: `sshd -T | grep -i gssapiauthentication`"
+    req_2: "If Match blocks are used in the sshd configuration, verify GSSAPIAuthentication is disabled for each applicable Match context"
     req_3: "OVERALL Verify: Ensure sshd GSSAPIAuthentication is disabled"
 
   tasks:
@@ -21,13 +22,11 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        match_blocks_tested: []
-        match_blocks_results: []
 
-    # Requirement 1: Verify sshd GSSAPIAuthentication setting in the main configuration
-    - name: Req 1 - Check main sshd configuration for GSSAPIAuthentication
-      shell: !unsafe |
-        sshd -T | grep gssapiauthentication
+    # Requirement 1: Global configuration check
+    - name: Req 1 - Check global sshd configuration for GSSAPIAuthentication
+      shell: |
+        sshd -T | grep -i gssapiauthentication
       args:
         executable: /bin/bash
       register: result_1
@@ -36,169 +35,228 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check main sshd configuration for GSSAPIAuthentication"
-        task_1_cmd: "sshd -T | grep gssapiauthentication"
+        task_1_name: "Check global sshd GSSAPIAuthentication setting"
+        task_1_cmd: "sshd -T | grep -i gssapiauthentication"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'gssapiauthentication no') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is exactly 'gssapiauthentication no', FAIL otherwise"
+        rationale_1: '{{ ("PASS when the output is exactly gssapiauthentication no, FAIL otherwise" if (result_1.stdout | default("") | trim == "gssapiauthentication no") else "FAIL: Expected gssapiauthentication no, got " + (result_1.stdout | default("") | trim)) | trim }}'
 
-    # Requirement 2: If Match blocks are used, verify GSSAPIAuthentication setting for each applicable connection parameter set
-    - name: Req 2 - Check if Match blocks exist in sshd configuration
-      shell: !unsafe |
-        grep -i '^Match' /etc/ssh/sshd_config 2>/dev/null || echo "No Match blocks found"
+    # Requirement 2: Check for Match blocks with actual parameters from configuration
+    - name: Req 2 - Check if sshd_config has Match blocks
+      shell: |
+        config_file=/etc/ssh/sshd_config
+        if [ -f $config_file ]; then
+          if grep -q ^Match $config_file; then
+            echo true
+          else
+            echo false
+          fi
+        else
+          echo false
+        fi
       args:
         executable: /bin/bash
       register: match_blocks_check
       ignore_errors: true
       changed_when: false
 
-    - name: Parse Match blocks to extract connection parameters
+    - name: Extract and store match block conditions
       set_fact:
-        match_blocks_present: "{{ 'No Match blocks found' not in match_blocks_check.stdout }}"
-        match_blocks_raw: "{{ match_blocks_check.stdout_lines | default([]) }}"
+        match_blocks_used: "{{ match_blocks_check.stdout | default('false') | trim == 'true' }}"
       when: match_blocks_check is defined
 
-    - name: Extract all connection parameters from Match blocks
-      set_fact:
-        match_parameters: []
-      when: match_blocks_present
-
-    - name: Find all connection parameters in Match blocks
-      shell: !unsafe |
-        # Extract all connection parameters from Match blocks
-        awk '
-        /^Match/ {
-          match_block=1
-          # Reset parameter tracking for this block
-          delete params
-        }
-        match_block && /^[[:space:]]*(User|Address|Host|LocalAddress|LocalPort|RDomain)[[:space:]]+/ {
-          param_name=tolower($1)
-          # Handle different parameter names
-          if (param_name == "address") param_name="addr"
-          if (param_name == "localaddress") param_name="laddr"
-          if (param_name == "localport") param_name="lport"
-          if (param_name == "rdomain") param_name="rdomain"
-          if (param_name == "user") param_name="user"
-          if (param_name == "host") param_name="host"
+    - name: Req 2 - Create script to parse and test actual Match blocks
+      copy:
+        dest: "/tmp/cis_5.1.11_test_match_blocks.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
           
-          # Extract value (everything after the parameter name)
-          value=$0
-          sub(/^[[:space:]]*[^[:space:]]+[[:space:]]+/, "", value)
-          # Remove comments
-          sub(/#.*$/, "", value)
-          value=trim(value)
+          # Script to test GSSAPIAuthentication in actual Match blocks
+          config_file=/etc/ssh/sshd_config
+          output=""
+          any_failures=false
           
-          if (value != "") {
-            # Store unique parameter=value combinations
-            key=param_name "=" value
-            if (!(key in seen)) {
-              print key
-              seen[key]=1
-            }
-          }
-        }
-        /^[^[:space:]#]/ && !/^Match/ {
-          match_block=0
-        }
-        function trim(s) {
-          sub(/^[[:space:]]+/, "", s)
-          sub(/[[:space:]]+$/, "", s)
-          return s
-        }
-        ' /etc/ssh/sshd_config 2>/dev/null | sort -u
-      args:
-        executable: /bin/bash
-      register: extracted_parameters
+          if [ ! -f $config_file ]; then
+            echo "No sshd_config file found"
+            exit 0
+          fi
+          
+          # Parse Match blocks from sshd_config
+          # Match lines can be like: Match User john, Match Host *.example.com, Match Address 192.168.1.0/24
+          while IFS= read -r match_line; do
+            # Extract conditions from Match line (remove "Match" keyword)
+            conditions=$(echo "$match_line" | sed 's/^Match[[:space:]]*//')
+            
+            if [ -z "$conditions" ]; then
+              continue
+            fi
+            
+            # Initialize parameter string
+            param_string=""
+            
+            # Parse conditions - they come as pairs: type value
+            # Example: "User john Host *.example.com"
+            set -- $conditions
+            
+            while [ $# -ge 2 ]; do
+              cond_type=$1
+              cond_value=$2
+              
+              # Map sshd_config condition types to sshd -C parameter names
+              case $cond_type in
+                User|user)
+                  param_string="$param_string -C user=$cond_value"
+                  ;;
+                Host|host)
+                  param_string="$param_string -C host=$cond_value"
+                  ;;
+                Address|address)
+                  param_string="$param_string -C addr=$cond_value"
+                  ;;
+                LocalAddress|localaddress)
+                  param_string="$param_string -C laddr=$cond_value"
+                  ;;
+                LocalPort|localport)
+                  param_string="$param_string -C lport=$cond_value"
+                  ;;
+                Rdomain|rdomain)
+                  param_string="$param_string -C rdomain=$cond_value"
+                  ;;
+                # Add other condition types if needed
+                *)
+                  # Unknown condition type, skip
+                  ;;
+              esac
+              
+              shift 2
+            done
+            
+            # Only test if we have at least one valid parameter
+            if [ -n "$param_string" ]; then
+              # Run sshd -T with the extracted parameters
+              if result=$(sshd -T $param_string 2>/dev/null | grep -i gssapiauthentication); then
+                if [ "$result" = "gssapiauthentication no" ]; then
+                  output="$output
+          $match_line: PASS (gssapiauthentication no)"
+                elif echo "$result" | grep -qi "gssapiauthentication yes"; then
+                  output="$output
+          $match_line: FAIL (gssapiauthentication yes)"
+                  any_failures=true
+                else
+                  # Setting not found in output - inherits from global
+                  output="$output
+          $match_line: PASS (inherits global)"
+                fi
+              else
+                # Command failed or no output
+                output="$output
+          $match_line: ERROR (command failed)"
+                any_failures=true
+              fi
+            else
+              output="$output
+          $match_line: SKIP (no mappable conditions)"
+            fi
+            
+          done < <(grep ^Match $config_file)
+          
+          # Output results
+          if [ -n "$output" ]; then
+            echo "$output" | sed '1d'  # Remove first empty line
+          else
+            echo "No Match blocks with testable conditions found"
+          fi
+          
+          # Exit with failure if any Match block had gssapiauthentication yes
+          if [ "$any_failures" = "true" ]; then
+            exit 1
+          else
+            exit 0
+          fi
+          {% endraw %}
+      register: script_create_2
       ignore_errors: true
       changed_when: false
-      when: match_blocks_present
+      when: match_blocks_used is defined
 
-    - name: Set parameters list from extraction
-      set_fact:
-        match_parameters: "{{ extracted_parameters.stdout_lines | default([]) }}"
-      when: match_blocks_present and extracted_parameters is defined
-
-    - name: Test GSSAPIAuthentication for each connection parameter in Match blocks
-      shell: !unsafe |
-        sshd -T -C {{ item }} | grep gssapiauthentication
+    - name: Req 2 - Execute the Match blocks test script
+      shell: "/tmp/cis_5.1.11_test_match_blocks.sh"
       args:
         executable: /bin/bash
-      register: "parameter_test_result"
+      register: result_2
       ignore_errors: true
       changed_when: false
-      loop: "{{ match_parameters }}"
-      when: match_blocks_present and match_parameters | length > 0
+      when: match_blocks_used is defined and script_create_2 is defined
 
-    - name: Collect parameter test results
+    - name: Req 2 - Remove temporary script
+      file:
+        path: "/tmp/cis_5.1.11_test_match_blocks.sh"
+        state: absent
+      ignore_errors: true
+      when: match_blocks_used is defined
+
+    - name: Req 2 - Set default for no Match blocks
       set_fact:
-        match_blocks_tested: "{{ match_blocks_tested + [item] }}"
-        match_blocks_results: "{{ match_blocks_results + [parameter_test_result.results[ansible_loop.index0].stdout | default('') | trim] }}"
-      loop: "{{ match_parameters }}"
-      loop_control:
-        index_var: ansible_loop.index0
-      when: match_blocks_present and match_parameters | length > 0
+        task_2_name: "Check Match blocks for GSSAPIAuthentication setting"
+        task_2_cmd: "No Match blocks found in sshd_config"
+        task_2_rc: 0
+        data_2: "No Match blocks found in sshd_config"
+        status_2: "PASS"
+        rationale_2: "PASS: No Match blocks found in sshd_config"
+      when: not match_blocks_used | default(false)
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check GSSAPIAuthentication for Match blocks"
-        task_2_cmd: >-
-          {% if match_blocks_present and match_parameters | length > 0 %}
-            Tested {{ match_parameters | length }} parameter(s) with: sshd -T -C <parameter=value> | grep gssapiauthentication
-          {% else %}
-            grep -i '^Match' /etc/ssh/sshd_config
-          {% endif %}
-        task_2_rc: "{{ match_blocks_check.rc | default(-1) }}"
-        data_2: >-
-          {% if match_blocks_present %}
-            {% if match_parameters | length > 0 %}
-              Match blocks found. Tested parameters: {{ match_blocks_tested | join(', ') }}. Results: {{ match_blocks_results | join('; ') }}
-            {% else %}
-              Match blocks found but no connection parameters detected
-            {% endif %}
-          {% else %}
-            {{ match_blocks_check.stdout | default('') | trim }}
-          {% endif %}
+        task_2_name: "Check Match blocks for GSSAPIAuthentication setting"
+        task_2_cmd: "/tmp/cis_5.1.11_test_match_blocks.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if not match_blocks_present %}
-            NA
-          {% elif match_parameters | length == 0 %}
-            PASS
-          {% else %}
-            {% set all_pass = true %}
-            {% for result in match_blocks_results %}
-              {% if result != 'gssapiauthentication no' %}
-                {% set all_pass = false %}
-              {% endif %}
-            {% endfor %}
-            {{ 'PASS' if all_pass else 'FAIL' }}
-          {% endif %}
-        rationale_2: >-
-          {% if not match_blocks_present %}
-            NA when no Match blocks found
-          {% elif match_parameters | length == 0 %}
-            PASS when Match blocks exist but no connection parameters to test
-          {% else %}
-            PASS when all tested Match blocks return 'gssapiauthentication no', FAIL otherwise
-          {% endif %}
-
-    # Requirement 3: OVERALL Verify: Ensure sshd GSSAPIAuthentication is disabled
-    - name: Req 3 - Determine overall compliance
-      set_fact:
-        task_3_name: "Determine overall compliance from requirements 1 and 2"
-        task_3_cmd: "N/A (calculated from previous results)"
-        task_3_rc: 0
-        data_3: "Main config: {{ data_1 }}, Match blocks: {{ data_2 }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA') %}
+          {% if result_2.rc | default(1) == 0 %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+        rationale_2: >-
+          {% if result_2.rc | default(1) == 0 %}
+            {% if result_2.stdout | default('') | trim == 'No Match blocks with testable conditions found' %}
+              PASS: No Match blocks with testable conditions found
+            {% elif result_2.stdout | default('') | trim == '' %}
+              PASS: No Match blocks found or tested
+            {% else %}
+              PASS: All tested Match contexts have gssapiauthentication no or inherit from global
+            {% endif %}
+          {% else %}
+            FAIL: Found gssapiauthentication yes in one or more Match contexts
+          {% endif %}
+      when: match_blocks_used is defined and result_2 is defined
 
-    # Final report
+    # Requirement 3: Overall compliance
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "Derived from req_1 and req_2 status"
+        task_3_rc: 0
+        data_3: "Global check: {{ status_1 | default('UNKNOWN') }}, Match blocks check: {{ status_2 | default('UNKNOWN') }}"
+        status_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS: Global GSSAPIAuthentication is disabled (req_1=PASS) AND all Match contexts have it disabled or inherit (req_2=PASS)
+          {% elif status_1 | default('FAIL') != 'PASS' %}
+            FAIL: Global GSSAPIAuthentication check failed (req_1={{ status_1 | default('FAIL') }})
+          {% else %}
+            FAIL: Match blocks check failed (req_2={{ status_2 | default('FAIL') }})
+          {% endif %}
+
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:

@@ -1,0 +1,145 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.3.1
+    req_1: Check if rsyslog is being used for logging on the system
+    req_2: 'If rsyslog is being used, verify rsyslog is installed using command: rpm -q rsyslog'
+    req_3: 'OVERALL Verify: Ensure rsyslog is installed'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+
+    # Requirement 1: Check if rsyslog is being used for logging on the system
+- name: Req 1 - Check if rsyslog is being used for logging
+  shell: |
+    # Check if rsyslog service is active and enabled
+    if systemctl is-active rsyslog 2>/dev/null && systemctl is-enabled rsyslog 2>/dev/null; then
+      echo "rsyslog service is active and enabled"
+      exit 0
+    # Check if rsyslog configuration is present
+    elif [ -s /etc/rsyslog.conf ]; then
+      echo "rsyslog configuration exists and is not empty"
+      exit 0
+    else
+      echo "rsyslog is not being used"
+      exit 1
+    fi
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check if rsyslog is being used for logging"
+    task_1_cmd: "Check rsyslog service status and configuration"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.rc | default(1) == 0) else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when rsyslog is the chosen method for client-side logging (e.g., rsyslog service is active and enabled, or rsyslog configuration is present and in use), FAIL otherwise') | trim }}"
+
+    # Requirement 2: If rsyslog is being used, verify rsyslog is installed
+- name: Req 2 - Verify rsyslog is installed (conditional)
+  shell: |
+    {% raw %}
+    rpm -q rsyslog
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: status_1 == "PASS"
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Verify rsyslog is installed"
+    task_2_cmd: "rpm -q rsyslog"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% if status_1 == 'PASS' %}
+        {% if result_2 is defined and result_2.stdout is defined and result_2.stdout | trim | regex_search('^rsyslog-[0-9]') %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        NA
+      {% endif %}
+    rationale_2: >-
+      {% if status_1 == 'PASS' %}
+        {% if result_2 is defined and result_2.stdout is defined and result_2.stdout | trim | regex_search('^rsyslog-[0-9]') %}
+          PASS when the output matches the pattern 'rsyslog-<version>' (where <version> is any valid version number, indicating the package is installed)
+        {% else %}
+          FAIL when the output indicates the package is not installed
+        {% endif %}
+      {% else %}
+        Not applicable because rsyslog is not being used for logging on the system
+      {% endif %}
+
+    # Requirement 3: OVERALL Verify - Ensure rsyslog is installed
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "OVERALL Verify"
+    task_3_cmd: "N/A"
+    task_3_rc: 0
+    data_3: "req_1={{ status_1 }}, req_2={{ status_2 }}"
+    status_3: >-
+      {% if status_1 == 'PASS' and status_2 | trim == 'PASS' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+
+    # Final report - MUST include Status and Rationale for each requirement
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.2.3.1"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.3.1"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | trim }}"
+    - "  Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_2_3_1'': status_3 | trim }] }}'

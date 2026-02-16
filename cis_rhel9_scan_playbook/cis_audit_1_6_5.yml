@@ -1,14 +1,12 @@
 ---
-- name: Data Collection for CIS 1.6.5
+- name: Data Collection for CIS 1.6.5 - Ensure system wide crypto policy disables CBC for SSH
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.6.5"
-    req_1: "Check if the system-wide crypto policy contains any cipher entries with '-CBC'"
-    req_2: "If the global policy contains CBC ciphers (req_1=FAIL), check if SSH-specific cipher policies are defined"
-    req_3: "If SSH-specific cipher policies exist (req_2=PASS), verify that none of them contain '-CBC'"
-    req_4: "OVERALL Verify: Ensure system wide crypto policy disables cbc for ssh"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.5"
+    req_1: "Run the provided CIS audit script to verify Ensure system wide crypto policy disables cbc for ssh"
+    req_2: "OVERALL Verify: Ensure system wide crypto policy disables cbc for ssh"
 
   tasks:
     - name: Initialize data variables
@@ -19,128 +17,73 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
 
-    # Requirement 1: Check if the system-wide crypto policy contains any cipher entries with '-CBC'
-    - name: Req 1 - Check for CBC ciphers in global policy
-      shell: |
-        grep -Piq -- '^\h*cipher\h*=\h*([^#\n\r]+)?-CBC\b' /etc/crypto-policies/state/CURRENT.pol
+    # Requirement 1: Execute CIS audit script for CBC in SSH
+    - name: Req 1 - Execute CIS audit script for CBC in SSH
+      copy:
+        dest: "/tmp/cis_audit_1.6.5.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output="" l_output2=""
+             if grep -Piq -- '^\h*cipher\h*=\h*([^#\n\r]+)?-CBC\b' /etc/crypto-policies/state/CURRENT.pol; then
+                if grep -Piq -- '^\h*cipher@(lib|open)ssh(-server|-client)?\h*=\h*' /etc/crypto-policies/state/CURRENT.pol; then
+                   if ! grep -Piq -- '^\h*cipher@(lib|open)ssh(-server|-client)?\h*=\h*([^#\n\r]+)?-CBC\b' /etc/crypto-policies/state/CURRENT.pol; then
+                      l_output="$l_output\n - Cipher Block Chaining (CBC) is disabled for SSH"
+                   else
+                      l_output2="$l_output2\n - Cipher Block Chaining (CBC) is enabled for SSH"
+                   fi
+                else
+                   l_output2="$l_output2\n - Cipher Block Chaining (CBC) is enabled for SSH"
+                fi
+             else
+                l_output=" - Cipher Block Chaining (CBC) is disabled"
+             fi
+             if [ -z "$l_output2" ]; then # Provide output from checks
+                echo -e "\n- Audit Result:\n  ** PASS **\n$l_output\n"
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
+                [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_1.6.5.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_1.6.5.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for CBC ciphers in global policy"
-        task_1_cmd: |
-          grep -Piq -- '^\h*cipher\h*=\h*([^#\n\r]+)?-CBC\b' /etc/crypto-policies/state/CURRENT.pol
+        task_1_name: "Req 1 - Execute CIS audit script for CBC in SSH"
+        task_1_cmd: "/tmp/cis_audit_1.6.5.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if result_1.rc != 0 else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when exit code != 0 (no CBC ciphers in global policy), FAIL when exit code = 0 (CBC ciphers present)') | trim }}"
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
 
-    # Requirement 2: If req_1=FAIL, check if SSH-specific cipher policies are defined
-    - name: Req 2 - Check for SSH-specific cipher policies
-      shell: |
-        grep -Piq -- '^\h*cipher@(lib|open)ssh(-server|-client)?\h*=\h*' /etc/crypto-policies/state/CURRENT.pol
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: status_1 | trim == 'FAIL'
-
+    # Requirement 2: Overall verification
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check for SSH-specific cipher policies"
-        task_2_cmd: |
-          grep -Piq -- '^\h*cipher@(lib|open)ssh(-server|-client)?\h*=\h*' /etc/crypto-policies/state/CURRENT.pol
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if result_2.rc == 0 else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when exit code = 0 (SSH-specific policies exist), FAIL when exit code != 0 (no SSH-specific policies)') | trim }}"
-      when: status_1 | trim == 'FAIL'
-
-    - name: Set default status for requirement 2 when not executed
-      set_fact:
-        task_2_name: "Not executed (req_1 was PASS)"
+        task_2_name: "Req 2 - Overall verification of CBC disabled for SSH"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_2: ""
-        status_2: "NA"
-        rationale_2: "Requirement not applicable because req_1 was PASS"
-      when: status_1 | trim == 'PASS'
-
-    # Requirement 3: If req_2=PASS, verify no SSH-specific policies contain '-CBC'
-    - name: Req 3 - Check for CBC in SSH-specific cipher policies
-      shell: |
-        grep -Piq -- '^\h*cipher@(lib|open)ssh(-server|-client)?\h*=\h*([^#\n\r]+)?-CBC\b' /etc/crypto-policies/state/CURRENT.pol
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      changed_when: false
-      when: status_2 | trim == 'PASS'
-
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Check for CBC in SSH-specific cipher policies"
-        task_3_cmd: |
-          grep -Piq -- '^\h*cipher@(lib|open)ssh(-server|-client)?\h*=\h*([^#\n\r]+)?-CBC\b' /etc/crypto-policies/state/CURRENT.pol
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if result_3.rc != 0 else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when exit code != 0 (no CBC in SSH policies), FAIL when exit code = 0 (CBC enabled for SSH)') | trim }}"
-      when: status_2 | trim == 'PASS'
-
-    - name: Set default status for requirement 3 when not executed
-      set_fact:
-        task_3_name: "Not executed (req_2 was not PASS)"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        data_3: ""
-        status_3: "NA"
-        rationale_3: "Requirement not applicable because req_2 was not PASS"
-      when: status_2 | trim != 'PASS'
-
-    # Requirement 4: OVERALL Verify
-    - name: Req 4 - Determine overall compliance
-      set_fact:
-        task_4_name: "Overall compliance determination"
-        task_4_cmd: "N/A (calculated from previous results)"
-        task_4_rc: 0
-        data_4: "req_1={{ status_1 }}, req_2={{ status_2 }}, req_3={{ status_3 }}"
-        status_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'FAIL' %}
-            FAIL
-          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'FAIL' %}
-            FAIL
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when req_1=PASS (no CBC ciphers in global policy)
-          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
-            PASS when req_1=FAIL AND req_2=PASS AND req_3=PASS (CBC in global policy but SSH-specific policies exist and disable CBC)
-          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'FAIL' %}
-            FAIL when req_1=FAIL AND req_2=FAIL (CBC in global policy and no SSH-specific policies to override it)
-          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'FAIL' %}
-            FAIL when req_1=FAIL AND req_2=PASS AND req_3=FAIL (CBC in global policy, SSH-specific policies exist but also contain CBC)
-          {% else %}
-            UNKNOWN - cannot determine overall status from collected data
-          {% endif %}
+        data_2: "N/A"
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
     # Final report
     - name: Generate compliance report
@@ -168,24 +111,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: Overall compliance is {{ status_2 | trim }} because requirement 1 status is {{ status_1 | default('UNKNOWN') | trim }}"
           - "========================================================"

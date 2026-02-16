@@ -1,0 +1,208 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.6
+    req_1: Check if samba package is installed
+    req_2: Check if smb.service is enabled (if package installed)
+    req_3: Check if smb.service is active (if package installed)
+    req_4: 'OVERALL Verify: Ensure samba file server services are not in use'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    task_4_name: "Overall verification"
+    task_4_cmd: "N/A"
+    task_4_rc: 0
+
+    # Requirement 1: Check if samba package is installed
+- name: Req 1 - Check samba package installation
+  shell: rpm -q samba
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check samba package installation"
+    task_1_cmd: "rpm -q samba"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == 'package samba is not installed' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output == 'package samba is not installed' %}
+        PASS when output is exactly "package samba is not installed", FAIL otherwise
+      {% else %}
+        FAIL: Expected "package samba is not installed", got "{{ output }}"
+      {% endif %}
+
+    # Requirement 2: Check if smb.service is enabled (only if package installed)
+- name: Req 2 - Check if smb.service is enabled
+  shell: systemctl is-enabled smb.service 2>/dev/null | grep 'enabled'
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: status_1 | trim == 'FAIL'
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check if smb.service is enabled"
+    task_2_cmd: "systemctl is-enabled smb.service 2>/dev/null | grep 'enabled'"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% if status_1 | trim == 'PASS' %}
+        NA
+      {% else %}
+        {% set output = result_2.stdout | default('') | trim %}
+        {% if output == '' %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% endif %}
+    rationale_2: >-
+      {% if status_1 | trim == 'PASS' %}
+        NA: Package not installed, service check not required
+      {% else %}
+        {% set output = result_2.stdout | default('') | trim %}
+        {% if output == '' %}
+          PASS when no output returned (service not enabled), FAIL when enabled is returned
+        {% else %}
+          FAIL: Service is enabled
+        {% endif %}
+      {% endif %}
+
+    # Requirement 3: Check if smb.service is active (only if package installed)
+- name: Req 3 - Check if smb.service is active
+  shell: systemctl is-active smb.service 2>/dev/null | grep '^active'
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+  when: status_1 | trim == 'FAIL'
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Check if smb.service is active"
+    task_3_cmd: "systemctl is-active smb.service 2>/dev/null | grep '^active'"
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: >-
+      {% if status_1 | trim == 'PASS' %}
+        NA
+      {% else %}
+        {% set output = result_3.stdout | default('') | trim %}
+        {% if output == '' %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% endif %}
+    rationale_3: >-
+      {% if status_1 | trim == 'PASS' %}
+        NA: Package not installed, service check not required
+      {% else %}
+        {% set output = result_3.stdout | default('') | trim %}
+        {% if output == '' %}
+          PASS when no output returned (service not active), FAIL when active is returned
+        {% else %}
+          FAIL: Service is active
+        {% endif %}
+      {% endif %}
+
+    # Requirement 4: Overall verification
+- name: Store requirement 4 details
+  set_fact:
+    data_4: "Package status: {{ status_1 }}, Service enabled: {{ status_2 }}, Service active: {{ status_3 }}"
+    status_4: >-
+      {% if status_1 | trim == 'PASS' %}
+        PASS
+      {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+        PASS
+      {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'NA' and status_3 | trim == 'NA' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_4: >-
+      {% if status_1 | trim == 'PASS' %}
+        PASS: Samba package is not installed
+      {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+        PASS: Package installed but service is not enabled and not active
+      {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'NA' and status_3 | trim == 'NA' %}
+        PASS: Package not installed (NA checks skipped)
+      {% else %}
+        FAIL: Package is installed and service is either enabled or active
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 2.1.6"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.6"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name | default('Task not recorded') }}"
+    - "  Command: {{ task_4_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_4_rc | default(-1) }}"
+    - "  Data: {{ data_4 | default('') | trim }}"
+    - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_2_1_6'': status_4 | trim }] }}'

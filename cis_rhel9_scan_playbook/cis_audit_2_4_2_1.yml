@@ -1,14 +1,17 @@
 ---
-- name: Data Collection for CIS 2.4.2.1
+- name: Data Collection for CIS checkpoint 2.4.2.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.2.1"
-    req_1: "Check if at package is installed"
-    req_2: "If at is installed, verify /etc/at.allow exists, has mode 0640 or more restrictive, is owned by root, and is group-owned by daemon or root"
-    req_3: "If at is installed, verify /etc/at.deny either does not exist OR, if it exists, has mode 0640 or more restrictive, is owned by root, and is group-owned by daemon or root"
-    req_4: "OVERALL Verify: Ensure at is restricted to authorized users"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.2.1"
+    # Requirement descriptions
+    req_1: "Check if at is installed"
+    req_2: "IF at is installed, verify /etc/at.allow exists"
+    req_3: "IF at is installed, verify /etc/at.allow permissions, owner, and group"
+    req_4: "IF at is installed, check for existence of /etc/at.deny"
+    req_5: "IF /etc/at.deny exists, verify its permissions, owner, and group"
+    req_6: "OVERALL Verify: Ensure at is restricted to authorized users"
 
   tasks:
     - name: Initialize data variables
@@ -16,20 +19,43 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: ""
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: ""
         task_4_name: "Not executed"
         task_4_cmd: "N/A"
         task_4_rc: -1
+        data_4: ""
+        status_4: "UNKNOWN"
+        rationale_4: ""
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        data_5: ""
+        status_5: "UNKNOWN"
+        rationale_5: ""
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        data_6: "N/A"
+        status_6: "UNKNOWN"
+        rationale_6: ""
 
-    # Requirement 1: Check if at package is installed
-    - name: Req 1 - Check at package installation
-      shell: !unsafe |
-        rpm -q at
+    # Requirement 1: Check if at is installed
+    - name: Req 1 - Check if at is installed
+      shell: rpm -q at
       args:
         executable: /bin/bash
       register: result_1
@@ -38,101 +64,236 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check at package installation"
+        task_1_name: "Check if at is installed"
         task_1_cmd: "rpm -q at"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is search('package at is not installed')) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output shows at package is NOT installed, FAIL when output shows at package IS installed') | trim }}"
+        status_1: >-
+          {% if result_1.rc == 0 %}
+            PASS
+          {% elif result_1.rc == 1 and 'not installed' in result_1.stdout %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc == 0 %}
+            PASS: at is installed, proceed to check req_2 through req_5.
+          {% elif result_1.rc == 1 and 'not installed' in result_1.stdout %}
+            PASS: at is not installed.
+          {% else %}
+            FAIL: rpm query command failed.
+          {% endif %}
+        at_installed: "{{ result_1.rc == 0 }}"
 
-    # Requirement 2: Verify /etc/at.allow if at is installed
-    - name: Req 2 - Verify /etc/at.allow permissions
-      shell: !unsafe |
-        stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.allow
+    # Requirement 2: Check /etc/at.allow exists (only if at is installed)
+    - name: Req 2 - Check if /etc/at.allow exists
+      shell: |
+        [ -f /etc/at.allow ] && echo 'exists'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: at_installed
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify /etc/at.allow permissions"
-        task_2_cmd: "stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.allow"
+        task_2_name: "Check if /etc/at.allow exists"
+        task_2_cmd: "[ -f /etc/at.allow ] && echo 'exists'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA
+        status_2: "{{ ('PASS' if (result_2.stdout | trim == 'exists') else 'FAIL') | trim }}"
+        rationale_2: >-
+          {% if result_2.stdout | trim == 'exists' %}
+            PASS: file exists (command returns 'exists')
           {% else %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output is search('Access: \(640/-rw-r-----\) Owner: \(root\) Group: \(daemon\)') or
-                  output is search('Access: \(640/-rw-r-----\) Owner: \(root\) Group: \(root\)') %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+            FAIL: file does not exist (command returns nothing)
           {% endif %}
-        rationale_2: "{{ ('PASS when command output matches expected pattern, FAIL otherwise, NA if at not installed') | trim }}"
+      when: at_installed
 
-    # Requirement 3: Verify /etc/at.deny if at is installed
-    - name: Req 3 - Verify /etc/at.deny permissions
-      shell: !unsafe |
-        [ -e "/etc/at.deny" ] && stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.deny
+    # Requirement 3: Check /etc/at.allow permissions (only if at is installed)
+    - name: Req 3 - Check /etc/at.allow permissions
+      shell: |
+        {% raw %}
+        stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.allow
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: at_installed
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Verify /etc/at.deny permissions"
-        task_3_cmd: |
-          [ -e \"/etc/at.deny\" ] && stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.deny
+        task_3_name: "Check /etc/at.allow permissions, owner, and group"
+        task_3_cmd: "stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.allow"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA
-          {% else %}
-            {% set output = result_3.stdout | default('') | trim %}
-            {% if output == '' or
-                  output is search('Access: \(640/-rw-r-----\) Owner: \(root\) Group: \(daemon\)') or
-                  output is search('Access: \(640/-rw-r-----\) Owner: \(root\) Group: \(root\)') %}
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set mode = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') %}
+            {% set owner = output | regex_replace('.*Owner: \(([^)]+)\).*', '\1') %}
+            {% set group = output | regex_replace('.*Group: \(([^)]+)\).*', '\1') %}
+            {% set mode_decimal = mode | int(base=8) %}
+            {% if mode_decimal <= 416 and owner == 'root' and (group == 'daemon' or group == 'root') %}
               PASS
             {% else %}
               FAIL
             {% endif %}
-          {% endif %}
-        rationale_3: "{{ ('PASS when command returns no output (file does not exist) OR when output matches expected pattern, FAIL otherwise, NA if at not installed') | trim }}"
-
-    # Requirement 4: Overall verification
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Overall verification"
-        task_4_cmd: "N/A"
-        task_4_rc: 0
-        data_4: "N/A"
-        status_4: >-
-          {% if status_1 | trim == 'PASS' or
-                (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') %}
-            PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_4: "{{ ('PASS when (at not installed) OR (at installed AND at.allow compliant AND at.deny compliant), FAIL otherwise') | trim }}"
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set mode = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') %}
+            {% set owner = output | regex_replace('.*Owner: \(([^)]+)\).*', '\1') %}
+            {% set group = output | regex_replace('.*Group: \(([^)]+)\).*', '\1') %}
+            {% set mode_decimal = mode | int(base=8) %}
+            {% if mode_decimal <= 416 and owner == 'root' and (group == 'daemon' or group == 'root') %}
+              PASS: Access mode is {{ mode }} (octal, decimal {{ mode_decimal }}) which is <= 0640 (416 in decimal), owner is {{ owner }}, group is {{ group }}
+            {% else %}
+              FAIL: Access mode is {{ mode }} (octal, decimal {{ mode_decimal }}) which is not <= 0640 (416 in decimal) or owner is not root ({{ owner }}) or group is not daemon or root ({{ group }})
+            {% endif %}
+          {% else %}
+            FAIL: stat command failed or output empty
+          {% endif %}
+      when: at_installed
 
-    # Final report
+    # Requirement 4: Check if /etc/at.deny exists (only if at is installed)
+    - name: Req 4 - Check if /etc/at.deny exists
+      shell: |
+        [ -e /etc/at.deny ] && echo 'exists'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: at_installed
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Check if /etc/at.deny exists"
+        task_4_cmd: "[ -e /etc/at.deny ] && echo 'exists'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('PASS' if (result_4.stdout | trim == '') else 'FAIL') | trim }}"
+        rationale_4: >-
+          {% if result_4.stdout | trim == '' %}
+            PASS: file does not exist (command returns nothing)
+          {% else %}
+            FAIL: file exists
+          {% endif %}
+      when: at_installed
+
+    # Requirement 5: Check /etc/at.deny permissions (only if at is installed and at.deny exists)
+    - name: Req 5 - Check /etc/at.deny permissions
+      shell: |
+        {% raw %}
+        stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.deny
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      changed_when: false
+      when: at_installed and (result_4.stdout | trim == 'exists')
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Check /etc/at.deny permissions, owner, and group"
+        task_5_cmd: "stat -Lc 'Access: (%a/%A) Owner: (%U) Group: (%G)' /etc/at.deny"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set mode = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') %}
+            {% set owner = output | regex_replace('.*Owner: \(([^)]+)\).*', '\1') %}
+            {% set group = output | regex_replace('.*Group: \(([^)]+)\).*', '\1') %}
+            {% set mode_decimal = mode | int(base=8) %}
+            {% if mode_decimal <= 416 and owner == 'root' and (group == 'daemon' or group == 'root') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set mode = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\1') %}
+            {% set owner = output | regex_replace('.*Owner: \(([^)]+)\).*', '\1') %}
+            {% set group = output | regex_replace('.*Group: \(([^)]+)\).*', '\1') %}
+            {% set mode_decimal = mode | int(base=8) %}
+            {% if mode_decimal <= 416 and owner == 'root' and (group == 'daemon' or group == 'root') %}
+              PASS: Access mode is {{ mode }} (octal, decimal {{ mode_decimal }}) which is <= 0640 (416 in decimal), owner is {{ owner }}, group is {{ group }}
+            {% else %}
+              FAIL: Access mode is {{ mode }} (octal, decimal {{ mode_decimal }}) which is not <= 0640 (416 in decimal) or owner is not root ({{ owner }}) or group is not daemon or root ({{ group }})
+            {% endif %}
+          {% else %}
+            FAIL: stat command failed or output empty
+          {% endif %}
+      when: at_installed and (result_4.stdout | trim == 'exists')
+
+    # Requirement 6: Overall verification
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Overall verification"
+        task_6_cmd: "N/A"
+        task_6_rc: 0
+        data_6: "N/A"
+        status_6: >-
+          {% if status_1|trim == 'PASS' %}
+            {% if not at_installed %}
+              PASS
+            {% else %}
+              {% if status_2|trim == 'PASS' and status_3|trim == 'PASS' %}
+                {% if status_4|trim == 'PASS' or (status_4|trim == 'FAIL' and status_5|trim == 'PASS') %}
+                  PASS
+                {% else %}
+                  FAIL
+                {% endif %}
+              {% else %}
+                FAIL
+              {% endif %}
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_6: >-
+          {% if status_1|trim == 'PASS' %}
+            {% if not at_installed %}
+              PASS: at is not installed.
+            {% else %}
+              {% if status_2|trim == 'PASS' and status_3|trim == 'PASS' %}
+                {% if status_4|trim == 'PASS' %}
+                  PASS: at is installed, /etc/at.allow exists and has correct permissions, and /etc/at.deny does not exist.
+                {% elif status_4|trim == 'FAIL' and status_5|trim == 'PASS' %}
+                  PASS: at is installed, /etc/at.allow exists and has correct permissions, and /etc/at.deny exists but has correct permissions.
+                {% else %}
+                  FAIL: at is installed, but /etc/at.allow does not exist or has incorrect permissions, or /etc/at.deny exists and has incorrect permissions.
+                {% endif %}
+              {% else %}
+                FAIL: at is installed, but /etc/at.allow does not exist or has incorrect permissions.
+              {% endif %}
+            {% endif %}
+          {% else %}
+            FAIL: at installation check failed.
+          {% endif %}
+
+    # Generate compliance report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.4.2.1"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.2.1"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -167,8 +328,24 @@
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_6 | trim }}"
+          - "  Rationale: {{ rationale_6 | trim }}"
           - "========================================================"

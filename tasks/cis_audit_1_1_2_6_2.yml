@@ -1,0 +1,129 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_checkpoint: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.6.2
+    req_1: Check if a separate partition exists for /var/log
+    req_2: If a separate partition exists for /var/log, verify the nodev mount option is set
+    req_3: 'OVERALL Verify: Ensure nodev option set on /var/log partition'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    data_3: ""
+    status_3: "UNKNOWN"
+    rationale_3: "Not evaluated"
+
+    # Requirement 1: Check if a separate partition exists for /var/log
+- name: Req 1 - Check if separate partition exists for /var/log
+  shell: findmnt -kn /var/log
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check if separate partition exists for /var/log"
+    task_1_cmd: "findmnt -kn /var/log"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when command returns a mount point (output is not empty), indicating a separate partition exists' if (result_1.stdout | default('') | trim != '') else 'FAIL when output is empty (no separate partition)') | trim }}"
+
+    # Requirement 2: If a separate partition exists for /var/log, verify the nodev mount option is set
+- name: Req 2 - Verify nodev option set on /var/log partition
+  shell: findmnt -kn /var/log | grep -v nodev
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: result_1.stdout | default('') | trim != ''
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Verify nodev option set on /var/log partition"
+    task_2_cmd: "findmnt -kn /var/log | grep -v nodev"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% if result_2 is skipped %}
+        NA
+      {% else %}
+        {{ 'PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL' }}
+      {% endif %}
+    rationale_2: >-
+      {% if result_2 is skipped %}
+        Not applicable - no separate partition for /var/log
+      {% else %}
+        {{ 'PASS when command returns no output (empty string)' if (result_2.stdout | default('') | trim == '') else 'FAIL when any output is returned (indicating nodev option is NOT set)' }}
+      {% endif %}
+
+    # Requirement 3: OVERALL Verify: Ensure nodev option set on /var/log partition
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "OVERALL: Ensure nodev option set on /var/log partition"
+    task_3_cmd: "N/A (calculated from requirements 1 and 2)"
+    task_3_rc: 0
+    data_3: "N/A"
+    status_3: "{{ ('PASS' if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+    rationale_3: "{{ ('PASS when req_1=FAIL (no separate partition) OR (req_1=PASS AND req_2=PASS)' if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL when req_1=PASS AND req_2=FAIL') | trim }}"
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 1.1.2.6.2"
+    - "========================================================"
+    - "Reference: {{ cis_checkpoint }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_1_1_2_6_2'': status_3 | trim }] }}'

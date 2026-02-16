@@ -2,10 +2,10 @@
 - name: Data Collection for CIS 2.2.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.2.3"
-    req_1: "Check if the ypbind package is installed using command: rpm -q ypbind"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.2.3"
+    req_1: "Verify that the ypbind package is not installed using command: rpm -q ypbind"
     req_2: "OVERALL Verify: Ensure nis client is not installed"
 
   tasks:
@@ -18,8 +18,8 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Check if the ypbind package is installed using command: rpm -q ypbind
-    - name: Req 1 - Check ypbind package installation
+    # Requirement 1: Verify that the ypbind package is not installed using command: rpm -q ypbind
+    - name: "Req 1 - Check ypbind package installation"
       shell: rpm -q ypbind
       args:
         executable: /bin/bash
@@ -34,17 +34,22 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package ypbind is not installed') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the output is exactly package ypbind is not installed, FAIL otherwise' if (result_1.stdout | default('') | trim == 'package ypbind is not installed') else 'FAIL when output is not exactly package ypbind is not installed') | trim }}"
+        rationale_1: >-
+          {% if result_1.stdout | default('') | trim == 'package ypbind is not installed' %}
+            PASS when the command output is 'package ypbind is not installed', FAIL otherwise
+          {% else %}
+            FAIL: Expected 'package ypbind is not installed', got '{{ result_1.stdout | default('') | trim }}'
+          {% endif %}
 
     # Requirement 2: OVERALL Verify: Ensure nis client is not installed
     - name: Store requirement 2 details
       set_fact:
         task_2_name: "Overall verification"
-        task_2_cmd: "N/A (based on requirement 1)"
-        task_2_rc: "{{ task_1_rc }}"
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | trim == 'PASS') else 'FAIL because req_1 is not PASS') | trim }}"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: "N/A"
+        status_2: "{{ status_1 | default('FAIL') }}"
+        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | default('FAIL') == 'PASS') else 'FAIL: req_1 did not pass') | trim }}"
 
     - name: Generate compliance report
       debug:
@@ -52,7 +57,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.2.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -73,6 +78,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | trim }}"
-          - "  Rationale: {{ rationale_2 | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ ('PASS when req_1=PASS, FAIL otherwise' if (status_2 | default('FAIL') == 'PASS') else 'FAIL: req_1 did not pass') | trim }}"
           - "========================================================"

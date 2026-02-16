@@ -1,41 +1,27 @@
 ---
-- name: Data Collection for CIS checkpoint 1.1.1.3
+- name: Data Collection for CIS 1.1.1.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.3"
-    req_1: "Run script to verify hfs kernel module is NOT available in the filesystem"
-    req_2: "Verify the hfs kernel module is NOT loaded using command: lsmod | grep 'hfs'"
-    req_3: "Verify the hfs kernel module is NOT loadable by checking modprobe configuration"
-    req_4: "OVERALL Verify: Ensure hfs kernel module is not available"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.3"
+    req_1: "Run the provided CIS audit script to verify Ensure hfs kernel module is not available. Verify the hfs kernel module is not available on the system or has been disabled."
+    req_2: "OVERALL Verify: Ensure hfs kernel module is not available."
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        data_4: "Not collected yet"
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
 
-    # CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.3
-
-    # Requirement 1: Run script to verify hfs kernel module is NOT available in the filesystem
-    - name: "Req 1 - Create temporary audit script for hfs module availability"
+    # Requirement 1: Run CIS audit script for hfs module
+    - name: Req 1 - Create CIS audit script for hfs module
       copy:
-        dest: "/tmp/cis_audit_1.1.1.3_req1.sh"
+        dest: "/tmp/cis_audit_hfs.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -51,127 +37,95 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
 
-    - name: "Req 1 - Execute audit script for hfs module availability"
-      shell: "/tmp/cis_audit_1.1.1.3_req1.sh"
+    - name: Req 1 - Execute CIS audit script for hfs module
+      shell: "/tmp/cis_audit_hfs.sh"
       args:
         executable: /bin/bash
-      register: result_1
+      register: script_result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Check if hfs module is loaded (if script returned something)
+      shell: lsmod | grep 'hfs'
+      args:
+        executable: /bin/bash
+      register: lsmod_result_1
+      ignore_errors: true
+      changed_when: false
+      when: script_result_1.stdout | trim != ''
+
+    - name: Req 1 - Check if hfs module is loadable (if script returned something)
+      shell: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+hfs\b'
+      args:
+        executable: /bin/bash
+      register: modprobe_result_1
+      ignore_errors: true
+      changed_when: false
+      when: script_result_1.stdout | trim != ''
+
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_1.1.1.3_req1.sh"
+        path: "/tmp/cis_audit_hfs.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if hfs kernel module is available in filesystem"
-        task_1_cmd: "CIS audit script for hfs module availability"
-        task_1_rc: "{{ result_1.rc | default(-1) }}"
-        data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when script returns NO output (module not found) OR if the module is built into the kernel (also a passing state), FAIL when script returns output indicating the module exists as a loadable module"
+        task_1_name: "Execute CIS audit script and check hfs module status"
+        task_1_cmd: |
+          /tmp/cis_audit_hfs.sh; [if output] lsmod | grep 'hfs'; modprobe --showconfig | grep -P '\b(install|blacklist)\h+hfs\b'
+        task_1_rc: "{{ script_result_1.rc | default(-1) }}"
+        data_1: |
+          script output: {{ script_result_1.stdout | default('') | trim }}
+          lsmod output: {{ lsmod_result_1.stdout | default('Not run (no output from script)') | trim }}
+          modprobe output: {{ modprobe_result_1.stdout | default('Not run (no output from script)') | trim }}
+        status_1: >-
+          {% set script_out = script_result_1.stdout | default('') | trim %}
+          {% if script_out == '' %}
+            PASS
+          {% else %}
+            {% set lsmod_out = lsmod_result_1.stdout | default('') | trim %}
+            {% set modprobe_out = modprobe_result_1.stdout | default('') | trim %}
+            {% if lsmod_out == '' and 'blacklist hfs' in modprobe_out and ('install hfs /bin/false' in modprobe_out or 'install hfs /bin/true' in modprobe_out) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% set script_out = script_result_1.stdout | default('') | trim %}
+          {% if script_out == '' %}
+            PASS: hfs module is not available on the system or built into kernel
+          {% else %}
+            {% set lsmod_out = lsmod_result_1.stdout | default('') | trim %}
+            {% set modprobe_out = modprobe_result_1.stdout | default('') | trim %}
+            {% if lsmod_out == '' and 'blacklist hfs' in modprobe_out and ('install hfs /bin/false' in modprobe_out or 'install hfs /bin/true' in modprobe_out) %}
+              PASS: hfs module is available but not loaded and disabled via modprobe config
+            {% else %}
+              FAIL: hfs module is available and either loaded or not properly disabled
+            {% endif %}
+          {% endif %}
 
-    # Requirement 2: Verify the hfs kernel module is NOT loaded using command: lsmod | grep 'hfs'
-    - name: "Req 2 - Check if hfs kernel module is loaded"
-      shell: |
-        lsmod | grep 'hfs'
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim != ''
-
-    - name: Store requirement 2 details and determine status
+    # Requirement 2: OVERALL Verify
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if hfs kernel module is loaded"
-        task_2_cmd: "lsmod | grep 'hfs'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns NO output, FAIL when output shows the module is loaded"
-      when: data_1 | trim != ''
+        task_2_name: "Overall verification based on requirement 1"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: "Overall status based on requirement 1 result"
+        status_2: "{{ status_1 }}"
+        rationale_2: "Overall compliance is determined by requirement 1. PASS when requirement 1 passes, FAIL otherwise."
 
-    # Requirement 3: Verify the hfs kernel module is NOT loadable by checking modprobe configuration
-    - name: "Req 3 - Check modprobe configuration for hfs"
-      shell: |
-        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+hfs\b'
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim != ''
-
-    - name: Store requirement 3 details and determine status
-      set_fact:
-        task_3_name: "Check modprobe configuration for hfs"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+hfs\b'
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if (
-              'blacklist hfs' in result_3.stdout and
-              ('install hfs /bin/false' in result_3.stdout or 'install hfs /bin/true' in result_3.stdout)
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when output includes 'blacklist hfs' AND ('install hfs /bin/false' in output OR 'install hfs /bin/true' in output), FAIL otherwise"
-      when: data_1 | trim != ''
-
-    # Set NA status for requirements 2 and 3 when requirement 1 returns empty (module not available)
-    - name: Set NA status for requirements 2 and 3 when module not available
-      set_fact:
-        task_2_name: "Check if hfs kernel module is loaded"
-        task_2_cmd: "lsmod | grep 'hfs'"
-        task_2_rc: -1
-        data_2: "Not executed - module not available in filesystem"
-        status_2: "NA"
-        rationale_2: "Skipped - hfs kernel module not available in filesystem (req_1 returned empty)"
-        task_3_name: "Check modprobe configuration for hfs"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+hfs\b'
-        task_3_rc: -1
-        data_3: "Not executed - module not available in filesystem"
-        status_3: "NA"
-        rationale_3: "Skipped - hfs kernel module not available in filesystem (req_1 returned empty)"
-      when: data_1 | trim == ''
-
-    # Requirement 4: OVERALL Verify: Ensure hfs kernel module is not available
-    - name: Store requirement 4 details and determine overall status
-      set_fact:
-        task_4_name: "Overall verification for CIS 1.1.1.3"
-        task_4_cmd: "N/A - Combined check"
-        task_4_rc: 0
-        data_4: "Combined results from requirements 1-3"
-        status_4: >
-          {{ (
-            'PASS' if (
-              status_1 | trim == 'PASS' or
-              (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when (req_1=PASS - module not available) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS - module available but not loaded and disabled), FAIL otherwise"
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -190,24 +144,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: Overall compliance determined by requirement 2 which reflects requirement 1 status. PASS when hfs module is not available or properly disabled, FAIL otherwise."
           - "========================================================"

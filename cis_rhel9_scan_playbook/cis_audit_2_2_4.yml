@@ -1,11 +1,11 @@
 ---
-- name: Data Collection for CIS 2.2.4
+- name: Data Collection for CIS checkpoint 2.2.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.2.4"
-    req_1: "Check if telnet client package is installed using command: rpm -q telnet"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.2.4"
+    req_1: "Verify telnet client package is not installed using command: rpm -q telnet"
     req_2: "OVERALL Verify: Ensure telnet client is not installed"
 
   tasks:
@@ -18,9 +18,9 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Check if telnet client package is installed using command: rpm -q telnet
-    - name: Req 1 - Check telnet package installation
-      shell: rpm -q telnet
+    # Requirement 1: Verify telnet client package is not installed using command: rpm -q telnet
+    - name: "Req 1 - Check if telnet package is installed"
+      shell: "rpm -q telnet"
       args:
         executable: /bin/bash
       register: result_1
@@ -29,22 +29,35 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check telnet package installation"
+        task_1_name: "Check if telnet package is installed"
         task_1_cmd: "rpm -q telnet"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package telnet is not installed') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is exactly package telnet is not installed, FAIL otherwise' if (result_1.stdout | default('') | trim == 'package telnet is not installed') else 'FAIL when output is not exactly package telnet is not installed') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {{ ('PASS' if output == 'package telnet is not installed' else 'FAIL') | trim }}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == 'package telnet is not installed' %}
+            PASS when output is 'package telnet is not installed', FAIL otherwise
+          {% else %}
+            FAIL: Expected 'package telnet is not installed', got '{{ output }}'
+          {% endif %}
 
     # Requirement 2: OVERALL Verify: Ensure telnet client is not installed
-    - name: Store requirement 2 details
+    - name: "Req 2 - Overall compliance check"
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A (derived from requirement 1)"
-        task_2_rc: "{{ task_1_rc }}"
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | trim == 'PASS') else 'FAIL because req_1 is not PASS') | trim }}"
+        task_2_name: "Overall compliance check"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: "N/A"
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_2: >-
+          {% if status_1 | default('FAIL') | trim == 'PASS' %}
+            PASS when req_1=PASS
+          {% else %}
+            FAIL: req_1 status is {{ status_1 | default('FAIL') | trim }}
+          {% endif %}
 
     - name: Generate compliance report
       debug:
@@ -67,12 +80,12 @@
           - "  Task: {{ task_2_name | default('Task not recorded') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Data: {{ data_2 | default('N/A') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | trim }}"
-          - "  Rationale: {{ rationale_2 | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Overall status determined by requirement 1') | trim }}"
           - "========================================================"

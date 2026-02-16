@@ -1,77 +1,46 @@
 ---
-- name: Data Collection for CIS checkpoint 1.1.1.11
+- name: Data Collection for CIS Checkpoint 1.1.1.11
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.1.11"
-    req_1: "Verify currently mounted filesystem types using command: findmnt -Dkerno fstype | sort -u"
-    req_2: "Run script to generate list of all filesystem kernel modules installed on the system"
-    req_3: "Verify currently loaded kernel modules using command: lsmod"
-    req_4: "Compare installed filesystem kernel modules with loaded modules"
-    req_5: "Verify modules that are denylisted or set to be not loadable"
-    req_6: "Verify all filesystem kernel modules are both denylisted and set to be not loadable"
-    req_7: "OVERALL Verify: Ensure unused filesystems kernel modules are not available"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.11"
+    req_1: "Run the provided CIS audit script to verify Ensure unused filesystems kernel modules are not available. Verify filesystem kernel modules that are not in use on the system are disabled. Review currently loaded kernel modules to ensure they are needed and conform to local site policy."
+    req_2: "OVERALL Verify: Ensure unused filesystems kernel modules are not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        data_2: ""
-        data_3: ""
-        data_4: ""
-        data_5: ""
-        data_6: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        task_2_name: "Not executed"
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "N/A"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
-        task_6_name: "Not executed"
-        task_6_cmd: "N/A"
-        task_6_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
 
-    # Requirement 1: Verify currently mounted filesystem types
-    - name: "Req 1 - Get mounted filesystem types"
-      shell: |
-        findmnt -Dkerno fstype | sort -u
-      args:
-        executable: /bin/bash
-      register: result_1
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Store requirement 1 details
-      set_fact:
-        task_1_name: "Get mounted filesystem types"
-        task_1_cmd: "findmnt -Dkerno fstype | sort -u"
-        task_1_rc: "{{ result_1.rc | default(-1) }}"
-        data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ 'UNKNOWN' | trim }}"
-        rationale_1: "Cannot automatically verify against local site policy - manual review required"
-
-    # Requirement 2: Generate list of installed filesystem kernel modules
-    - name: "Req 2 - Create temporary audit script for installed modules"
+    # Requirement 1: Execute the complete CIS audit script
+    - name: Req 1 - Create complete CIS audit script for checkpoint 1.1.1.11
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_1.1.1.11.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
+             a_check=() a_output=() a_module=() a_output2=() a_output3=()
              l_search="$(readlink -e /usr/lib/modules/ || readlink -e /lib/modules/)"
-             a_module=()
+             IFS=$'\n' read -r -d '' -a a_mounted < <(findmnt -Dkerno fstype \
+             | sort -u && printf '\0' )
+             IFS=$'\n' read -r -d '' -a a_lsmod < <(lsmod | awk '{print $1}' && printf '\0' )
+             IFS=$'\n' read -r -d '' -a a_showconfig < <(modprobe --showconfig | \
+             grep -Pi -- '^\h*(blacklist|install)\h+' && printf '\0')
              while IFS= read -r -d $'\0' l_module_dir; do
                 if [ ! "$(basename "$l_module_dir")" = "nls" ]; then
                    while IFS= read -r -d $'\0' l_module_file; do
@@ -82,174 +51,123 @@
                    done < <(find -L "$l_module_dir" -mindepth 1 -maxdepth 1 -type f -print0)
                 fi
              done < <(find "$l_search"/**/kernel/fs/ -mindepth 1 -maxdepth 1 -type d ! -empty -print0)
-             printf '%s\n' "" "${a_module[@]}"
+             for l_module in "${a_module[@]}"; do
+                if grep -Psoiq -- '\b'"$l_module"'\b' <<< "${a_mounted[*]}"; then
+                   a_output+=("  - \"$l_module\"")
+                elif grep -Psoiq -- '\b'"$l_module"'\b' <<< "${a_lsmod[*]}"; then
+                   a_output2+=("  - \"$l_module\"")
+                elif ! grep -Psioq -- '\binstall\h+'"${l_module//-/_}"'\h+\H+\b' <<< "${a_showconfig[*]}" || \
+                ! grep -Psioq -- '\bblacklist\h+'"${l_module//-/_}"'\b' <<< "${a_showconfig[*]}"; then
+                   a_output3+=("  - \"$l_module\"")
+                fi
+             done
+             [ "${#a_output[@]}" -gt 0 ] && printf '%s\n' "" \
+             "- There are \"${#a_output[@]}\" kernel modules currently mounted:" "${a_output[@]}"
+             [ "${#a_output2[@]}" -gt 0 ] && printf '%s\n' "" \
+             "- There are \"${#a_output2[@]}\" kernel modules currently loaded:" "${a_output2[@]}"
+             [ "${#a_output3[@]}" -gt 0 ] && printf '%s\n' "" \
+             "- There are \"${#a_output3[@]}\" Kernel modules currently loadable:" "${a_output3[@]}"
           }
           {% endraw %}
-      register: script_created_2
-      when: data_1 | trim != ""
+      register: script_create_1
+      ignore_errors: true
 
-    - name: "Req 2 - Execute audit script for installed modules"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: Req 1 - Execute the complete CIS audit script
+      shell: "/tmp/cis_audit_1.1.1.11.sh"
       args:
         executable: /bin/bash
-      register: result_2
+      register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim != ""
 
-    - name: "Req 2 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_1.1.1.11.sh"
         state: absent
       ignore_errors: true
-      when: data_1 | trim != ""
 
-    - name: Store requirement 2 details
+    - name: Req 1 - Store requirement 1 details
       set_fact:
-        task_2_name: "Generate list of installed filesystem kernel modules"
-        task_2_cmd: "Complex bash script (see CIS procedure)"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.rc | default(-1) == 0) else 'FAIL') | trim }}"
-        rationale_2: "PASS when script executes successfully and outputs list, FAIL if script fails"
-      when: data_1 | trim != ""
+        task_1_name: "Execute complete CIS audit script for checkpoint 1.1.1.11"
+        task_1_cmd: "/tmp/cis_audit_1.1.1.11.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: |
+          {{ (result_1.stdout | default('')) + (result_1.stderr | default('') | replace('\n', ' ')) | trim }}
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if rc == 0 %}
+            {% if 'Kernel modules currently loadable' in output %}
+              FAIL
+            {% else %}
+              PASS
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set error = result_1.stderr | default('') | trim %}
+          {% if rc == 0 %}
+            {% if 'Kernel modules currently loadable' in output %}
+              FAIL: Found filesystem kernel modules that are loadable and not properly blacklisted/disabled
+            {% else %}
+              PASS: All unused filesystem kernel modules are properly blacklisted or disabled
+            {% endif %}
+          {% else %}
+            UNKNOWN: Audit script failed to execute (exit code {{ rc }}). Error: {{ error }}
+          {% endif %}
 
-    # Requirement 3: Verify currently loaded kernel modules
-    - name: "Req 3 - Get loaded kernel modules"
-      shell: |
-        lsmod
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim != ""
-
-    - name: Store requirement 3 details
+    # Requirement 2: Overall verification
+    - name: Req 2 - Store requirement 2 details
       set_fact:
-        task_3_name: "Get loaded kernel modules"
-        task_3_cmd: "lsmod"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.rc | default(-1) == 0) else 'FAIL') | trim }}"
-        rationale_3: "PASS when command executes successfully and outputs list, FAIL if command fails"
-      when: data_1 | trim != ""
+        task_2_name: "Overall compliance check"
+        task_2_cmd: "N/A"
+        task_2_rc: "0"
+        data_2: "Derived from requirement 1 audit results"
+        status_2: >-
+          {% if status_1 | trim == 'UNKNOWN' %}
+            UNKNOWN
+          {% else %}
+            {{ status_1 | trim }}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'UNKNOWN' %}
+            UNKNOWN: Cannot determine overall compliance due to audit script failure in requirement 1
+          {% elif status_1 | trim == 'PASS' %}
+            PASS: All requirements met - unused filesystem kernel modules are not available
+          {% else %}
+            FAIL: Unused filesystem kernel modules are available (not blacklisted or disabled)
+          {% endif %}
 
-    # Requirement 4: Compare installed vs loaded modules
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Compare installed vs loaded modules"
-        task_4_cmd: "Manual comparison required"
-        task_4_rc: 0
-        data_4: |
-          Installed modules: {{ data_2 }}\nLoaded modules: {{ data_3 }}
-        status_4: "{{ 'UNKNOWN' | trim }}"
-        rationale_4: "Cannot automatically verify against local site policy - manual review required"
-      when: data_1 | trim != ""
-
-    # Requirement 5: Verify denylisted or not loadable modules
-    - name: "Req 5 - Get modprobe configuration"
-      shell: |
-        modprobe --showconfig | grep -Pi -- '^\h*(blacklist|install)\h+'
-      args:
-        executable: /bin/bash
-      register: result_5
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim != ""
-
-    - name: Store requirement 5 details
-      set_fact:
-        task_5_name: "Get modprobe configuration"
-        task_5_cmd: |
-          modprobe --showconfig | grep -Pi -- '^\h*(blacklist|install)\h+'
-        task_5_rc: "{{ result_5.rc | default(-1) }}"
-        data_5: "{{ result_5.stdout | default('') | trim }}"
-        status_5: "{{ ('PASS' if (result_5.rc | default(-1) == 0) else 'FAIL') | trim }}"
-        rationale_5: "PASS when command executes successfully and outputs list, FAIL if command fails"
-      when: data_1 | trim != ""
-
-    # Requirement 6: Verify all modules have blacklist and install rules
-    - name: Store requirement 6 details
-      set_fact:
-        task_6_name: "Verify all modules have blacklist and install rules"
-        task_6_cmd: "Manual verification required"
-        task_6_rc: 0
-        data_6: |
-          Installed modules: {{ data_2 }}\nModprobe config: {{ data_5 }}
-        status_6: "{{ 'UNKNOWN' | trim }}"
-        rationale_6: "Manual review required to verify all installed modules have blacklist and install rules"
-      when: data_1 | trim != ""
-
-    # Requirement 7: OVERALL Verify
-    - name: Store requirement 7 details
-      set_fact:
-        status_7: "{{ 'UNKNOWN' | trim }}"
-        rationale_7: "Manual checkpoint - cannot automatically determine compliance"
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.11"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.11"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Task: {{ task_5_name }}"
-          - "  Command: {{ task_5_cmd }}"
-          - "  Exit code: {{ task_5_rc }}"
-          - "  Data: {{ data_5 | default('') | trim }}"
-          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 6 - {{ req_6 }}:"
-          - "  Task: {{ task_6_name }}"
-          - "  Command: {{ task_6_cmd }}"
-          - "  Exit code: {{ task_6_rc }}"
-          - "  Data: {{ data_6 | default('') | trim }}"
-          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_6 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_7 | trim }}"
-          - "  Rationale: {{ rationale_7 | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: {{ ('PASS when req_1=PASS, FAIL otherwise' if status_1|trim == 'PASS' else ('UNKNOWN: Audit script failed' if status_1|trim == 'UNKNOWN' else 'FAIL: Requirement 1 failed')) | trim }}"
           - "========================================================"

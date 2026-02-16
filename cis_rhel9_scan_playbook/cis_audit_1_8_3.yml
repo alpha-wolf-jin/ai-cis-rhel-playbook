@@ -2,12 +2,11 @@
 - name: Data Collection for CIS 1.8.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.8.3"
-    req_1: "Check if GNOME Display Manager (GDM) is installed"
-    req_2: "If GDM is installed, verify the disable-user-list option is enabled in the GDM configuration"
-    req_3: "OVERALL Verify: Ensure GDM disable-user-list option is enabled"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.3"
+    req_1: "Run the provided CIS audit script to verify that the disable-user-list option is enabled or GNOME isn't installed"
+    req_2: "OVERALL Verify: Ensure GDM disable-user-list option is enabled"
 
   tasks:
     - name: Initialize data variables
@@ -18,83 +17,98 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
-    # Requirement 1: Check if GNOME Display Manager (GDM) is installed
-    - name: Req 1 - Check if GDM is installed
-      shell: rpm -q gdm
+    - name: Req 1 - Execute CIS audit script for GDM disable-user-list
+      copy:
+        dest: "/tmp/cis_audit_1.8.3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          {
+             l_pkgoutput=""
+             if command -v dpkg-query > /dev/null 2>&1; then
+                l_pq="dpkg-query -W"
+             elif command -v rpm > /dev/null 2>&1; then
+                l_pq="rpm -q"
+             fi
+             l_pcl="gdm gdm3" # Space separated list of packages to check
+             for l_pn in $l_pcl; do
+                $l_pq "$l_pn" > /dev/null 2>&1 && l_pkgoutput="$l_pkgoutput\n - Package: \"$l_pn\" exists on the system\n - checking configuration"
+             done
+             if [ -n "$l_pkgoutput" ]; then
+                output="" output2=""
+                l_gdmfile="$(grep -Pril '^\h*disable-user-list\h*=\h*true\b' /etc/dconf/db)"
+                if [ -n "$l_gdmfile" ]; then
+                   output="$output\n - The \"disable-user-list\" option is enabled in \"$l_gdmfile\""
+                   l_gdmprofile="$(awk -F\/ '{split($(NF-1),a,".");print a[1]}' <<< "$l_gdmfile")"
+                   if grep -Pq "^\h*system-db:$l_gdmprofile" /etc/dconf/profile/"$l_gdmprofile"; then
+                      output="$output\n - The \"$l_gdmprofile\" exists"
+                   else
+                      output2="$output2\n - The \"$l_gdmprofile\" doesn't exist"
+                   fi
+                   if [ -f "/etc/dconf/db/$l_gdmprofile" ]; then
+                      output="$output\n - The \"$l_gdmprofile\" profile exists in the dconf database"
+                   else
+                      output2="$output2\n - The \"$l_gdmprofile\" profile doesn't exist in the dconf database"
+                   fi
+                else
+                   output2="$output2\n - The \"disable-user-list\" option is not enabled"
+                fi
+                if [ -z "$output2" ]; then
+                   echo -e "$l_pkgoutput\n- Audit result:\n   *** PASS: ***\n$output\n"
+                else
+                   echo -e "$l_pkgoutput\n- Audit Result:\n   *** FAIL: ***\n$output2\n"
+                   [ -n "$output" ] && echo -e "$output\n"
+                fi
+             else
+                echo -e "\n\n - GNOME Desktop Manager isn't installed\n - Recommendation is Not Applicable\n- Audit result:\n  *** PASS ***\n"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_1.8.3.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_1.8.3.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if GDM is installed"
-        task_1_cmd: "rpm -q gdm"
+        task_1_name: "Execute CIS audit script for GDM disable-user-list"
+        task_1_cmd: "/tmp/cis_audit_1.8.3.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim is search('package gdm is not installed')) else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output indicates package is NOT installed (e.g., package gdm is not installed), FAIL when package is installed' if (result_1.stdout | default('') | trim is search('package gdm is not installed')) else 'FAIL when package is installed') | trim }}"
-
-    # Requirement 2: If GDM is installed, verify disable-user-list option is enabled
-    - name: Req 2 - Check disable-user-list option
-      shell: grep -E '^[[:space:]]*disable-user-list[[:space:]]*=' /etc/dconf/db/gdm.d/*
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: status_1 | trim == 'FAIL'
+        status_1: "{{ ('PASS' if ('** PASS **' in result_1.stdout or '*** PASS: ***' in result_1.stdout or '*** PASS ***' in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check disable-user-list option"
-        task_2_cmd: "grep -E '^[[:space:]]*disable-user-list[[:space:]]*=' /etc/dconf/db/gdm.d/*"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA
-          {% else %}
-            {% if result_2.stdout | default('') | trim is search('disable-user-list=true') %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% endif %}
-        rationale_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA - GDM not installed
-          {% else %}
-            {% if result_2.stdout | default('') | trim is search('disable-user-list=true') %}
-              PASS when the output contains 'disable-user-list=true'
-            {% else %}
-              FAIL when the output is empty, contains 'disable-user-list=false', or contains any other value
-            {% endif %}
-          {% endif %}
+        task_2_name: "Overall verification"
+        task_2_cmd: "N/A - Derived from requirement 1"
+        task_2_rc: 0
+        data_2: "N/A"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
-    # Requirement 3: OVERALL Verify
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Overall compliance check"
-        task_3_cmd: "N/A - Calculated from previous results"
-        task_3_rc: 0
-        data_3: "N/A"
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS')) else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS), FAIL otherwise' if (status_1 | trim == 'PASS' or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS')) else 'FAIL otherwise') | trim }}"
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.8.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -113,16 +127,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
           - "========================================================"

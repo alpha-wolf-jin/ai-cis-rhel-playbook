@@ -2,12 +2,12 @@
 - name: Data Collection for CIS checkpoint 1.1.2.2.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.2.2.3"
-    req_1: "Verify if /dev/shm is mounted as a separate partition"
-    req_2: "Verify the nosuid mount option is set on /dev/shm partition"
-    req_3: "OVERALL Verify: Ensure nosuid option set on /dev/shm partition"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.3"
+    req_1: "Check if /dev/shm is a separate mount point"
+    req_2: "Verify the nosuid mount option is set on /dev/shm"
+    req_3: "Ensure nosuid option set on /dev/shm partition"
 
   tasks:
     - name: Initialize data variables
@@ -18,13 +18,16 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
+        task_3_name: "Overall verification"
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify if /dev/shm is mounted as a separate partition
-    - name: Req 1 - Check if /dev/shm is separate partition
-      shell: findmnt -kn /dev/shm
+    # Requirement 1: Check if /dev/shm is a separate mount point
+    - name: "Req 1 - Check if /dev/shm is a separate mount point"
+      shell: |
+        {% raw %}
+        findmnt -kn /dev/shm
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -33,68 +36,67 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if /dev/shm is separate partition"
+        task_1_name: "Check if /dev/shm is a separate mount point"
         task_1_cmd: "findmnt -kn /dev/shm"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns output (separate mount exists), FAIL when no output (no separate partition)') | trim }}"
+        rationale_1: "{{ ('PASS: /dev/shm is a separate mount point' if (result_1.stdout | default('') | trim != '') else 'FAIL: /dev/shm is not a separate mount point') | trim }}"
 
-    # Requirement 2: Verify the nosuid mount option is set
-    - name: Req 2 - Check if nosuid option is set
-      shell: findmnt -kn /dev/shm | grep -v 'nosuid'
+    # Requirement 2: Verify the nosuid mount option is set on /dev/shm
+    # Only execute if /dev/shm is a separate mount (based on audit procedure)
+    - name: "Req 2 - Verify nosuid mount option is set on /dev/shm"
+      shell: |
+        {% raw %}
+        findmnt -kn /dev/shm | grep -v 'nosuid'
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'PASS'
+      when: data_1 | default('') | trim != ''
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if nosuid option is set"
+        task_2_name: "Verify nosuid mount option is set on /dev/shm"
         task_2_cmd: "findmnt -kn /dev/shm | grep -v 'nosuid'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
-          {% else %}
+          {% if result_2 is skipped %}
             NA
+          {% else %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
           {% endif %}
         rationale_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            {{ ('PASS when command returns NO output (nosuid present), FAIL when output returned (nosuid missing)') | trim }}
+          {% if result_2 is skipped %}
+            Not applicable: /dev/shm is not a separate mount point
           {% else %}
-            Not applicable - /dev/shm not a separate partition
+            {{ ('PASS: nosuid option is set on /dev/shm' if (result_2.stdout | default('') | trim == '') else 'FAIL: nosuid option is not set on /dev/shm') | trim }}
           {% endif %}
 
-    # Requirement 3: OVERALL Verify
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall compliance check"
-        task_3_cmd: "N/A - Calculated from previous results"
-        task_3_rc: 0
-        data_3: "N/A"
+        data_3: "Overall verification based on requirements 1 and 2"
         status_3: >-
-          {% if status_1 | trim == 'FAIL' %}
+          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
             PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+          {% elif (status_1 | default('FAIL') | trim == 'PASS') and (status_2 | default('NA') | trim in ['PASS', 'NA']) %}
             PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL
           {% else %}
-            UNKNOWN
+            FAIL
           {% endif %}
         rationale_3: >-
-          {% if status_1 | trim == 'FAIL' %}
-            PASS when no separate partition (N/A)
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS when separate partition exists AND nosuid option is set
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL when separate partition exists BUT nosuid option is NOT set
+          {% if status_1 | default('FAIL') | trim == 'FAIL' %}
+            PASS: /dev/shm is not a separate mount (check not applicable)
+          {% elif (status_1 | default('FAIL') | trim == 'PASS') and (status_2 | default('NA') | trim == 'PASS') %}
+            PASS: /dev/shm is a separate mount and nosuid option is set
+          {% elif (status_1 | default('FAIL') | trim == 'PASS') and (status_2 | default('NA') | trim == 'NA') %}
+            PASS: Requirement 2 not applicable based on audit procedure logic
           {% else %}
-            Cannot determine overall status
+            FAIL: /dev/shm is a separate mount but nosuid option is not set
           {% endif %}
 
     - name: Generate compliance report

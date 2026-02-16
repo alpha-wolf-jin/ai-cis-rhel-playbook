@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""
+Convert existing CIS RHEL 9 playbooks to task playbooks for site.yml.
+
+This script converts playbooks from ./cis_rhel9_scan_playbook/ to task playbooks
+in ./tasks/ directory. The conversion:
+1. Removes the play structure (hosts, become, gather_facts, vars)
+2. Converts vars section to a "Initialize meta data variables" set_fact task
+3. Renames "Initialize data variables" to "Initialize execution data variables"
+4. Adds "Set HTML Report Params" task before the final report
+5. Extracts checkpoint ID from filename for the status variable name
+"""
+
+import os
+import re
+import yaml
+import subprocess
+import sys, io
+import copy
+from pathlib import Path
+
+from ruamel.yaml import YAML
+import sys
+
+def convert_playbook_to_tasks(input_file):
+    yaml = YAML()
+    yaml.preserve_quotes = True
+
+    # sequence=3, offset=2 creates exactly one space after the dash
+    # mapping=2 ensures child properties are indented 2 spaces
+    yaml.indent(mapping=2, sequence=2, offset=0)
+
+    yaml.width = 4096
+
+    try:
+        with open(input_file, 'r') as f:
+            data = yaml.load(f)
+
+        if isinstance(data, list) and 'tasks' in data[0]:
+            tasks = data[0]['tasks']
+
+            # This will output the tasks with the specific 1-space rule
+            #yaml.dump(tasks, sys.stdout)
+
+            # 1. Create the buffer
+            stream = io.StringIO()
+            
+            # 2. Dump into the buffer (This returns None, but fills 'stream')
+            yaml.dump(tasks, stream)
+            
+            # 3. Capture the content from the buffer
+            tasks_string = stream.getvalue()
+            
+            return tasks_string
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+def extract_checkpoint_id(filename):
+    """Extract checkpoint ID from filename (e.g., cis_audit_6_3_3_12.yml -> 6.3.3.12)."""
+    # Match pattern: cis_audit_<numbers_and_underscores_or_dots>.yml
+    # Handle both formats: cis_audit_6_3_3_12.yml and cis_audit_1.1.1.1.yml
+    match = re.search(r'cis_audit_([\d_\.]+)\.yml', filename)
+    if match:
+        checkpoint_id = match.group(1)
+        # Replace underscores with dots to get the checkpoint ID format
+        checkpoint_id = checkpoint_id.replace('_', '.')
+        return checkpoint_id
+    return None
+
+
+def find_last_status_variable(playbook_content):
+    """Find the last status variable name (e.g., status_3) from the playbook."""
+    # Look for status_N patterns in set_fact tasks
+    status_pattern = r'status_(\d+)'
+    matches = re.findall(status_pattern, playbook_content)
+    if matches:
+        # Return the highest number
+        max_num = max(int(m) for m in matches)
+        return f"status_{max_num}"
+    return None
+
+
+def convert_playbook(source_file, target_file, checkpoint_id):
+    """Convert a playbook from source to target format."""
+    print(f"\n📝 Converting: {source_file.name}")
+    
+    with open(source_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+
+    # Parse YAML to understand structure
+    try:
+        playbook_data = yaml.safe_load(content)
+    except yaml.YAMLError as e:
+        print(f"❌ Error parsing YAML: {e}")
+        return False
+    
+    if not playbook_data or not isinstance(playbook_data, list) or len(playbook_data) == 0:
+        print(f"❌ Invalid playbook structure")
+        return False
+    
+    play = playbook_data[0]
+    if not isinstance(play, dict) or 'tasks' not in play:
+        print(f"❌ Playbook doesn't have expected structure")
+        return False
+    
+    # Extract vars section
+    vars_section = play.get('vars', {})
+
+    # Find the last status variable
+    last_status_var = find_last_status_variable(content)
+    if not last_status_var:
+        print(f"⚠️  Warning: Could not find last status variable, using status_1")
+        last_status_var = "status_1"
+    
+    # Build new task list
+    first_task = []
+    last_task = []
+    
+    # 1. Add "Initialize meta data variables" task (convert vars to set_fact)
+    metadata_task = {
+        'name': 'Initialize meta data variables',
+        'set_fact': vars_section
+    }
+
+    #print(metadata_task)
+    #ok = input("metadata_task:")
+
+    import copy
+    
+    first_task = [copy.deepcopy(metadata_task)]
+
+
+    # 2. Copy all tasks from source as-is (no changes except indentation will be handled by YAML dump)
+    #new_tasks.extend(tasks)
+    
+    # 3. Add "Set HTML Report Params" as the last task
+    checkpoint_id_underscore = checkpoint_id.replace('.', '_')
+    html_report_task = {
+        'name': 'Set HTML Report Params',
+        'set_fact': {
+            'audit_result': "{{ audit_result | default([]) + [{ 'status_" + checkpoint_id_underscore + "': " + last_status_var + " | trim }] }}"
+        }
+    }
+    last_task.append(html_report_task)
+
+
+    # Build new playbook content - tasks as a YAML list (not wrapped in play)
+    # Use YAML dump to preserve original structure as much as possible
+    
+    first_content = yaml.dump(
+        first_task,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=1000
+    )
+
+    last_content  = yaml.dump(
+        last_task,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+        width=1000
+    )
+
+    first_content = "---\n" + first_content
+
+    # Add blank lines between tasks (tasks start with "- name:")
+    source_tasks = convert_playbook_to_tasks(source_file)
+    #print(type(source_tasks))
+    new_content = first_content + "\n" + source_tasks + "\n" + last_content
+    
+    # Write to target file
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(target_file, 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    
+    print(f"✅ Converted to: {target_file}")
+    return True
+
+
+def test_playbook(playbook_file, checkpoint_id, test_host):
+    """Test the converted playbook using ansible-navigator."""
+    print(f"\n🧪 Testing: {playbook_file.name}")
+    
+    # Get ansible-navigator path
+    ansible_nav = get_ansible_navigator_path()
+    if not ansible_nav:
+        print("❌ ansible-navigator not found, skipping test")
+        return False
+    
+    # Test with site.yml
+    cmd = [
+        ansible_nav, 'run',
+        'site.yml',
+        '-i', f'{test_host},',
+        '-u', 'root',
+        '--mode', 'stdout',
+        '-e', f'index="{checkpoint_id}"'
+    ]
+    
+    print(f"Running: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+        
+        if result.returncode == 0:
+            print(f"✅ Test passed for {playbook_file.name}")
+            return True
+        else:
+            print(f"❌ Test failed for {playbook_file.name}")
+            print(f"Return code: {result.returncode}")
+            print(f"STDOUT:\n{result.stdout[:1000]}")
+            print(f"STDERR:\n{result.stderr[:1000]}")
+            return False
+    except subprocess.TimeoutExpired:
+        print(f"❌ Test timed out for {playbook_file.name}")
+        return False
+    except Exception as e:
+        print(f"❌ Error testing {playbook_file.name}: {e}")
+        return False
+
+
+def get_ansible_navigator_path():
+    """Find ansible-navigator executable."""
+    # Try common paths
+    common_paths = [
+        'ansible-navigator',
+        '/usr/local/bin/ansible-navigator',
+        '/usr/bin/ansible-navigator',
+    ]
+    
+    for path in common_paths:
+        try:
+            result = subprocess.run(
+                [path, '--version'],
+                capture_output=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return path
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    
+    # Try which/whereis
+    try:
+        result = subprocess.run(
+            ['which', 'ansible-navigator'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except:
+        pass
+    
+    return None
+
+
+def fix_playbook_issues(playbook_file, checkpoint_id, test_host):
+    """Fix common issues in converted playbook based on test results."""
+    print(f"\n🔧 Attempting to fix issues in: {playbook_file.name}")
+    
+    with open(playbook_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Common fixes:
+    # 1. Ensure proper YAML formatting
+    # 2. Fix indentation issues
+    # 3. Ensure all tasks are properly formatted
+    
+    # Parse and re-serialize to fix formatting
+    try:
+        tasks = yaml.safe_load_all(content)
+        fixed_content = "---\n"
+        for task in tasks:
+            if task:
+                fixed_content += yaml.dump([task], default_flow_style=False, sort_keys=False, allow_unicode=True)
+                fixed_content += "\n"
+        
+        with open(playbook_file, 'w', encoding='utf-8') as f:
+            f.write(fixed_content)
+        
+        print(f"✅ Fixed formatting issues")
+        return True
+    except Exception as e:
+        print(f"❌ Error fixing playbook: {e}")
+        return False
+
+
+def main():
+    """Main conversion function."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description='Convert CIS RHEL 9 playbooks to task playbooks for site.yml'
+    )
+    parser.add_argument(
+        '--source-dir',
+        type=str,
+        default='./cis_rhel9_scan_playbook',
+        help='Source directory containing playbooks (default: ./cis_rhel9_scan_playbook)'
+    )
+    parser.add_argument(
+        '--target-dir',
+        type=str,
+        default='./tasks',
+        help='Target directory for task playbooks (default: ./tasks)'
+    )
+    parser.add_argument(
+        '--test-host',
+        type=str,
+        default='192.168.122.57',
+        help='Test host for validation (default: 192.168.122.57)'
+    )
+    parser.add_argument(
+        '--skip-test',
+        action='store_true',
+        help='Skip testing converted playbooks'
+    )
+    parser.add_argument(
+        '--file',
+        type=str,
+        default=None,
+        help='Convert only a specific file (default: convert all)'
+    )
+    
+    args = parser.parse_args()
+    
+    source_dir = Path(args.source_dir)
+    target_dir = Path(args.target_dir)
+    
+    if not source_dir.exists():
+        print(f"❌ Source directory does not exist: {source_dir}")
+        return 1
+    
+    # Find all playbook files
+    if args.file:
+        playbook_files = [source_dir / args.file]
+        if not playbook_files[0].exists():
+            print(f"❌ File not found: {playbook_files[0]}")
+            return 1
+    else:
+        playbook_files = list(source_dir.glob('cis_audit_*.yml'))
+    
+    if not playbook_files:
+        print(f"❌ No playbook files found in {source_dir}")
+        return 1
+    
+    print(f"📦 Found {len(playbook_files)} playbook(s) to convert")
+    print(f"   Source: {source_dir}")
+    print(f"   Target: {target_dir}")
+    
+    success_count = 0
+    skipped_count = 0
+    failed_files = []
+    
+    for source_file in sorted(playbook_files):
+        # Extract checkpoint ID
+        checkpoint_id = extract_checkpoint_id(source_file.name)
+        if not checkpoint_id:
+            print(f"⚠️  Warning: Could not extract checkpoint ID from {source_file.name}, skipping")
+            failed_files.append(source_file.name)
+            continue
+        
+        # Target file
+        target_file = target_dir / source_file.name
+        
+        # Check if target exists and is newer than source (skip conversion if so)
+        if target_file.exists():
+            source_mtime = source_file.stat().st_mtime
+            target_mtime = target_file.stat().st_mtime
+            if target_mtime >= source_mtime:
+                print(f"⏭️  Skipping {source_file.name} (target is newer or same age as source)")
+                success_count += 1
+                skipped_count += 1
+                continue
+        
+        # Convert
+        if convert_playbook(source_file, target_file, checkpoint_id):
+            success_count += 1
+            
+            # Test if requested
+            if not args.skip_test:
+                if not test_playbook(target_file, checkpoint_id, args.test_host):
+                    # Try to fix and retest
+                    if fix_playbook_issues(target_file, checkpoint_id, args.test_host):
+                        if not test_playbook(target_file, checkpoint_id, args.test_host):
+                            failed_files.append(source_file.name)
+                    else:
+                        failed_files.append(source_file.name)
+        else:
+            failed_files.append(source_file.name)
+    
+    # Summary
+    print("\n" + "=" * 80)
+    print("📊 CONVERSION SUMMARY")
+    print("=" * 80)
+    print(f"✅ Successfully converted: {success_count}/{len(playbook_files)}")
+    if skipped_count > 0:
+        print(f"⏭️  Skipped (already up-to-date): {skipped_count}")
+    if failed_files:
+        print(f"❌ Failed files ({len(failed_files)}):")
+        for f in failed_files:
+            print(f"   - {f}")
+    print("=" * 80)
+    
+    return 0 if not failed_files else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+

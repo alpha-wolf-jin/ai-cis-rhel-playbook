@@ -1,6 +1,5 @@
 ---
-# Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.7
-- name: Data Collection for CIS RHEL 9 Benchmark v2.0.0 checkpoint 7.1.7
+- name: Data Collection for CIS Checkpoint 7.1.7
   hosts: all
   become: yes
   gather_facts: false
@@ -19,10 +18,11 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    - name: "Req 1 - Verify /etc/gshadow permissions and ownership"
+    # Requirement 1: Verify permissions, ownership, and group of /etc/gshadow
+    - name: "Req 1 - Verify /etc/gshadow permissions"
       shell: |
         {% raw %}
-        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'  /etc/gshadow
+        stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/gshadow
         {% endraw %}
       args:
         executable: /bin/bash
@@ -32,22 +32,41 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Req 1 - Verify /etc/gshadow permissions and ownership"
-        task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)'  /etc/gshadow"
+        task_1_name: "Verify /etc/gshadow permissions"
+        task_1_cmd: "stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/gshadow"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output shows Access: (0/----------) AND Uid: ( 0/ root) AND Gid: ( 0/ root), FAIL otherwise') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if "Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)" in output %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if "Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)" in output %}
+            PASS when output shows Access: (0/----------) AND Uid: ( 0/ root) AND Gid: ( 0/ root)
+          {% else %}
+            FAIL: Expected "Access: (0/----------)  Uid: ( 0/ root) Gid: ( 0/ root)", got "{{ output }}"
+          {% endif %}
 
+    # Requirement 2: OVERALL Verify: Ensure permissions on /etc/gshadow are configured
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Req 2 - OVERALL Verify: Ensure permissions on /etc/gshadow are configured"
-        task_2_cmd: "N/A"
-        task_2_rc: "N/A"
-        data_2: "N/A"
-        status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
+        task_2_name: "Overall verify /etc/gshadow permissions"
+        task_2_cmd: "N/A (Overall check)"
+        task_2_rc: "0"
+        data_2: "N/A (Overall check)"
+        status_2: "{{ status_1 | default('UNKNOWN') }}"
+        rationale_2: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS when req_1=PASS
+          {% else %}
+            FAIL: req_1 is not PASS
+          {% endif %}
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:

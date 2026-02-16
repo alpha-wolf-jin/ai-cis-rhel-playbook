@@ -2,9 +2,10 @@
 - name: Data Collection for CIS checkpoint 1.7.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.7.4"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.4"
+    
     req_1: "Check if /etc/motd file exists"
     req_2: "If /etc/motd exists, verify its file permissions"
     req_3: "If /etc/motd exists, verify its owner UID"
@@ -12,14 +13,8 @@
     req_5: "If /etc/motd exists, verify its group GID"
     req_6: "If /etc/motd exists, verify its group name"
     req_7: "OVERALL Verify: Ensure access to /etc/motd is configured"
-    req_8: "Add comment referencing CIS RHEL 9 Benchmark v4.0.0, checkpoint 1.7.4"
 
   tasks:
-    - name: Check OS compatibility
-      ansible.builtin.set_fact:
-        os_compatible: "{{ ansible_distribution == 'RedHat' and ansible_distribution_major_version == '9' }}"
-        os_mismatch_message: "Playbook designed for RHEL 9, found {{ ansible_distribution }} {{ ansible_distribution_major_version }}"
-
     - name: Initialize data variables
       set_fact:
         task_1_name: "Not executed"
@@ -43,39 +38,12 @@
         task_7_name: "Not executed"
         task_7_cmd: "N/A"
         task_7_rc: -1
-        task_8_name: "Not executed"
-        task_8_cmd: "N/A"
-        task_8_rc: -1
-        # Initialize status variables to UNKNOWN for all requirements
-        status_1: "UNKNOWN"
-        status_2: "UNKNOWN"
-        status_3: "UNKNOWN"
-        status_4: "UNKNOWN"
-        status_5: "UNKNOWN"
-        status_6: "UNKNOWN"
-        status_7: "UNKNOWN"
-        status_8: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        rationale_2: "Not evaluated"
-        rationale_3: "Not evaluated"
-        rationale_4: "Not evaluated"
-        rationale_5: "Not evaluated"
-        rationale_6: "Not evaluated"
-        rationale_7: "Not evaluated"
-        rationale_8: "Not evaluated"
-        data_1: ""
-        data_2: ""
-        data_3: ""
-        data_4: ""
-        data_5: ""
-        data_6: ""
-        data_7: ""
-        data_8: ""
 
-    # Requirement 1: Check if /etc/motd file exists using exact audit procedure command
-    - name: Req 1 - Check if /etc/motd exists
+    - name: Req 1 - Check if /etc/motd file exists using CIS audit procedure
       shell: |
-        [ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/motd
+        {% raw %}
+        [ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)' /etc/motd
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -84,31 +52,29 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if /etc/motd file exists"
-        task_1_cmd: "[ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/motd"
+        task_1_name: "Check if /etc/motd exists using CIS audit procedure"
+        task_1_cmd: "[ -e /etc/motd ] && stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)' /etc/motd"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% if result_1.rc == 0 and data_1 == '' %}
-            PASS
-          {% elif result_1.rc == 0 and data_1 != '' %}
-            FAIL
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: "PASS when file does NOT exist (nothing returned), FAIL when file exists (proceed to next requirement)"
-        # Store the parsed output for use in subsequent requirements
-        parsed_output: "{{ result_1.stdout | default('') | trim }}"
+          {% set output = result_1.stdout | default('') | trim %}
+          {{ 'PASS' if output == '' else 'FAIL' }}
+        rationale_1: "PASS when file does NOT exist (nothing returned), FAIL when file exists"
 
-    # Requirement 2: Verify file permissions using exact command from requirements
-    - name: Req 2 - Verify /etc/motd file permissions
-      shell: stat -Lc '%#a' /etc/motd
+    - name: Req 2 - Verify file permissions if /etc/motd exists
+      shell: |
+        {% raw %}
+        if [ -e /etc/motd ]; then
+          stat -Lc '%#a' /etc/motd
+        else
+          echo "FILE_NOT_EXIST"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 == 'FAIL'
 
     - name: Store requirement 2 details
       set_fact:
@@ -117,29 +83,30 @@
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if status_1 == 'PASS' %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == 'FILE_NOT_EXIST' %}
             NA
-          {% elif result_2.rc == 0 and data_2 != '' %}
-            {% set perm = data_2 | int %}
-            {% if perm <= 644 %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+          {% elif output | int(base=8) <= 420 %}
+            PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_2: "PASS when numeric output is 644 or more restrictive (i.e., 644, 640, 600, 444, 440, 400), FAIL otherwise"
+        rationale_2: "PASS when output is '0644' or a more restrictive numeric mode (e.g., 0640, 0600, 0400), FAIL otherwise, NA when file doesn't exist"
 
-    # Requirement 3: Verify owner UID using exact command from requirements
-    - name: Req 3 - Verify /etc/motd owner UID
-      shell: stat -Lc '%u' /etc/motd
+    - name: Req 3 - Verify owner UID if /etc/motd exists
+      shell: |
+        {% raw %}
+        if [ -e /etc/motd ]; then
+          stat -Lc '%u' /etc/motd
+        else
+          echo "FILE_NOT_EXIST"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: status_1 == 'FAIL'
 
     - name: Store requirement 3 details
       set_fact:
@@ -148,24 +115,24 @@
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: >-
-          {% if status_1 == 'PASS' %}
-            NA
-          {% elif result_3.rc == 0 and data_3 == '0' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: "PASS when numeric output is 0, FAIL otherwise"
+          {% set output = result_3.stdout | default('') | trim %}
+          {{ 'NA' if output == 'FILE_NOT_EXIST' else ('PASS' if output == '0' else 'FAIL') }}
+        rationale_3: "PASS when output is '0', FAIL otherwise, NA when file doesn't exist"
 
-    # Requirement 4: Verify owner username using exact command from requirements
-    - name: Req 4 - Verify /etc/motd owner username
-      shell: stat -Lc '%U' /etc/motd
+    - name: Req 4 - Verify owner username if /etc/motd exists
+      shell: |
+        {% raw %}
+        if [ -e /etc/motd ]; then
+          stat -Lc '%U' /etc/motd
+        else
+          echo "FILE_NOT_EXIST"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_4
       ignore_errors: true
       changed_when: false
-      when: status_1 == 'FAIL'
 
     - name: Store requirement 4 details
       set_fact:
@@ -174,24 +141,24 @@
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
         status_4: >-
-          {% if status_1 == 'PASS' %}
-            NA
-          {% elif result_4.rc == 0 and data_4 == 'root' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_4: "PASS when text output is root, FAIL otherwise"
+          {% set output = result_4.stdout | default('') | trim %}
+          {{ 'NA' if output == 'FILE_NOT_EXIST' else ('PASS' if output == 'root' else 'FAIL') }}
+        rationale_4: "PASS when output is 'root', FAIL otherwise, NA when file doesn't exist"
 
-    # Requirement 5: Verify group GID using exact command from requirements
-    - name: Req 5 - Verify /etc/motd group GID
-      shell: stat -Lc '%g' /etc/motd
+    - name: Req 5 - Verify group GID if /etc/motd exists
+      shell: |
+        {% raw %}
+        if [ -e /etc/motd ]; then
+          stat -Lc '%g' /etc/motd
+        else
+          echo "FILE_NOT_EXIST"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_5
       ignore_errors: true
       changed_when: false
-      when: status_1 == 'FAIL'
 
     - name: Store requirement 5 details
       set_fact:
@@ -200,24 +167,24 @@
         task_5_rc: "{{ result_5.rc | default(-1) }}"
         data_5: "{{ result_5.stdout | default('') | trim }}"
         status_5: >-
-          {% if status_1 == 'PASS' %}
-            NA
-          {% elif result_5.rc == 0 and data_5 == '0' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_5: "PASS when numeric output is 0, FAIL otherwise"
+          {% set output = result_5.stdout | default('') | trim %}
+          {{ 'NA' if output == 'FILE_NOT_EXIST' else ('PASS' if output == '0' else 'FAIL') }}
+        rationale_5: "PASS when output is '0', FAIL otherwise, NA when file doesn't exist"
 
-    # Requirement 6: Verify group name using exact command from requirements
-    - name: Req 6 - Verify /etc/motd group name
-      shell: stat -Lc '%G' /etc/motd
+    - name: Req 6 - Verify group name if /etc/motd exists
+      shell: |
+        {% raw %}
+        if [ -e /etc/motd ]; then
+          stat -Lc '%G' /etc/motd
+        else
+          echo "FILE_NOT_EXIST"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_6
       ignore_errors: true
       changed_when: false
-      when: status_1 == 'FAIL'
 
     - name: Store requirement 6 details
       set_fact:
@@ -226,57 +193,41 @@
         task_6_rc: "{{ result_6.rc | default(-1) }}"
         data_6: "{{ result_6.stdout | default('') | trim }}"
         status_6: >-
-          {% if status_1 == 'PASS' %}
-            NA
-          {% elif result_6.rc == 0 and data_6 == 'root' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_6: "PASS when text output is root, FAIL otherwise"
+          {% set output = result_6.stdout | default('') | trim %}
+          {{ 'NA' if output == 'FILE_NOT_EXIST' else ('PASS' if output == 'root' else 'FAIL') }}
+        rationale_6: "PASS when output is 'root', FAIL otherwise, NA when file doesn't exist"
 
-    # Requirement 7: OVERALL Verify
-    - name: Store requirement 7 details
+    - name: Req 7 - Calculate overall compliance
       set_fact:
-        task_7_name: "OVERALL Verify: Ensure access to /etc/motd is configured"
-        task_7_cmd: "N/A - Overall assessment"
+        task_7_name: "Calculate overall compliance status"
+        task_7_cmd: "N/A - Calculated from previous requirements"
         task_7_rc: 0
-        data_7: "Overall compliance assessment"
+        data_7: "Based on requirements 1-6"
         status_7: >-
-          {% if not os_compatible %}
-            FAIL
-          {% elif status_1 == 'PASS' %}
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set s4 = status_4 | default('UNKNOWN') | trim %}
+          {% set s5 = status_5 | default('UNKNOWN') | trim %}
+          {% set s6 = status_6 | default('UNKNOWN') | trim %}
+          {% if s1 == 'PASS' %}
             PASS
-          {% elif status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS' and status_5 == 'PASS' and status_6 == 'PASS' %}
+          {% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' and s4 == 'PASS' and s5 == 'PASS' and s6 == 'PASS' %}
             PASS
+          {% elif 'UNKNOWN' in [s1, s2, s3, s4, s5, s6] %}
+            UNKNOWN
           {% else %}
             FAIL
           {% endif %}
-        rationale_7: >-
-          {% if not os_compatible %}
-            OS version mismatch - playbook designed for RHEL 9
-          {% else %}
-            PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS AND req_4=PASS AND req_5=PASS AND req_6=PASS), FAIL otherwise
-          {% endif %}
+        rationale_7: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS AND req_4=PASS AND req_5=PASS AND req_6=PASS), FAIL otherwise"
 
-    # Requirement 8: Add comment referencing CIS RHEL 9 Benchmark v4.0.0, checkpoint 1.7.4
-    - name: Store requirement 8 details
-      set_fact:
-        task_8_name: "Add comment referencing CIS RHEL 9 Benchmark v4.0.0, checkpoint 1.7.4"
-        task_8_cmd: "N/A - Reference comment"
-        task_8_rc: 0
-        data_8: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.7.4"
-        status_8: "PASS"
-        rationale_8: "Reference added to playbook"
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.7.4"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.7.4"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -335,6 +286,8 @@
           - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_7 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 8 - {{ req_8 }}:"
-          - "  Task: {{ task_8_name | default('Task not recorded') }}"
-          - "  Command: {{ task_8_cmd | default('N/A')
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - "========================================================"

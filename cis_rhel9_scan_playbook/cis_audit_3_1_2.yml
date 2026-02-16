@@ -2,14 +2,11 @@
 - name: Data Collection for CIS 3.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
     cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.1.2"
-    req_1: "Check for active wireless interfaces by examining /sys/class/net/*/wireless directories"
-    req_2: "Check for loaded wireless kernel modules"
-    req_3: "Check if wireless kernel modules are configured to be unloadable (install /bin/false) in /etc/modprobe.d/"
-    req_4: "Check if wireless kernel modules are blacklisted in /etc/modprobe.d/"
-    req_5: "OVERALL Verify: Ensure wireless interfaces are disabled"
+    req_1: "Run the provided CIS audit script to verify Ensure wireless interfaces are disabled. Run the following script to verify no wireless interfaces are active on the system: Execute the COMPLETE script as-is"
+    req_2: "Ensure wireless interfaces are disabled"
 
   tasks:
     - name: Initialize data variables
@@ -17,142 +14,103 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
 
-    # Requirement 1: Check for active wireless interfaces
-    - name: Req 1 - Check for wireless interface directories
-      shell: !unsafe |
-        find /sys/class/net/*/ -type d -name wireless 2>/dev/null
+    - name: Req 1 - Execute CIS audit script for wireless interfaces
+      copy:
+        dest: "/tmp/cis_audit_3.1.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_output="" l_output2=""
+             module_chk()
+             {
+                # Check how module will be loaded
+                l_loadable="$(modprobe -n -v "$l_mname")"
+                if grep -Pq -- '^\h*install \/bin\/(true|false)' <<< "$l_loadable"; then
+                   l_output="$l_output\n - module: \"$l_mname\" is not loadable: \"$l_loadable\""
+                else
+                   l_output2="$l_output2\n - module: \"$l_mname\" is loadable: \"$l_loadable\""
+                fi
+                # Check is the module currently loaded
+                if ! lsmod | grep "$l_mname" > /dev/null 2>&1; then
+                   l_output="$l_output\n - module: \"$l_mname\" is not loaded"
+                else
+                   l_output2="$l_output2\n - module: \"$l_mname\" is loaded"
+                fi
+                # Check if the module is deny listed
+                if modprobe --showconfig | grep -Pq -- "^\h*blacklist\h+$l_mname\b"; then
+                   l_output="$l_output\n - module: \"$l_mname\" is deny listed in: \"$(grep -Pl -- "^\h*blacklist\h+$l_mname\b" /etc/modprobe.d/*)\""
+                else
+                   l_output2="$l_output2\n - module: \"$l_mname\" is not deny listed"
+                fi
+             }
+             if [ -n "$(find /sys/class/net/*/ -type d -name wireless)" ]; then
+                l_dname=$(for driverdir in $(find /sys/class/net/*/ -type d -name wireless | xargs -0 dirname); do basename "$(readlink -f "$driverdir"/device/driver/module)";done | sort -u)
+                for l_mname in $l_dname; do
+                   module_chk
+                done
+             fi
+             # Report results. If no failures output in l_output2, we pass
+             if [ -z "$l_output2" ]; then
+                echo -e "\n- Audit Result:\n  ** PASS **"
+                if [ -z "$l_output" ]; then
+                   echo -e "\n - System has no wireless NICs installed"
+                else
+                   echo -e "\n$l_output\n"
+                fi
+             else
+                echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
+                [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_3.1.2.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_3.1.2.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for wireless interface directories"
-        task_1_cmd: "find /sys/class/net/*/ -type d -name wireless 2>/dev/null"
+        task_1_name: "Execute CIS audit script for wireless interfaces"
+        task_1_cmd: "/tmp/cis_audit_3.1.2.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns NO output (no directories found), FAIL when any wireless interface directories are found') | trim }}"
-
-    # Requirement 2: Check for loaded wireless kernel modules
-    - name: Req 2 - Check for loaded wireless modules
-      shell: !unsafe |
-        lsmod | grep -E "^(cfg80211|mac80211|iwlwifi|ath[0-9]k|ath10k|rt[0-9]\w*|brcmfmac|brcmsmac|mwifiex|wl)"
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
+        rationale_1: '{{ ("PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance") | trim }}'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check for loaded wireless modules"
-        task_2_cmd: |
-          lsmod | grep -E \"^(cfg80211|mac80211|iwlwifi|ath[0-9]k|ath10k|rt[0-9]\\w*|brcmfmac|brcmsmac|mwifiex|wl)\"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when command returns NO output (no wireless modules loaded), FAIL when any wireless modules are listed') | trim }}"
+        task_2_name: "Overall verification of wireless interfaces"
+        task_2_cmd: "N/A"
+        task_2_rc: "N/A"
+        data_2: "N/A"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
-    # Requirement 3: Check for install /bin/false configuration
-    # Only execute if wireless modules were detected (data_2 is not empty)
-    - name: Req 3 - Check for install /bin/false configuration
-      shell: !unsafe |
-        grep -r "^install\s*\w*\s*/bin/false" /etc/modprobe.d/ 2>/dev/null | grep -E "(cfg80211|mac80211|iwlwifi|ath[0-9]k|ath10k|rt[0-9]\w*|brcmfmac|brcmsmac|mwifiex|wl)"
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      changed_when: false
-      when: data_2 | trim != ''
-
-    - name: Store requirement 3 details when executed
-      set_fact:
-        task_3_name: "Check for install /bin/false configuration"
-        task_3_cmd: |
-          grep -r \"^install\\s*\\w*\\s*/bin/false\" /etc/modprobe.d/ 2>/dev/null | grep -E \"(cfg80211|mac80211|iwlwifi|ath[0-9]k|ath10k|rt[0-9]\\w*|brcmfmac|brcmsmac|mwifiex|wl)\"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when command returns lines for all detected wireless modules (indicating they are configured to be unloadable), FAIL when any detected wireless module is missing such a configuration') | trim }}"
-      when: data_2 | trim != ''
-
-    - name: Store requirement 3 details when skipped
-      set_fact:
-        task_3_name: "Check for install /bin/false configuration"
-        task_3_cmd: "N/A - Skipped (no wireless modules detected)"
-        task_3_rc: -1
-        data_3: "No wireless modules detected, check not applicable"
-        status_3: "NA"
-        rationale_3: "Check skipped because no wireless modules were detected (data_2 is empty)"
-      when: data_2 | trim == ''
-
-    # Requirement 4: Check for blacklist configuration
-    # Only execute if wireless modules were detected (data_2 is not empty)
-    - name: Req 4 - Check for blacklist configuration
-      shell: !unsafe |
-        grep -r "^blacklist\s*\w*" /etc/modprobe.d/ 2>/dev/null | grep -E "(cfg80211|mac80211|iwlwifi|ath[0-9]k|ath10k|rt[0-9]\w*|brcmfmac|brcmsmac|mwifiex|wl)"
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      changed_when: false
-      when: data_2 | trim != ''
-
-    - name: Store requirement 4 details when executed
-      set_fact:
-        task_4_name: "Check for blacklist configuration"
-        task_4_cmd: |
-          grep -r \"^blacklist\\s*\\w*\" /etc/modprobe.d/ 2>/dev/null | grep -E \"(cfg80211|mac80211|iwlwifi|ath[0-9]k|ath10k|rt[0-9]\\w*|brcmfmac|brcmsmac|mwifiex|wl)\"
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_4: "{{ ('PASS when command returns lines for all detected wireless modules (indicating they are blacklisted), FAIL when any detected wireless module is missing a blacklist entry') | trim }}"
-      when: data_2 | trim != ''
-
-    - name: Store requirement 4 details when skipped
-      set_fact:
-        task_4_name: "Check for blacklist configuration"
-        task_4_cmd: "N/A - Skipped (no wireless modules detected)"
-        task_4_rc: -1
-        data_4: "No wireless modules detected, check not applicable"
-        status_4: "NA"
-        rationale_4: "Check skipped because no wireless modules were detected (data_2 is empty)"
-      when: data_2 | trim == ''
-
-    # Requirement 5: Overall verification
-    - name: Store requirement 5 details
-      set_fact:
-        task_5_name: "Overall verification"
-        task_5_cmd: "N/A - Combined check"
-        task_5_rc: 0
-        data_5: "Combined status from requirements 1-4"
-        status_5: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_5: "PASS when (req_1=PASS AND req_2=PASS) OR (req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS), FAIL otherwise"
-
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -178,32 +136,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Task: {{ task_5_name | default('Task not recorded') }}"
-          - "  Command: {{ task_5_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_5_rc | default(-1) }}"
-          - "  Data: {{ data_5 | default('') | trim }}"
-          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - '  Rationale: Overall compliance is determined by requirement 2 status, which is based on requirement 1 audit result.'
           - "========================================================"

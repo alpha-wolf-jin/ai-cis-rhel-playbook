@@ -1,11 +1,12 @@
 ---
-- name: Data Collection for CIS 1.1.1.2
+- name: Data Collection for CIS 1.1.1.2 - freevxfs kernel module
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.1.2"
-    req_1: "Audit CIS checkpoint: 1.1.1.2 - Ensure mounting of freevxfs filesystems is disabled"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.2"
+    req_1: "Run the provided CIS audit script to verify Ensure freevxfs kernel module is not available"
+    req_2: "OVERALL Verify: Ensure freevxfs kernel module is not available"
 
   tasks:
     - name: Initialize data variables
@@ -13,10 +14,11 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
 
+    # Requirement 1: Run the provided CIS audit script
     - name: Req 1 - Execute CIS audit script for freevxfs
       copy:
         dest: "/tmp/cis_audit_1.1.1.2.sh"
@@ -56,24 +58,18 @@
              for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
                 if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
                    l_output3="$l_output3\n  - \"$l_mod_base_directory\""
-                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"         
+                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
                    [ "$l_dl" != "y" ] && f_module_chk
                 else
                    a_output+=(" - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\"")
                 fi
              done
-             
-             # Output results
-             if [ -z "$l_output2" ]; then
-                echo -e "\n- Audit Result:\n  ** PASS **"
-                if [ -z "$l_output" ]; then
-                   echo -e "\n - System does not have freevxfs module available"
-                else
-                   echo -e "\n$l_output\n"
-                fi
+             [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
+             if [ "${#a_output2[@]}" -le 0 ]; then
+                printf '%s\n' "" "- Audit Result:" "  ** PASS **" "${a_output[@]}"
              else
-                echo -e "\n- Audit Result:\n  ** FAIL **\n - Reason(s) for audit failure:\n$l_output2\n"
-                [ -n "$l_output" ] && echo -e "\n- Correctly set:\n$l_output\n"
+                printf '%s\n' "" "- Audit Result:" "  ** FAIL **" " - Reason(s) for audit failure:" "${a_output2[@]}"
+                [ "${#a_output[@]}" -gt 0 ] && printf '%s\n' "- Correctly set:" "${a_output[@]}"
              fi
           }
           {% endraw %}
@@ -100,16 +96,27 @@
         task_1_cmd: "/tmp/cis_audit_1.1.1.2.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if ('** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
-        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script shows '** FAIL **' or indicates non-compliance"
+        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout | default('') else 'FAIL') | trim }}"
+        rationale_1: '{{ "PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance" | trim }}'
 
+    # Requirement 2: OVERALL Verify
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Overall verification"
+        task_2_cmd: "N/A"
+        task_2_rc: "0"
+        data_2: "Overall compliance check based on requirement 1"
+        status_2: "{{ status_1 | default('FAIL') }}"
+        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -120,8 +127,16 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_1 | trim }}"
-          - "  Rationale: {{ rationale_1 | trim }}"
+          - "  Status: {{ status_2 | default('FAIL') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

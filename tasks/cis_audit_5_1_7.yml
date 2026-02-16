@@ -1,0 +1,406 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.7
+    req_1: 'Check SSH daemon configuration for allow/deny directives using command: sshd -T | grep -Pi -- ''^\h*(allow|deny)(users|groups)\h+\H+''. Rationale: PASS when output contains at least one line matching the pattern (i.e., at least one of allowusers, allowgroups, denyusers, or denygroups is configured), FAIL when no such line is found.
+
+      '
+    req_2: 'Review the list(s) from the output to ensure included users and/or groups follow local site policy. Rationale: PASS when the configured users/groups in the output from req_1 are authorized per local site policy, FAIL when unauthorized users/groups are listed.'
+    req_3: 'If Match block directives are used in the environment, for each relevant user (e.g., ''sshuser''), check SSH daemon configuration within applicable Match blocks using command: sshd -T -C user=<username> | grep -Pi -- ''^\h*(allow|deny)(users|groups)\h+\H+''. Rationale: PASS when the output for each tested user does NOT contain any unauthorized allow/deny directives (i.e., the configuration within the Match block does not incorrectly override the global restriction), FAIL when an unauthorized directive is found for a tested user.
+
+      '
+    req_4: 'OVERALL Verify: Ensure sshd access is configured. Rationale: PASS when req_1=PASS AND req_2=PASS AND (if Match blocks are used, req_3=PASS), FAIL otherwise.'
+    match_test_users: []
+    local_policy_users: []
+    local_policy_groups: []
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    data_1: ""
+    status_1: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    data_2: ""
+    status_2: "UNKNOWN"
+    rationale_2: "Not evaluated"
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    data_3: ""
+    status_3: "NA"
+    rationale_3: "Not applicable - no match blocks to test"
+    task_4_name: "Not executed"
+    task_4_cmd: "N/A"
+    task_4_rc: -1
+    data_4: ""
+    status_4: "UNKNOWN"
+    rationale_4: "Not evaluated"
+
+    # Requirement 1 - Check for allow/deny directives
+- name: Req 1 - Check SSH daemon allow/deny configuration
+  shell: |
+    {% raw %}
+    sshd -T | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check SSH daemon allow/deny configuration"
+    task_1_cmd: |
+      sshd -T | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS: Found allow/deny directives in sshd configuration' if (result_1.stdout | default('') | trim != '') else 'FAIL: No allow/deny directives found in sshd configuration') | trim }}"
+
+    # Requirement 2 - Review users/groups against local policy
+    # Only execute if Requirement 1 returned data
+- name: Req 2 - Review users/groups against local policy
+  set_fact:
+    task_2_name: "Review users/groups against local policy"
+    task_2_cmd: "Parse output from requirement 1 and compare with local policy"
+    task_2_rc: 0
+    data_2: "{{ data_1 | default('') | trim }}"
+    status_2: >-
+      {% set output = data_1 | default('') | trim %}
+      {% if output == '' %}
+        NA
+      {% else %}
+        {% set lines = output.split('\n') %}
+        {% set all_authorized = true %}
+        {% set unauthorized_items = [] %}
+        
+        {% for line in lines %}
+          {% set parts = line.split() %}
+          {% if parts|length >= 2 %}
+            {% set directive = parts[0] %}
+            {% set items = parts[1:] %}
+            
+            {% if directive == 'allowusers' %}
+              {% for user in items %}
+                {% if user not in local_policy_users %}
+                  {% set _ = unauthorized_items.append(user ~ ' (allowusers)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% elif directive == 'allowgroups' %}
+              {% for group in items %}
+                {% if group not in local_policy_groups %}
+                  {% set _ = unauthorized_items.append(group ~ ' (allowgroups)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% elif directive == 'denyusers' %}
+              {% for user in items %}
+                {% if user in local_policy_users %}
+                  {% set _ = unauthorized_items.append(user ~ ' (denyusers)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% elif directive == 'denygroups' %}
+              {% for group in items %}
+                {% if group in local_policy_groups %}
+                  {% set _ = unauthorized_items.append(group ~ ' (denygroups)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        
+        {% if all_authorized %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% endif %}
+    rationale_2: >-
+      {% set output = data_1 | default('') | trim %}
+      {% if output == '' %}
+        NA: No allow/deny directives to review
+      {% else %}
+        {% set lines = output.split('\n') %}
+        {% set all_authorized = true %}
+        {% set unauthorized_items = [] %}
+        
+        {% for line in lines %}
+          {% set parts = line.split() %}
+          {% if parts|length >= 2 %}
+            {% set directive = parts[0] %}
+            {% set items = parts[1:] %}
+            
+            {% if directive == 'allowusers' %}
+              {% for user in items %}
+                {% if user not in local_policy_users %}
+                  {% set _ = unauthorized_items.append(user ~ ' (allowusers)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% elif directive == 'allowgroups' %}
+              {% for group in items %}
+                {% if group not in local_policy_groups %}
+                  {% set _ = unauthorized_items.append(group ~ ' (allowgroups)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% elif directive == 'denyusers' %}
+              {% for user in items %}
+                {% if user in local_policy_users %}
+                  {% set _ = unauthorized_items.append(user ~ ' (denyusers)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% elif directive == 'denygroups' %}
+              {% for group in items %}
+                {% if group in local_policy_groups %}
+                  {% set _ = unauthorized_items.append(group ~ ' (denygroups)') %}
+                  {% set all_authorized = false %}
+                {% endif %}
+              {% endfor %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        
+        {% if all_authorized %}
+          PASS: All configured users/groups are authorized per local site policy
+        {% else %}
+          FAIL: Unauthorized users/groups found: {{ unauthorized_items | join(', ') }}
+        {% endif %}
+      {% endif %}
+  when: data_1 | default('') | trim != ''
+
+    # Requirement 3 - Check Match blocks if match_test_users provided
+    # Only execute if Requirement 1 returned data AND match_test_users is not empty
+- name: Req 3 - Test Match blocks for specified users
+  shell: |
+    # Set up variables for tested users
+    tested_users="{{ match_test_users | default([]) | join(' ') }}"
+
+    {% raw %}
+    output=""
+    # Test each user
+    for user in $tested_users; do
+      echo "=== Testing Match block for user: $user ==="
+      user_output=$(sshd -T -C user=$user | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+' 2>/dev/null || true)
+      if [ -n "$user_output" ]; then
+        echo "$user_output"
+        output="${output}${user_output}"$'\n'
+      fi
+    done
+
+    if [ -z "$output" ]; then
+      echo "No Match block directives found for tested users"
+    fi
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+  when:
+  - data_1 | default('') | trim != ''
+  - match_test_users | default([]) | length > 0
+
+- name: Store requirement 3 details when executed
+  set_fact:
+    task_3_name: "Test Match blocks for specified users"
+    task_3_cmd: |
+      sshd -T -C user=<username> | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+' for each user in {{ match_test_users }}
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: >-
+      {% set output = result_3.stdout | default('') | trim %}
+      {% if 'No Match block directives found for tested users' in output %}
+        PASS
+      {% else %}
+        {% set lines = output.split('\n') %}
+        {% set all_authorized = true %}
+        
+        {% for line in lines %}
+          {% if line and not line.startswith('===') %}
+            {% set parts = line.split() %}
+            {% if parts|length >= 2 %}
+              {% set directive = parts[0] %}
+              {% set items = parts[1:] %}
+              
+              {% if directive == 'allowusers' %}
+                {% for user in items %}
+                  {% if user not in local_policy_users %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% elif directive == 'allowgroups' %}
+                {% for group in items %}
+                  {% if group not in local_policy_groups %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% elif directive == 'denyusers' %}
+                {% for user in items %}
+                  {% if user in local_policy_users %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% elif directive == 'denygroups' %}
+                {% for group in items %}
+                  {% if group in local_policy_groups %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        
+        {% if all_authorized %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% endif %}
+    rationale_3: >-
+      {% set output = result_3.stdout | default('') | trim %}
+      {% if 'No Match block directives found for tested users' in output %}
+        PASS: No unauthorized directives found in Match blocks for tested users
+      {% else %}
+        {% set lines = output.split('\n') %}
+        {% set all_authorized = true %}
+        {% set unauthorized_items = [] %}
+        
+        {% for line in lines %}
+          {% if line and not line.startswith('===') %}
+            {% set parts = line.split() %}
+            {% if parts|length >= 2 %}
+              {% set directive = parts[0] %}
+              {% set items = parts[1:] %}
+              
+              {% if directive == 'allowusers' %}
+                {% for user in items %}
+                  {% if user not in local_policy_users %}
+                    {% set _ = unauthorized_items.append(user ~ ' (allowusers)') %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% elif directive == 'allowgroups' %}
+                {% for group in items %}
+                  {% if group not in local_policy_groups %}
+                    {% set _ = unauthorized_items.append(group ~ ' (allowgroups)') %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% elif directive == 'denyusers' %}
+                {% for user in items %}
+                  {% if user in local_policy_users %}
+                    {% set _ = unauthorized_items.append(user ~ ' (denyusers)') %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% elif directive == 'denygroups' %}
+                {% for group in items %}
+                  {% if group in local_policy_groups %}
+                    {% set _ = unauthorized_items.append(group ~ ' (denygroups)') %}
+                    {% set all_authorized = false %}
+                  {% endif %}
+                {% endfor %}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+        
+        {% if all_authorized %}
+          PASS: All Match block directives are authorized per local site policy
+        {% else %}
+          FAIL: Unauthorized directives in Match blocks: {{ unauthorized_items | join(', ') }}
+        {% endif %}
+      {% endif %}
+  when:
+  - data_1 | default('') | trim != ''
+  - match_test_users | default([]) | length > 0
+
+    # Requirement 4 - Overall verification
+- name: Store requirement 4 details
+  set_fact:
+    task_4_name: "Overall verification"
+    task_4_cmd: "Evaluate req_1, req_2, and req_3"
+    task_4_rc: 0
+    data_4: "Combined evaluation"
+    status_4: >-
+      {% if status_1 | default('UNKNOWN') | trim == 'PASS' and 
+            status_2 | default('UNKNOWN') | trim in ['PASS', 'NA'] and 
+            (match_test_users | default([]) | length == 0 or 
+             status_3 | default('NA') | trim == 'PASS') %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_4: >-
+      {% if status_1 | default('UNKNOWN') | trim == 'PASS' and 
+            status_2 | default('UNKNOWN') | trim in ['PASS', 'NA'] and 
+            (match_test_users | default([]) | length == 0 or 
+             status_3 | default('NA') | trim == 'PASS') %}
+        PASS: req_1 passed, req_2 passed or not applicable, and req_3 passed or not applicable
+      {% else %}
+        FAIL: req_1={{ status_1 | default('UNKNOWN') }}, req_2={{ status_2 | default('UNKNOWN') }}, req_3={{ status_3 | default('NA') }}
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.1.7"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('NA') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name | default('Task not recorded') }}"
+    - "  Command: {{ task_4_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_4_rc | default(-1) }}"
+    - "  Data: {{ data_4 | default('') | trim }}"
+    - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_1_7'': status_4 | trim }] }}'

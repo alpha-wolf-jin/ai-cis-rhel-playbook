@@ -1,13 +1,15 @@
 ---
-- name: Data Collection for CIS 5.3.3.2.1
+- name: Data Collection for CIS Checkpoint 5.3.3.2.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.1"
-    req_1: "Check if difok is set to 2 or more in pwquality configuration files"
-    req_2: "Check that difok is not incorrectly set to 0 or 1 in PAM module arguments"
-    req_3: "OVERALL Verify: Ensure password number of changed characters is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.1"
+    req_1: |
+      Check difok setting in pwquality.conf files using command: grep -Psi -- '^\h*difok\h*=\h*([2-9]|[1-9][0-9]+)\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf. Rationale: PASS when the command returns at least one line where the difok value is an integer >= 2, FAIL when no such line is found or the value is < 2
+    req_2: |
+      Check for difok override in PAM files using command: grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?difok\h*=\h*([0-1])\b' /etc/pam.d/system-auth /etc/pam.d/password-auth. Rationale: PASS when the command returns no output (indicating difok is not set to 0 or 1 in PAM arguments), FAIL when any output is returned
+    req_3: "OVERALL Verify: Ensure password number of changed characters is configured. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
 
   tasks:
     - name: Initialize data variables
@@ -18,12 +20,11 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
+        task_3_name: "Overall verification"
         task_3_cmd: "N/A"
-        task_3_rc: -1
+        task_3_rc: 0
 
-    # Requirement 1: Check if difok is set to 2 or more in pwquality configuration files
-    - name: Req 1 - Check difok in pwquality config files
+    - name: Req 1 - Check difok in pwquality.conf files
       shell: |
         {% raw %}
         grep -Psi -- '^\h*difok\h*=\h*([2-9]|[1-9][0-9]+)\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
@@ -36,7 +37,7 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check difok in pwquality config files"
+        task_1_name: "Req 1 - Check difok in pwquality.conf files"
         task_1_cmd: |
           grep -Psi -- '^\h*difok\h*=\h*([2-9]|[1-9][0-9]+)\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
         task_1_rc: "{{ result_1.rc | default(-1) }}"
@@ -45,21 +46,19 @@
           {% set output = result_1.stdout | default('') | trim %}
           {% if output != '' %}
             {% set lines = output.split('\n') %}
-            {% set all_valid = true %}
+            {% set valid_found = false %}
             {% for line in lines %}
-              {% if line != '' %}
+              {% if line %}
                 {% set match = line | regex_search('difok\h*=\h*([0-9]+)') %}
                 {% if match %}
-                  {% set value = match.split('=')[1] | trim | int %}
-                  {% if value < 2 %}
-                    {% set all_valid = false %}
+                  {% set value = match | regex_replace('.*difok\h*=\h*([0-9]+).*', '\1') | int %}
+                  {% if value >= 2 %}
+                    {% set valid_found = true %}
                   {% endif %}
-                {% else %}
-                  {% set all_valid = false %}
                 {% endif %}
               {% endif %}
             {% endfor %}
-            {% if all_valid %}
+            {% if valid_found %}
               PASS
             {% else %}
               FAIL
@@ -67,10 +66,34 @@
           {% else %}
             FAIL
           {% endif %}
-        rationale_1: "PASS when at least one line is returned and the extracted numeric value is >= 2, FAIL when no line is returned or the value is < 2"
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lines = output.split('\n') %}
+            {% set valid_found = false %}
+            {% set found_values = [] %}
+            {% for line in lines %}
+              {% if line %}
+                {% set match = line | regex_search('difok\h*=\h*([0-9]+)') %}
+                {% if match %}
+                  {% set value = match | regex_replace('.*difok\h*=\h*([0-9]+).*', '\1') | int %}
+                  {% set found_values = found_values + [value] %}
+                  {% if value >= 2 %}
+                    {% set valid_found = true %}
+                  {% endif %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if valid_found %}
+              PASS: Found difok value(s) {{ found_values | join(', ') }}, at least one >= 2
+            {% else %}
+              FAIL: No difok value >= 2 found in output
+            {% endif %}
+          {% else %}
+            FAIL: No output from command
+          {% endif %}
 
-    # Requirement 2: Check that difok is not incorrectly set to 0 or 1 in PAM module arguments
-    - name: Req 2 - Check difok in PAM module arguments
+    - name: Req 2 - Check difok override in PAM files
       shell: |
         {% raw %}
         grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?difok\h*=\h*([0-1])\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
@@ -83,32 +106,49 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check difok in PAM module arguments"
+        task_2_name: "Req 2 - Check difok override in PAM files"
         task_2_cmd: |
           grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?difok\h*=\h*([0-1])\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns no output (i.e., difok is not set to 0 or 1 in PAM arguments), FAIL when any output is returned"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' %}
+            PASS: No difok overrides set to 0 or 1 found in PAM files
+          {% else %}
+            FAIL: Found difok overrides set to 0 or 1 in PAM files
+          {% endif %}
 
-    # Requirement 3: OVERALL Verify
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Combined result of requirements 1 and 2"
-        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        data_3: "Overall verification based on req_1 and req_2"
+        status_3: >-
+          {% if (status_1 | default('FAIL') | trim == 'PASS') and (status_2 | default('FAIL') | trim == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if (status_1 | default('FAIL') | trim == 'PASS') and (status_2 | default('FAIL') | trim == 'PASS') %}
+            PASS: Both requirements passed
+          {% else %}
+            FAIL: Requirement 1 status: {{ status_1 | default('FAIL') | trim }}, Requirement 2 status: {{ status_2 | default('FAIL') | trim }}
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.3.3.2.1"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.1"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

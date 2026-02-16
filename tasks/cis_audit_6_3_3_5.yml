@@ -1,0 +1,325 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.5
+    req_1: Check for syscall audit rules for sethostname and setdomainname in /etc/audit/rules.d/*.rules
+    req_2: Check for file watch audit rules for network-related files in /etc/audit/rules.d/*.rules
+    req_3: Check for loaded syscall audit rules for sethostname and setdomainname using auditctl
+    req_4: Check for loaded file watch audit rules for network-related files using auditctl
+    req_5: 'OVERALL Verify: Ensure events that modify the system''s network environment are collected'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+    task_4_name: "Not executed"
+    task_4_cmd: "N/A"
+    task_4_rc: -1
+
+    # Requirement 1: Check for syscall audit rules for sethostname and setdomainname in /etc/audit/rules.d/*.rules
+- name: Req 1 - Check syscall audit rules in rules.d
+  shell: |
+    awk '/^*-a *always, exit/ && /-F *arch=b(32|64)/ && /-S/ && (/sethostname/ || /setdomainname/) && (/skey= *[!-~]* *$/ || /-k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check syscall audit rules for sethostname and setdomainname in rules.d"
+    task_1_cmd: "awk '/^*-a *always, exit/ && /-F *arch=b(32|64)/ && /-S/ && (/sethostname/ || /setdomainname/) && (/skey= *[!-~]* *$/ || /-k *[!-~]* *$/)' /etc/audit/rules.d/*.rules"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% set has_b64 = false %}
+      {% set has_b32 = false %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% if line is search('-a always,exit -F arch=b64 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale') or line is search('skey=system-locale')) %}
+            {% set has_b64 = true %}
+          {% endif %}
+          {% if line is search('-a always,exit -F arch=b32 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale') or line is search('skey=system-locale')) %}
+            {% set has_b32 = true %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if has_b64 and has_b32 %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% set has_b64 = false %}
+      {% set has_b32 = false %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% if line is search('-a always,exit -F arch=b64 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale') or line is search('skey=system-locale')) %}
+            {% set has_b64 = true %}
+          {% endif %}
+          {% if line is search('-a always,exit -F arch=b32 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale') or line is search('skey=system-locale')) %}
+            {% set has_b32 = true %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if has_b64 and has_b32 %}
+        PASS when output includes both '-a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale' AND '-a always,exit -F arch=b32 -S sethostname,setdomainname -k system-locale' (or with 'key=' or 'skey=' syntax)
+      {% else %}
+        FAIL: Missing required syscall audit rules. Expected both b64 and b32 rules with sethostname,setdomainname and key=system-locale
+      {% endif %}
+
+    # Requirement 2: Check for file watch audit rules for network-related files in /etc/audit/rules.d/*.rules
+- name: Req 2 - Check file watch audit rules in rules.d
+  shell: |
+    awk '/^ *-w/ && (/etc\/issue/ || /etc\/issue.net/ || /etc\/hosts/ || /etc\/sysconfig\/network/ || /etc\/hostname/ || /etc\/NetworkManager/) && / +-p *wa/ && (/ key= *[!-~]* *$/ || /-k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Check file watch audit rules for network files in rules.d"
+    task_2_cmd: |
+      awk '/^ *-w/ && (/etc\/issue/ || /etc\/issue.net/ || /etc\/hosts/ || /etc\/sysconfig\/network/ || /etc\/hostname/ || /etc\/NetworkManager/) && / +-p *wa/ && (/ key= *[!-~]* *$/ || /-k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% set output = result_2.stdout | default('') | trim %}
+      {% set required_paths = ['/etc/issue', '/etc/issue.net', '/etc/hosts', '/etc/hostname', '/etc/sysconfig/network', '/etc/sysconfig/network-scripts/', '/etc/NetworkManager'] %}
+      {% set found_paths = [] %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% for path in required_paths %}
+            {% if line is search('-w ' + path) and line is search('-p wa') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+              {% if path not in found_paths %}
+                {% set _ = found_paths.append(path) %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      {% endif %}
+      {% if found_paths | length == required_paths | length %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_2: >-
+      {% set output = result_2.stdout | default('') | trim %}
+      {% set required_paths = ['/etc/issue', '/etc/issue.net', '/etc/hosts', '/etc/hostname', '/etc/sysconfig/network', '/etc/sysconfig/network-scripts/', '/etc/NetworkManager'] %}
+      {% set found_paths = [] %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% for path in required_paths %}
+            {% if line is search('-w ' + path) and line is search('-p wa') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+              {% if path not in found_paths %}
+                {% set _ = found_paths.append(path) %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      {% endif %}
+      {% if found_paths | length == required_paths | length %}
+        PASS when output includes rules with '-p wa -k system-locale' (or with 'key=' syntax) for all required paths
+      {% else %}
+        FAIL: Missing file watch rules for some paths. Found: {{ found_paths | join(', ') }}. Expected all of: {{ required_paths | join(', ') }}
+      {% endif %}
+
+    # Requirement 3: Check for loaded syscall audit rules for sethostname and setdomainname using auditctl
+- name: Req 3 - Check loaded syscall audit rules
+  shell: |
+    auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b(32|64)/ &&/ -S/ &&(/sethostname/ ||/setdomainname/) &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+  args:
+    executable: /bin/bash
+  register: result_3
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Check loaded syscall audit rules for sethostname and setdomainname"
+    task_3_cmd: "auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b(32|64)/ &&/ -S/ &&(/sethostname/ ||/setdomainname/) &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'"
+    task_3_rc: "{{ result_3.rc | default(-1) }}"
+    data_3: "{{ result_3.stdout | default('') | trim }}"
+    status_3: >-
+      {% set output = result_3.stdout | default('') | trim %}
+      {% set has_b64 = false %}
+      {% set has_b32 = false %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% if line is search('-a always,exit -F arch=b64 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+            {% set has_b64 = true %}
+          {% endif %}
+          {% if line is search('-a always,exit -F arch=b32 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+            {% set has_b32 = true %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if has_b64 and has_b32 %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% set output = result_3.stdout | default('') | trim %}
+      {% set has_b64 = false %}
+      {% set has_b32 = false %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% if line is search('-a always,exit -F arch=b64 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+            {% set has_b64 = true %}
+          {% endif %}
+          {% if line is search('-a always,exit -F arch=b32 -S sethostname,setdomainname') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+            {% set has_b32 = true %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% if has_b64 and has_b32 %}
+        PASS when output includes both '-a always,exit -F arch=b64 -S sethostname,setdomainname -F key=system-locale' AND '-a always,exit -F arch=b32 -S sethostname,setdomainname -F key=system-locale' (or with '-k' syntax)
+      {% else %}
+        FAIL: Missing loaded syscall audit rules. Expected both b64 and b32 rules with sethostname,setdomainname and key=system-locale
+      {% endif %}
+
+    # Requirement 4: Check for loaded file watch audit rules for network-related files using auditctl
+- name: Req 4 - Check loaded file watch audit rules
+  shell: |
+    auditctl -l | awk '/^ *-w/ &&(/etc\/issue/ || /etc\/issue.net/ || /etc\/hosts/ || /etc\/sysconfig\/network/ || /etc\/hostname/ || /etc\/NetworkManager/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+  args:
+    executable: /bin/bash
+  register: result_4
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 4 details
+  set_fact:
+    task_4_name: "Check loaded file watch audit rules for network files"
+    task_4_cmd: |
+      auditctl -l | awk '/^ *-w/ &&(/etc\/issue/ || /etc\/issue.net/ || /etc\/hosts/ || /etc\/sysconfig\/network/ || /etc\/hostname/ || /etc\/NetworkManager/) &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+    task_4_rc: "{{ result_4.rc | default(-1) }}"
+    data_4: "{{ result_4.stdout | default('') | trim }}"
+    status_4: >-
+      {% set output = result_4.stdout | default('') | trim %}
+      {% set required_paths = ['/etc/issue', '/etc/issue.net', '/etc/hosts', '/etc/hostname', '/etc/sysconfig/network', '/etc/sysconfig/network-scripts', '/etc/NetworkManager'] %}
+      {% set found_paths = [] %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% for path in required_paths %}
+            {% if line is search('-w ' + path) and line is search('-p wa') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+              {% if path not in found_paths %}
+                {% set _ = found_paths.append(path) %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      {% endif %}
+      {% if found_paths | length == required_paths | length %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_4: >-
+      {% set output = result_4.stdout | default('') | trim %}
+      {% set required_paths = ['/etc/issue', '/etc/issue.net', '/etc/hosts', '/etc/hostname', '/etc/sysconfig/network', '/etc/sysconfig/network-scripts', '/etc/NetworkManager'] %}
+      {% set found_paths = [] %}
+      {% if output %}
+        {% for line in output.split('\n') %}
+          {% for path in required_paths %}
+            {% if line is search('-w ' + path) and line is search('-p wa') and (line is search('-k system-locale') or line is search('-F key=system-locale')) %}
+              {% if path not in found_paths %}
+                {% set _ = found_paths.append(path) %}
+              {% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      {% endif %}
+      {% if found_paths | length == required_paths | length %}
+        PASS when output includes rules with '-p wa -k system-locale' (or with 'key=' syntax) for all required paths
+      {% else %}
+        FAIL: Missing loaded file watch rules for some paths. Found: {{ found_paths | join(', ') }}. Expected all of: {{ required_paths | join(', ') }}
+      {% endif %}
+
+    # Overall requirement
+- name: Set overall compliance status
+  set_fact:
+    status_5: >-
+      {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_5: >-
+      {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+        PASS when all individual requirements are PASS (syscall rules on disk, file watch rules on disk, loaded syscall rules, and loaded file watch rules)
+      {% else %}
+        FAIL: One or more requirements failed. Requirement statuses: 1={{ status_1 }}, 2={{ status_2 }}, 3={{ status_3 }}, 4={{ status_4 }}
+      {% endif %}
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.3.3.5"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.5"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 4 - {{ req_4 }}:"
+    - "  Task: {{ task_4_name | default('Task not recorded') }}"
+    - "  Command: {{ task_4_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_4_rc | default(-1) }}"
+    - "  Data: {{ data_4 | default('') | trim }}"
+    - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 5 - {{ req_5 }}:"
+    - "  Task: Overall compliance check"
+    - "  Command: N/A"
+    - "  Exit code: N/A"
+    - "  Data: N/A"
+    - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_5 | trim }}"
+    - "  Rationale: {{ rationale_5 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_3_3_5'': status_5 | trim }] }}'

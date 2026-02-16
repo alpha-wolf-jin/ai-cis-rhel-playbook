@@ -1,12 +1,12 @@
 ---
-- name: Data Collection for CIS 1.1.1.8
+- name: Data Collection for CIS checkpoint 1.1.1.8
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.1.8"
-    req_1: "Audit CIS checkpoint: 1.1.1.8"
-    req_2: "OVERALL Verify: CIS checkpoint 1.1.1.8"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.8"
+    req_1: "Run the provided CIS audit script to verify Ensure usb-storage kernel module is not available"
+    req_2: "OVERALL Verify: Ensure usb-storage kernel module is not available"
 
   tasks:
     - name: Initialize data variables
@@ -18,7 +18,7 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Audit CIS checkpoint: 1.1.1.8
+    # Requirement 1: Run the provided CIS audit script
     - name: Req 1 - Execute CIS audit script for usb-storage module
       copy:
         dest: "/tmp/cis_audit_1.1.1.8.sh"
@@ -26,6 +26,7 @@
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
              l_output3="" l_dl="" # clear variables
              unset a_output; unset a_output2 # unset arrays
@@ -58,27 +59,18 @@
              for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
                 if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
                    l_output3="$l_output3\n  - \"$l_mod_base_directory\""
-                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"         
+                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
                    [ "$l_dl" != "y" ] && f_module_chk
                 else
                    a_output+=(" - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\"")
                 fi
              done
              [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
-             
-             # Report results
-             if [ "${#a_output2[@]}" -eq 0 ]; then
-                echo -e "\n- Audit Result:\n  ** PASS **"
-                if [ "${#a_output[@]}" -gt 0 ]; then
-                   printf '%s\n' "${a_output[@]}"
-                fi
+             if [ "${#a_output2[@]}" -le 0 ]; then
+                printf '%s\n' "" "- Audit Result:" "  ** PASS **" "${a_output[@]}"
              else
-                echo -e "\n- Audit Result:\n  ** FAIL **"
-                printf '%s\n' "${a_output2[@]}"
-                if [ "${#a_output[@]}" -gt 0 ]; then
-                   echo -e "\n- Correctly configured:"
-                   printf '%s\n' "${a_output[@]}"
-                fi
+                printf '%s\n' "" "- Audit Result:" "  ** FAIL **" " - Reason(s) for audit failure:" "${a_output2[@]}"
+                [ "${#a_output[@]}" -gt 0 ] && printf '%s\n' "- Correctly set:" "${a_output[@]}"
              fi
           }
           {% endraw %}
@@ -106,25 +98,26 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if ('** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
-        rationale_1: "PASS when script output shows '** PASS **', FAIL when script shows '** FAIL **' or indicates non-compliance"
+        rationale_1: '{{ ("PASS when script output shows ** PASS ** or indicates compliance, FAIL when script output shows ** FAIL ** or indicates non-compliance" if (result_1.stdout is defined) else "UNKNOWN: No output from script") | trim }}'
 
-    # Requirement 2: OVERALL Verify: CIS checkpoint 1.1.1.8
-    - name: Store requirement 2 details
+    # Requirement 2: OVERALL Verify
+    - name: Req 2 - Evaluate overall compliance
       set_fact:
-        task_2_name: "Overall compliance evaluation"
-        task_2_cmd: "N/A - derived from requirement 1"
+        task_2_name: "Evaluate overall compliance for CIS 1.1.1.8"
+        task_2_cmd: "N/A - evaluated from requirement 1"
         task_2_rc: 0
         data_2: "{{ data_1 | default('') | trim }}"
         status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        rationale_2: '{{ ("PASS when req_1=PASS, FAIL otherwise" if (status_1 is defined) else "UNKNOWN: Requirement 1 not evaluated") | trim }}'
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.1.8"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.8"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

@@ -2,13 +2,13 @@
 - name: Data Collection for CIS 6.2.3.7
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.3.7"
-    req_1: "Check for modern rsyslog TCP input module loading in configuration files"
-    req_2: "Check for modern rsyslog TCP input configuration in configuration files"
-    req_3: "Check for legacy rsyslog TCP module loading in configuration files"
-    req_4: "Check for legacy rsyslog TCP server run directive in configuration files"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.3.7"
+    req_1: "Check for rsyslog advanced format TCP module loading in configuration files"
+    req_2: "Check for rsyslog advanced format TCP input configuration in configuration files"
+    req_3: "Check for rsyslog legacy format TCP module loading in configuration files"
+    req_4: "Check for rsyslog legacy format TCP server run directive in configuration files"
     req_5: "OVERALL Verify: Ensure rsyslog is not configured to receive logs from a remote client"
 
   tasks:
@@ -30,12 +30,10 @@
         task_5_cmd: "N/A"
         task_5_rc: -1
 
-    # Requirement 1: Check for modern rsyslog TCP input module loading
-    - name: Req 1 - Check modern TCP module loading
+    # Requirement 1: Check for rsyslog advanced format TCP module loading
+    - name: "Req 1 - Check advanced format TCP module loading"
       shell: |
-        {% raw %}
-        grep -Psi -- '^\h*module\(load="?imtcp"?\)' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null || true
-        {% endraw %}
+        grep -Psi -- '^\h*module\(load=\"?imtcp\"?\)' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
       args:
         executable: /bin/bash
       register: result_1
@@ -44,20 +42,18 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check modern TCP module loading"
+        task_1_name: "Check advanced format TCP module loading"
         task_1_cmd: |
           grep -Psi -- '^\h*module\(load=\"?imtcp\"?\)' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when command returns no output (no lines matched), FAIL when any output is returned"
+        rationale_1: "{{ ('PASS when command returns no output (no lines matched), FAIL when any output is returned' if (result_1.stdout | default('') | trim == '') else 'FAIL: Found rsyslog advanced format TCP module loading configuration') | trim }}"
 
-    # Requirement 2: Check for modern rsyslog TCP input configuration
-    - name: Req 2 - Check modern TCP input configuration
+    # Requirement 2: Check for rsyslog advanced format TCP input configuration
+    - name: "Req 2 - Check advanced format TCP input configuration"
       shell: |
-        {% raw %}
-        grep -Psi -- '^\h*input\(type="?imtcp"?\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null || true
-        {% endraw %}
+        grep -Psi -- '^\h*input\(type=\"?imtcp\"?\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
       args:
         executable: /bin/bash
       register: result_2
@@ -66,20 +62,18 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check modern TCP input configuration"
+        task_2_name: "Check advanced format TCP input configuration"
         task_2_cmd: |
           grep -Psi -- '^\h*input\(type=\"?imtcp\"?\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns no output (no lines matched), FAIL when any output is returned"
+        rationale_2: "{{ ('PASS when command returns no output (no lines matched), FAIL when any output is returned' if (result_2.stdout | default('') | trim == '') else 'FAIL: Found rsyslog advanced format TCP input configuration') | trim }}"
 
-    # Requirement 3: Check for legacy rsyslog TCP module loading
-    - name: Req 3 - Check legacy TCP module loading
+    # Requirement 3: Check for rsyslog legacy format TCP module loading
+    - name: "Req 3 - Check legacy format TCP module loading"
       shell: |
-        {% raw %}
-        grep -Psi -- '^\h*\$ModLoad\h+imtcp\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null || true
-        {% endraw %}
+        grep -Psi -- '^\h*\$ModLoad\h+imtcp\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
       args:
         executable: /bin/bash
       register: result_3
@@ -88,20 +82,18 @@
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check legacy TCP module loading"
+        task_3_name: "Check legacy format TCP module loading"
         task_3_cmd: |
           grep -Psi -- '^\h*\$ModLoad\h+imtcp\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when command returns no output (no lines matched), FAIL when any output is returned"
+        rationale_3: "{{ ('PASS when command returns no output (no lines matched), FAIL when any output is returned' if (result_3.stdout | default('') | trim == '') else 'FAIL: Found rsyslog legacy format TCP module loading configuration') | trim }}"
 
-    # Requirement 4: Check for legacy rsyslog TCP server run directive
-    - name: Req 4 - Check legacy TCP server run directive
+    # Requirement 4: Check for rsyslog legacy format TCP server run directive
+    - name: "Req 4 - Check legacy format TCP server run directive"
       shell: |
-        {% raw %}
-        grep -Psi -- '^\h*\$InputTCPServerRun\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf 2>/dev/null || true
-        {% endraw %}
+        grep -Psi -- '^\h*\$InputTCPServerRun\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
       args:
         executable: /bin/bash
       register: result_4
@@ -110,28 +102,39 @@
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check legacy TCP server run directive"
+        task_4_name: "Check legacy format TCP server run directive"
         task_4_cmd: |
           grep -Psi -- '^\h*\$InputTCPServerRun\b' /etc/rsyslog.conf /etc/rsyslog.d/*.conf
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
         status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_4: "PASS when command returns no output (no lines matched), FAIL when any output is returned"
+        rationale_4: "{{ ('PASS when command returns no output (no lines matched), FAIL when any output is returned' if (result_4.stdout | default('') | trim == '') else 'FAIL: Found rsyslog legacy format TCP server run directive') | trim }}"
 
     # Requirement 5: Overall verification
     - name: Store requirement 5 details
       set_fact:
         task_5_name: "Overall verification"
-        task_5_cmd: "N/A - Combined check"
+        task_5_cmd: "N/A - Combined check of requirements 1-4"
         task_5_rc: 0
-        data_5: "Combined results: req1={{ status_1 }}, req2={{ status_2 }}, req3={{ status_3 }}, req4={{ status_4 }}"
+        data_5: "Check results: status_1={{ status_1 }}, status_2={{ status_2 }}, status_3={{ status_3 }}, status_4={{ status_4 }}"
         status_5: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+          {% if (status_1 | trim == 'PASS') and 
+                (status_2 | trim == 'PASS') and 
+                (status_3 | trim == 'PASS') and 
+                (status_4 | trim == 'PASS') %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_5: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS (no modern or legacy TCP input configuration found), FAIL otherwise"
+        rationale_5: >-
+          {% if (status_1 | trim == 'PASS') and 
+                (status_2 | trim == 'PASS') and 
+                (status_3 | trim == 'PASS') and 
+                (status_4 | trim == 'PASS') %}
+            PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS
+          {% else %}
+            FAIL: One or more individual checks failed (see above)
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -140,7 +143,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.2.3.7"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.3.7"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -185,6 +188,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_5 | trim }}"
+          - "  Rationale: {{ rationale_5 | trim }}"
           - "========================================================"

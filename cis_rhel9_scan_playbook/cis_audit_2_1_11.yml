@@ -2,13 +2,13 @@
 - name: Data Collection for CIS 2.1.11
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.11"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.11"
     req_1: "Verify cups package is not installed"
     req_2: "If cups package is installed, verify cups.socket and cups.service are not enabled"
     req_3: "If cups package is installed, verify cups.socket and cups.service are not active"
-    req_4: "OVERALL Verify: Ensure print server services are not in use"
+    req_4: "Overall Verify: Ensure print server services are not in use"
 
   tasks:
     - name: Initialize data variables
@@ -42,8 +42,8 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package cups is not installed') else 'FAIL') | trim }}"
-        rationale_1: |
-          {{ ('PASS when output is exactly \"package cups is not installed\", FAIL otherwise' if (result_1.stdout | default('') | trim == 'package cups is not installed') else 'FAIL - cups package appears to be installed or error occurred') | trim }}
+        rationale_1: "{{ ('PASS: cups package is not installed' if (result_1.stdout | default('') | trim == 'package cups is not installed') else 'FAIL: cups package is installed') | trim }}"
+        cups_installed: "{{ (result_1.stdout | default('') | trim != 'package cups is not installed') | bool }}"
 
     # Requirement 2: If cups package is installed, verify cups.socket and cups.service are not enabled
     - name: Req 2 - Check if cups services are enabled
@@ -53,17 +53,32 @@
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: cups_installed
 
     - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check if cups services are enabled"
         task_2_cmd: "systemctl is-enabled cups.socket cups.service 2>/dev/null | grep 'enabled'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        task_2_rc: "{{ result_2.rc | default(0) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when command returns no output (empty), FAIL when any output is returned' if (result_2.stdout | default('') | trim == '') else 'FAIL - cups services appear to be enabled') | trim }}"
-      when: status_1 | trim == 'FAIL'
+        status_2: >-
+          {% if not cups_installed %}
+            NA
+          {% else %}
+            {% if result_2.stdout | default('') | trim == '' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if not cups_installed %}
+            NA: cups package is not installed
+          {% elif result_2.stdout | default('') | trim == '' %}
+            PASS: cups services are not enabled
+          {% else %}
+            FAIL: cups services are enabled
+          {% endif %}
 
     # Requirement 3: If cups package is installed, verify cups.socket and cups.service are not active
     - name: Req 3 - Check if cups services are active
@@ -73,40 +88,53 @@
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: cups_installed
 
     - name: Store requirement 3 details
       set_fact:
         task_3_name: "Check if cups services are active"
         task_3_cmd: "systemctl is-active cups.socket cups.service 2>/dev/null | grep '^active'"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        task_3_rc: "{{ result_3.rc | default(0) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when command returns no output (empty), FAIL when any output is returned' if (result_3.stdout | default('') | trim == '') else 'FAIL - cups services appear to be active') | trim }}"
-      when: status_1 | trim == 'FAIL'
+        status_3: >-
+          {% if not cups_installed %}
+            NA
+          {% else %}
+            {% if result_3.stdout | default('') | trim == '' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if not cups_installed %}
+            NA: cups package is not installed
+          {% elif result_3.stdout | default('') | trim == '' %}
+            PASS: cups services are not active
+          {% else %}
+            FAIL: cups services are active
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify: Ensure print server services are not in use
+    # Requirement 4: Overall Verify: Ensure print server services are not in use
     - name: Store requirement 4 details
       set_fact:
         task_4_name: "Overall compliance check"
-        task_4_cmd: "N/A - calculated from previous checks"
+        task_4_cmd: "N/A (evaluated based on previous checks)"
         task_4_rc: 0
-        data_4: "Package check: {{ status_1 | default('UNKNOWN') }}, Services enabled: {{ status_2 | default('NA') }}, Services active: {{ status_3 | default('NA') }}"
+        data_4: "req_1: {{ status_1 }}, req_2: {{ status_2 }}, req_3: {{ status_3 }}"
         status_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('NA') | trim == 'PASS' and status_3 | default('NA') | trim == 'PASS' %}
+          {% if status_1 == 'PASS' or (status_2 in ['PASS', 'NA'] and status_3 in ['PASS', 'NA']) %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS - cups package is not installed
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('NA') | trim == 'PASS' and status_3 | default('NA') | trim == 'PASS' %}
-            PASS - cups package is installed but services are not enabled or active
+          {% if status_1 == 'PASS' %}
+            PASS: cups package is not installed
+          {% elif status_2 in ['PASS', 'NA'] and status_3 in ['PASS', 'NA'] %}
+            PASS: cups is installed but services are not enabled and not active
           {% else %}
-            FAIL - cups package is installed and services are either enabled or active
+            FAIL: cups is installed and services are either enabled or active
           {% endif %}
 
     # Final report
@@ -132,16 +160,16 @@
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('NA - cups package not installed') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name | default('Task not recorded') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('NA - cups package not installed') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
           - "  Task: {{ task_4_name | default('Task not recorded') }}"
@@ -153,6 +181,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_4 | trim }}"
+          - "  Rationale: {{ rationale_4 | trim }}"
           - "========================================================"

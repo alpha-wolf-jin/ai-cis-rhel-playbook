@@ -1,46 +1,28 @@
 ---
-- name: Data Collection for CIS checkpoint 6.3.3.1
+- name: Data Collection for CIS 6.3.3.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.1
-    req_1: Check on-disk audit rules for sudoers file monitoring
-    req_2: Check on-disk audit rules for sudoers.d directory monitoring
-    req_3: Check loaded audit rules for sudoers file monitoring
-    req_4: Check loaded audit rules for sudoers.d directory monitoring
-    req_5: OVERALL Verify - Ensure changes to system administration scope (sudoers) is collected
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.1"
+    req_1: "Check on-disk audit rules for /etc/sudoers and /etc/sudoers.d"
+    req_2: "Check loaded audit rules for /etc/sudoers and /etc/sudoers.d"
+    req_3: "Ensure changes to system administration scope (sudoers) is collected"
 
   tasks:
     - name: Initialize data variables
       set_fact:
+        data_1: ""
+        data_2: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_1: ""
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_2: ""
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        data_3: ""
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        data_4: ""
-        status_4: "UNKNOWN"
-        rationale_4: "Not evaluated"
 
-    # Requirement 1 - Check on-disk audit rules for sudoers file monitoring
-    - name: Req 1 - Check on-disk sudoers file audit rules
+    # Requirement 1: Check on-disk audit rules
+    - name: Req 1 - Check on-disk audit rules for sudoers
       shell: |
         awk '/^ *-w/ &&/\/etc\/sudoers/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
       args:
@@ -51,18 +33,50 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Req 1 - Check on-disk sudoers file audit rules"
+        task_1_name: "Check on-disk audit rules for sudoers"
         task_1_cmd: |
           awk '/^ *-w/ &&/\/etc\/sudoers/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '-w /etc/sudoers -p wa -k scope') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output contains exactly -w /etc/sudoers -p wa -k scope, FAIL otherwise') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set lines = output.split('\n') | list %}
+          {% set has_sudoers = false %}
+          {% set has_sudoers_d = false %}
+          {% for line in lines %}
+            {% if line.strip() == '-w /etc/sudoers -p wa -k scope' %}
+              {% set has_sudoers = true %}
+            {% elif line.strip() == '-w /etc/sudoers.d -p wa -k scope' %}
+              {% set has_sudoers_d = true %}
+            {% endif %}
+          {% endfor %}
+          {% if has_sudoers and has_sudoers_d %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set lines = output.split('\n') | list %}
+          {% set has_sudoers = false %}
+          {% set has_sudoers_d = false %}
+          {% for line in lines %}
+            {% if line.strip() == '-w /etc/sudoers -p wa -k scope' %}
+              {% set has_sudoers = true %}
+            {% elif line.strip() == '-w /etc/sudoers.d -p wa -k scope' %}
+              {% set has_sudoers_d = true %}
+            {% endif %}
+          {% endfor %}
+          {% if has_sudoers and has_sudoers_d %}
+            PASS: Output contains both required lines
+          {% else %}
+            FAIL: Missing required lines. Expected both '-w /etc/sudoers -p wa -k scope' and '-w /etc/sudoers.d -p wa -k scope' but got: {{ output if output != '' else '(empty)' }}
+          {% endif %}
 
-    # Requirement 2 - Check on-disk audit rules for sudoers.d directory monitoring
-    - name: Req 2 - Check on-disk sudoers.d directory audit rules
+    # Requirement 2: Check loaded audit rules
+    - name: Req 2 - Check loaded audit rules for sudoers
       shell: |
-        awk '/^ *-w/ &&/\/etc\/sudoers.d/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        auditctl -l | awk '/^ *-w/ &&/\/etc\/sudoers/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
       args:
         executable: /bin/bash
       register: result_2
@@ -71,59 +85,61 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Req 2 - Check on-disk sudoers.d directory audit rules"
+        task_2_name: "Check loaded audit rules for sudoers"
         task_2_cmd: |
-          awk '/^ *-w/ &&/\/etc\/sudoers.d/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+          auditctl -l | awk '/^ *-w/ &&/\/etc\/sudoers/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '-w /etc/sudoers.d -p wa -k scope') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when output contains exactly -w /etc/sudoers.d -p wa -k scope, FAIL otherwise') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set lines = output.split('\n') | list %}
+          {% set has_sudoers = false %}
+          {% set has_sudoers_d = false %}
+          {% for line in lines %}
+            {% if line.strip() == '-w /etc/sudoers -p wa -k scope' %}
+              {% set has_sudoers = true %}
+            {% elif line.strip() == '-w /etc/sudoers.d -p wa -k scope' %}
+              {% set has_sudoers_d = true %}
+            {% endif %}
+          {% endfor %}
+          {% if has_sudoers and has_sudoers_d %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set lines = output.split('\n') | list %}
+          {% set has_sudoers = false %}
+          {% set has_sudoers_d = false %}
+          {% for line in lines %}
+            {% if line.strip() == '-w /etc/sudoers -p wa -k scope' %}
+              {% set has_sudoers = true %}
+            {% elif line.strip() == '-w /etc/sudoers.d -p wa -k scope' %}
+              {% set has_sudoers_d = true %}
+            {% endif %}
+          {% endfor %}
+          {% if has_sudoers and has_sudoers_d %}
+            PASS: Output contains both required lines
+          {% else %}
+            FAIL: Missing required lines. Expected both '-w /etc/sudoers -p wa -k scope' and '-w /etc/sudoers.d -p wa -k scope' but got: {{ output if output != '' else '(empty)' }}
+          {% endif %}
 
-    # Requirement 3 - Check loaded audit rules for sudoers file monitoring
-    - name: Req 3 - Check loaded sudoers file audit rules
-      shell: |
-        auditctl -l | awk '/^ *-w/ &&/\/etc\/sudoers/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      changed_when: false
-
-    - name: Store requirement 3 details
+    # Overall compliance determination
+    - name: Determine overall compliance
       set_fact:
-        task_3_name: "Req 3 - Check loaded sudoers file audit rules"
-        task_3_cmd: |
-          auditctl -l | awk '/^ *-w/ &&/\/etc\/sudoers/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '-w /etc/sudoers -p wa -k scope') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when output contains exactly -w /etc/sudoers -p wa -k scope, FAIL otherwise') | trim }}"
-
-    # Requirement 4 - Check loaded audit rules for sudoers.d directory monitoring
-    - name: Req 4 - Check loaded sudoers.d directory audit rules
-      shell: |
-        auditctl -l | awk '/^ *-w/ &&/\/etc\/sudoers.d/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      changed_when: false
-
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Req 4 - Check loaded sudoers.d directory audit rules"
-        task_4_cmd: |
-          auditctl -l | awk '/^ *-w/ &&/\/etc\/sudoers.d/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim == '-w /etc/sudoers.d -p wa -k scope') else 'FAIL') | trim }}"
-        rationale_4: "{{ ('PASS when output contains exactly -w /etc/sudoers.d -p wa -k scope, FAIL otherwise') | trim }}"
-
-    # Requirement 5 - Overall verification
-    - name: Set overall compliance status
-      set_fact:
-        status_5: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS' and status_3 == 'PASS' and status_4 == 'PASS') else 'FAIL') | trim }}"
-        rationale_5: "{{ ('PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise') | trim }}"
+        status_3: >-
+          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+            PASS: Both on-disk and loaded audit rules are properly configured
+          {% else %}
+            FAIL: Missing proper audit configuration for sudoers changes. Both on-disk (req_1) and loaded (req_2) audit rules must contain both required lines.
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -151,24 +167,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

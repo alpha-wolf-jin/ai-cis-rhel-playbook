@@ -1,0 +1,81 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    cis_reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.10
+    req_1: Check if XDMCP is enabled in GDM configuration
+    req_2: 'OVERALL Verify: Ensure XDMCP is not enabled'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+
+    # Requirement 1: Check if XDMCP is enabled in GDM configuration
+- name: "Req 1 - Check XDMCP in GDM configuration"
+  shell: |
+    grep -Eis '^\s*Enable\s*=\s*true' /etc/gdm/custom.conf
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check XDMCP in GDM configuration"
+    task_1_cmd: |
+      grep -Eis '^\s*Enable\s*=\s*true' /etc/gdm/custom.conf
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if result_1.stdout == '' else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS when the command returns no output (i.e., the Enable parameter is not set to true), FAIL when the command returns any output indicating XDMCP is enabled' if result_1.stdout == '' else 'FAIL: XDMCP is enabled in /etc/gdm/custom.conf') | trim }}"
+
+    # Requirement 2: OVERALL Verify - Ensure XDMCP is not enabled
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "OVERALL Verify: Ensure XDMCP is not enabled"
+    task_2_cmd: "N/A (logical check)"
+    task_2_rc: 0
+    data_2: "Requirement 1 status: {{ status_1 | default('UNKNOWN') | trim }}"
+    status_2: "{{ status_1 | default('FAIL') | trim }}"
+    rationale_2: "{{ ('PASS when req_1=PASS (XDMCP is not enabled), FAIL otherwise' if status_1 | default('FAIL') == 'PASS' else 'FAIL: XDMCP is enabled or cannot be verified') | trim }}"
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 1.8.10"
+    - "========================================================"
+    - "Reference: {{ cis_reference }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ ('Overall compliance determined by requirement 2: PASS when XDMCP is not enabled, FAIL otherwise' if status_2 | default('FAIL') == 'PASS' else 'Overall compliance determined by requirement 2: FAIL - XDMCP is enabled or cannot be verified') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_1_8_10'': status_2 | trim }] }}'

@@ -2,42 +2,26 @@
 - name: Data Collection for CIS 5.1.12
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.12"
-    req_1: "Check sshd global HostbasedAuthentication setting using command: sshd -T | grep hostbasedauthentication. Rationale: PASS when output is exactly 'hostbasedauthentication no', FAIL otherwise"
-    req_2: "If Match blocks are used in the sshd configuration, check HostbasedAuthentication setting for each relevant user/connection context using command: sshd -T -C user=<username> | grep hostbasedauthentication (replace <username> with each applicable user). Rationale: PASS when for all tested contexts the output is exactly 'hostbasedauthentication no', FAIL if any context returns a different value or if the grep finds no line (which implies the default or a different setting may apply and requires manual review of the sshd config)."
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.12"
+    req_1: "Verify sshd HostbasedAuthentication global setting using command: `sshd -T | grep hostbasedauthentication`. Rationale: PASS when output is exactly 'hostbasedauthentication no', FAIL otherwise"
+    req_2: "If Match blocks are used in the sshd configuration, verify HostbasedAuthentication for each relevant Match block using connection parameters. Example for user 'sshuser': `sshd -T -C user=sshuser | grep hostbasedauthentication`. Rationale: PASS when for all applicable Match blocks the output is exactly 'hostbasedauthentication no', FAIL if any applicable Match block output is not 'hostbasedauthentication no'"
     req_3: "OVERALL Verify: Ensure sshd HostbasedAuthentication is disabled. Rationale: PASS when req_1=PASS AND (Match blocks are not used OR req_2=PASS), FAIL otherwise"
-    # Variable to specify which users to test for match blocks
-    # This should be populated based on environment knowledge or configuration analysis
-    test_users: []
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        data_2: ""
-        data_3: ""
-        status_1: "UNKNOWN"
-        status_2: "UNKNOWN"
-        status_3: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        rationale_2: "Not evaluated"
-        rationale_3: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        match_blocks_used: false
 
-    # Requirement 1: Check sshd HostbasedAuthentication global setting
-    - name: Req 1 - Check global sshd HostbasedAuthentication setting
-      shell: !unsafe |
+    # Requirement 1: Global setting
+    - name: Req 1 - Check global HostbasedAuthentication setting
+      shell: |
         sshd -T | grep hostbasedauthentication
       args:
         executable: /bin/bash
@@ -47,182 +31,200 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global sshd HostbasedAuthentication setting"
+        task_1_name: "Check global HostbasedAuthentication setting"
         task_1_cmd: "sshd -T | grep hostbasedauthentication"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'hostbasedauthentication no' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'hostbasedauthentication no' %}
-            PASS when output is exactly 'hostbasedauthentication no', FAIL otherwise
-          {% else %}
-            FAIL: Output is not 'hostbasedauthentication no'
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'hostbasedauthentication no') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly hostbasedauthentication no, FAIL otherwise') | trim }}"
 
-    # Requirement 2: Check HostbasedAuthentication for match blocks (if used)
-    # First, check if sshd_config contains Match blocks
-    - name: Req 2 - Check if sshd_config contains Match blocks
-      shell: !unsafe |
-        if [ -f /etc/ssh/sshd_config ]; then
-          grep -E '^[[:space:]]*Match[[:space:]]+' /etc/ssh/sshd_config | head -1
-        else
-          echo "ERROR: /etc/ssh/sshd_config not found"
+    # Requirement 2: Check for Match blocks and test all conditions
+    - name: Req 2 - Parse Match blocks and test HostbasedAuthentication
+      shell: |
+        # Ansible processes this first outside raw block
+        config_file=/etc/ssh/sshd_config
+        match_blocks_found=false
+        match_conditions_list=""
+        
+        # Check if we have match blocks to test
+        if grep -q "^Match" "$config_file"; then
+          match_blocks_found=true
         fi
-      args:
-        executable: /bin/bash
-      register: match_check
-      ignore_errors: true
-      changed_when: false
-
-    - name: Req 2 - Determine if match blocks are used
-      set_fact:
-        match_blocks_used: >-
-          {% set output = match_check.stdout | default('') | trim %}
-          {% if output and 'ERROR:' not in output %}
-            true
-          {% else %}
-            false
-          {% endif %}
-
-    # Requirement 2: Check HostbasedAuthentication for each user context when match blocks are used
-    # Using the exact command format from the audit procedure
-    - name: Req 2 - Check HostbasedAuthentication for each user context
-      shell: !unsafe |
-        sshd -T -C user={{ item }} | grep hostbasedauthentication
+        
+        {% raw %}
+        if [ "$match_blocks_found" = "false" ]; then
+          echo "No Match blocks found"
+          exit 0
+        fi
+        
+        # Extract all Match block conditions from sshd_config
+        # We will parse each Match line and extract condition parameters
+        # Example: Match User root Host 192.168.1.1 -> conditions: User=root Host=192.168.1.1
+        # Example: Match User john Group admin -> conditions: User=john Group=admin
+        
+        # First, get all Match lines
+        match_lines=$(grep -n "^Match" "$config_file" | sed 's/^\([0-9]*\):Match \(.*\)$/\1:\2/')
+        
+        # Initialize result tracking
+        all_compliant=true
+        output_lines=""
+        
+        # Process each Match block
+        while IFS= read -r match_line; do
+          line_num="${match_line%%:*}"
+          conditions="${match_line#*:}"
+          
+          # Clean up conditions - remove extra spaces
+          conditions=$(echo "$conditions" | sed 's/^ *//;s/ *$//')
+          
+          # Initialize connection parameters for this Match block
+          c_params=""
+          
+          # Split conditions into tokens (key1 value1 key2 value2 ...)
+          # Use set to parse tokens
+          set -- $conditions
+          
+          # Process token pairs
+          while [ $# -gt 0 ]; do
+            key="$1"
+            value="$2"
+            shift 2
+            
+            # Convert condition key to lowercase for sshd -C parameter
+            # Known sshd condition types: User, Group, Host, LocalAddress, LocalPort, Address, RDomain
+            case "$key" in
+              User)
+                param_key="user"
+                ;;
+              Group)
+                param_key="group"
+                ;;
+              Host)
+                param_key="host"
+                ;;
+              LocalAddress)
+                param_key="laddr"
+                ;;
+              LocalPort)
+                param_key="lport"
+                ;;
+              Address)
+                param_key="addr"
+                ;;
+              RDomain)
+                param_key="rdomain"
+                ;;
+              *)
+                # Skip unknown condition types
+                continue
+                ;;
+            esac
+            
+            # Add -C parameter
+            if [ -n "$c_params" ]; then
+              c_params="$c_params -C $param_key=$value"
+            else
+              c_params="-C $param_key=$value"
+            fi
+          done
+          
+          # If we have connection parameters, test this Match block
+          if [ -n "$c_params" ]; then
+            # Test with all collected connection parameters for this Match block
+            match_output=$(sshd -T $c_params 2>/dev/null | grep hostbasedauthentication || true)
+            
+            # Record the test
+            output_lines="${output_lines}Match block at line $line_num with params: $c_params"$'\n'
+            output_lines="${output_lines}  Output: $match_output"$'\n'
+            
+            # Check if this block is compliant
+            if [ "$match_output" != "hostbasedauthentication no" ]; then
+              all_compliant=false
+              output_lines="${output_lines}  Status: NON-COMPLIANT"$'\n'
+            else
+              output_lines="${output_lines}  Status: COMPLIANT"$'\n'
+            fi
+          fi
+        done << EOF
+        $match_lines
+        EOF
+        
+        # Output final results
+        if [ "$all_compliant" = "true" ]; then
+          echo "All Match blocks are compliant:"
+          echo "$output_lines"
+          echo "hostbasedauthentication no"
+        else
+          echo "Some Match blocks are non-compliant:"
+          echo "$output_lines"
+          exit 1
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      loop: "{{ test_users }}"
-      when: 
-        - match_blocks_used | bool
-        - test_users | length > 0
 
-    - name: Req 2 - Process match block results when users are specified
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check HostbasedAuthentication for match blocks"
-        task_2_cmd: >-
-          sshd -T -C user=<username> | grep hostbasedauthentication (for each: {{ test_users | join(', ') }})
-        task_2_rc: >-
-          {{ result_2.results | default([]) | map(attribute='rc') | list | join(',') }}
-        data_2: >-
-          {% set outputs = [] %}
-          {% for item in result_2.results | default([]) %}
-            {% set user = test_users[loop.index0] %}
-            {% set output = item.stdout | default('') | trim %}
-            {% set _ = outputs.append(user + ': ' + output) %}
-          {% endfor %}
-          {{ outputs | join('; ') }}
+        task_2_name: "Check HostbasedAuthentication for all Match blocks"
+        task_2_cmd: "Parse sshd_config for Match blocks and test each with appropriate connection parameters"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% set all_pass = true %}
-          {% set any_no_line = false %}
-          {% for item in result_2.results | default([]) %}
-            {% set output = item.stdout | default('') | trim %}
-            {% if output == '' %}
-              {% set any_no_line = true %}
-            {% elif output != 'hostbasedauthentication no' %}
-              {% set all_pass = false %}
-            {% endif %}
-          {% endfor %}
-          {% if any_no_line %}
-            FAIL
-          {% elif all_pass %}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == 'No Match blocks found' %}
+            NA
+          {% elif 'All Match blocks are compliant' in output and 'hostbasedauthentication no' in output %}
+            PASS
+          {% elif result_2.rc == 0 %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_2: >-
-          {% set all_pass = true %}
-          {% set any_no_line = false %}
-          {% set failed_users = [] %}
-          {% set no_line_users = [] %}
-          {% for item in result_2.results | default([]) %}
-            {% set user = test_users[loop.index0] %}
-            {% set output = item.stdout | default('') | trim %}
-            {% if output == '' %}
-              {% set any_no_line = true %}
-              {% set _ = no_line_users.append(user) %}
-            {% elif output != 'hostbasedauthentication no' %}
-              {% set all_pass = false %}
-              {% set _ = failed_users.append(user + '=' + output) %}
-            {% endif %}
-          {% endfor %}
-          {% if any_no_line %}
-            FAIL: grep found no line for users {{ no_line_users | join(', ') }} (implies default or different setting, requires manual review)
-          {% elif all_pass %}
-            PASS when all outputs for tested user contexts are exactly 'hostbasedauthentication no'
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == 'No Match blocks found' %}
+            No Match blocks found, requirement not applicable
+          {% elif 'All Match blocks are compliant' in output and 'hostbasedauthentication no' in output %}
+            PASS when for all tested Match blocks output is exactly hostbasedauthentication no
+          {% elif 'Some Match blocks are non-compliant' in output %}
+            FAIL if any applicable Match block output is not hostbasedauthentication no
           {% else %}
-            FAIL: Some user context outputs are not 'hostbasedauthentication no' ({{ failed_users | join(', ') }})
+            FAIL if any applicable Match block output is not hostbasedauthentication no
           {% endif %}
-      when: 
-        - match_blocks_used | bool
-        - test_users | length > 0
 
-    - name: Req 2 - Set status when match blocks exist but no users specified
+    # Requirement 3: Overall compliance
+    - name: Set overall compliance
       set_fact:
-        task_2_name: "Check HostbasedAuthentication for match blocks"
-        task_2_cmd: "Skipped - match blocks detected but no test users specified"
-        task_2_rc: 0
-        data_2: "Match blocks detected in sshd_config but no test users specified for context testing"
-        status_2: "FAIL"
-        rationale_2: "Match blocks are used but no test users specified. Manual review of sshd_config required to determine applicable user contexts."
-      when: 
-        - match_blocks_used | bool
-        - test_users | length == 0
-
-    - name: Req 2 - Set status when no match blocks are used
-      set_fact:
-        task_2_name: "Check HostbasedAuthentication for match blocks"
-        task_2_cmd: "Skipped - no match blocks found in sshd_config"
-        task_2_rc: 0
-        data_2: "No Match directives found in sshd_config"
-        status_2: "NA"
-        rationale_2: "No Match directives found in sshd_config, requirement not applicable"
-      when: not (match_blocks_used | bool)
-
-    # Requirement 3: OVERALL Verify
-    - name: Req 3 - Determine overall compliance
-      set_fact:
-        task_3_name: "OVERALL Verify: Ensure sshd HostbasedAuthentication is disabled"
-        task_3_cmd: "N/A - Calculated from previous requirements"
-        task_3_rc: 0
-        data_3: "Global: {{ data_1 }}, Match blocks: {{ data_2 }}"
         status_3: >-
-          {% if status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA') %}
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% if s1 == 'PASS' and (s2 == 'PASS' or s2 == 'NA') %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_3: >-
-          {% if status_1 | trim == 'PASS' and (status_2 | trim == 'PASS' or status_2 | trim == 'NA') %}
-            PASS when req_1=PASS AND (if match blocks are used, req_2=PASS)
-          {% else %}
-            FAIL: Global setting or match block setting is not compliant
-          {% endif %}
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          PASS when req_1=PASS AND (Match blocks are not used OR req_2=PASS), FAIL otherwise
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.12"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.12"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
           - "  Task: {{ task_1_name }}"
           - "  Command: {{ task_1_cmd }}"
           - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Data: {{ data_1 }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
@@ -230,17 +232,9 @@
           - "  Task: {{ task_2_name }}"
           - "  Command: {{ task_2_cmd }}"
           - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Data: {{ data_2 }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

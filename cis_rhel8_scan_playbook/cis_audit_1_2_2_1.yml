@@ -2,76 +2,71 @@
 - name: Data Collection for CIS 1.2.2.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.2.2.1"
-    req_1: "Verify no package updates are pending using command: dnf check-update"
-    req_2: "Verify no system reboot is required after updates using command: dnf needs-restarting -r"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.2.2.1"
+    req_1: "Check for available system updates using command: dnf check-update"
+    req_2: "Check if a system reboot is required after updates using command: dnf needs-restarting -r"
     req_3: "OVERALL Verify: Ensure updates, patches, and additional security software are installed"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify no package updates are pending using command: dnf check-update
-    - name: "Req 1 - Check for pending package updates"
+    # Requirement 1: Check for available system updates using command: dnf check-update
+    - name: Req 1 - Check for available updates
       shell: dnf check-update
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for pending package updates"
+        task_1_name: "Check for available updates"
         task_1_cmd: "dnf check-update"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns no output (exit code 0), FAIL when updates are available (exit code 100)' | trim) }}"
+        status_1: "{{ ('PASS' if (result_1.rc == 0 and result_1.stdout == '') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS: No updates available (exit code 0, no output)' if (result_1.rc == 0 and result_1.stdout == '') else ('FAIL: Updates available (exit code 100)' if result_1.rc == 100 else 'FAIL: Unexpected error (exit code ' ~ result_1.rc ~ ')')) | trim }}"
 
-    # Requirement 2: Verify no system reboot is required after updates using command: dnf needs-restarting -r
-    - name: "Req 2 - Check if system reboot is required"
+    # Requirement 2: Check if a system reboot is required after updates using command: dnf needs-restarting -r
+    - name: Req 2 - Check if reboot is required
       shell: dnf needs-restarting -r
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if system reboot is required"
+        task_2_name: "Check if reboot is required"
         task_2_cmd: "dnf needs-restarting -r"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if result_2.rc == 0 else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when command returns no output (exit code 0), FAIL when a reboot is required (exit code 1)' | trim) }}"
+        rationale_2: "{{ ('PASS: No reboot required (exit code 0)' if result_2.rc == 0 else ('FAIL: Reboot required (exit code 1)' if result_2.rc == 1 else 'FAIL: Unexpected error (exit code ' ~ result_2.rc ~ ')')) | trim }}"
 
     # Requirement 3: OVERALL Verify: Ensure updates, patches, and additional security software are installed
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify: Ensure updates, patches, and additional security software are installed"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
-        status_3: "{{ ('PASS' if status_1 == 'PASS' and status_2 == 'PASS' else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' | trim) }}"
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "N/A"
+        task_3_rc: "N/A"
+        data_3: "N/A"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS: Both requirements passed - system is up to date and no reboot required' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: One or more requirements failed') | trim }}"
 
     # Final report
     - name: Generate compliance report

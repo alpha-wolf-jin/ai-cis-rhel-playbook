@@ -1,11 +1,11 @@
 ---
-- name: Data Collection for CIS checkpoint 5.1.10
+- name: Data Collection for CIS 5.1.10
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.10"
-    req_1: "Verify sshd DisableForwarding configuration using command: sshd -T | grep -i disableforwarding"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.10"
+    req_1: "Verify sshd DisableForwarding configuration using command: `sshd -T | grep -i disableforwarding`"
     req_2: "OVERALL Verify: Ensure sshd DisableForwarding is enabled"
 
   tasks:
@@ -18,9 +18,9 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify sshd DisableForwarding configuration using command: sshd -T | grep -i disableforwarding
+    # Requirement 1: Verify sshd DisableForwarding configuration using command: `sshd -T | grep -i disableforwarding`
     - name: Req 1 - Check sshd DisableForwarding configuration
-      shell: !unsafe |
+      shell: |
         sshd -T | grep -i disableforwarding
       args:
         executable: /bin/bash
@@ -35,26 +35,25 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'disableforwarding yes') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is exactly disableforwarding yes, FAIL otherwise' if (result_1.stdout | default('') | trim == 'disableforwarding yes') else 'FAIL when output is not exactly disableforwarding yes') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly disableforwarding yes, FAIL otherwise' if (result_1.stdout | default('') | trim == 'disableforwarding yes') else 'FAIL: Expected disableforwarding yes, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
     # Requirement 2: OVERALL Verify: Ensure sshd DisableForwarding is enabled
-    - name: Req 2 - Overall verification
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A (calculated from requirement 1)"
+        task_2_name: "OVERALL Verify: Ensure sshd DisableForwarding is enabled"
+        task_2_cmd: "N/A"
         task_2_rc: 0
-        data_2: "{{ data_1 | default('') | trim }}"
+        data_2: "N/A"
         status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | default('UNKNOWN') | trim == 'PASS') else 'FAIL because req_1 is not PASS') | trim }}"
+        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | default('') | trim == 'PASS') else 'FAIL: req_1 did not pass') | trim }}"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.10"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -75,6 +74,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: {{ ('Overall compliance determined by requirement 2: ' + rationale_2) | trim }}"
           - "========================================================"

@@ -1,62 +1,131 @@
 ---
-- name: Data Collection for CIS 1.1.2.7.3
+- name: Data Collection for CIS checkpoint 1.1.2.7.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.2.7.3"
-    req_1: "Verify that if a separate partition exists for /var/log/audit, the nosuid mount option is set"
-    req_2: "OVERALL Verify: Ensure nosuid option set on /var/log/audit partition"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.7.3"
+    req_1: "Check if /var/log/audit is a separate mount point"
+    req_2: "Verify the nosuid mount option is set on /var/log/audit partition"
+    req_3: "Ensure nosuid option set on /var/log/audit partition"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify that if a separate partition exists for /var/log/audit, the nosuid mount option is set
-    - name: "Req 1 - Check nosuid option on /var/log/audit partition"
-      shell: >
-        findmnt -kn /var/log/audit | grep -v nosuid
+    # Requirement 1: Check if /var/log/audit is a separate mount point
+    - name: Req 1 - Check if /var/log/audit is separate mount
+      shell: findmnt /var/log/audit
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check nosuid option on /var/log/audit partition"
-        task_1_cmd: "findmnt -kn /var/log/audit | grep -v nosuid"
+        task_1_name: "Check if /var/log/audit is separate mount"
+        task_1_cmd: "findmnt /var/log/audit"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns no output (nosuid is present), FAIL when output is returned (nosuid not present) or partition does not exist' | trim) }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            PASS - Mount point entry returned (separate partition exists)
+          {% else %}
+            FAIL - No output returned (not a separate partition)
+          {% endif %}
 
-    # Requirement 2: OVERALL Verify: Ensure nosuid option set on /var/log/audit partition
-    - name: "Req 2 - Determine overall compliance"
+    # Requirement 2: Verify nosuid mount option is set
+    - name: Req 2 - Check nosuid option on /var/log/audit
+      shell: findmnt -kn /var/log/audit | grep -v nosuid
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim == "PASS"
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' | trim) }}"
+        task_2_name: "Check nosuid option on /var/log/audit"
+        task_2_cmd: "findmnt -kn /var/log/audit | grep -v nosuid"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim != "PASS" %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == '' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != "PASS" %}
+            NA - Not applicable (no separate partition)
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == '' %}
+              PASS - Command returned no output (nosuid option is present)
+            {% else %}
+              FAIL - Command returned output (nosuid option is missing)
+            {% endif %}
+          {% endif %}
 
+    # Requirement 3: Overall compliance check
+    - name: Set overall compliance status
+      set_fact:
+        status_3: >-
+          {% if status_1 | trim == "FAIL" or (status_1 | trim == "PASS" and status_2 | trim == "PASS") %}
+            PASS
+          {% elif status_1 | trim == "PASS" and status_2 | trim == "FAIL" %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == "FAIL" %}
+            PASS - No separate partition exists (requirement not applicable)
+          {% elif status_1 | trim == "PASS" and status_2 | trim == "PASS" %}
+            PASS - Separate partition exists and nosuid option is set
+          {% elif status_1 | trim == "PASS" and status_2 | trim == "FAIL" %}
+            FAIL - Separate partition exists but nosuid option is missing
+          {% else %}
+            UNKNOWN - Could not determine overall status
+          {% endif %}
+
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.7.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -77,6 +146,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

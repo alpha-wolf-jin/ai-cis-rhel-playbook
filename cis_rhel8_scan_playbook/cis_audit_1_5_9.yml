@@ -1,117 +1,123 @@
 ---
-- name: Data Collection for CIS 1.5.9
+- name: Data Collection for CIS checkpoint 1.5.9
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.5.9"
-    req_1: "Run the following script to verify systemd-coredump ProcessSizeMax is set to 0"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.9"
+    req_1: "Run the provided CIS audit script to verify systemd-coredump ProcessSizeMax is configured"
     req_2: "OVERALL Verify: Ensure systemd-coredump ProcessSizeMax is configured"
+    
+    # Define scripts
+    script_content_1: |
+      {% raw %}
+      #!/usr/bin/env bash
+      {
+         l_analyze_cmd="$(readlink -e /bin/systemd-analyze || \
+         readlink -e /usr/bin/systemd-analyze)"
+         l_conf_file="systemd/coredump.conf" l_block="Coredump"
+         l_option="ProcessSizeMax" l_option_value="" a_output=()
+         while IFS= read -r l_file; do
+            l_file="${l_file//# /}"
+            l_opt="$(awk '/\['"$l_block"'\]/{a=1;next}/\[/{a=0}a' "$l_file" \
+            2>/dev/null | grep -Poi '^\h*'"$l_option"'\h*=\h*\H+\b' | tail -n 1)"
+               l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
+            [ -n "$l_option_value" ] && \
+            a_output+=(" - \"$l_option\" is set to: \"$l_option_value\"" \
+            "    in: \"$l_file\"")
+         done < <("$l_analyze_cmd" cat-config "$l_conf_file" | tac | \
+         grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
+         if [ "${#a_output[@]}" -le "0" ]; then
+            l_file="/etc/$l_conf_file"
+            l_opt="$(awk '/\['"$l_block"'\]/{a=1;next}/\[/{a=0}a' "$l_file" \
+            2>/dev/null | grep -Poim 1 '^(\h*#)?\h*'"$l_option"'\h*=\h*\H+\b')"
+            l_option_value="$(cut -d= -f2 <<< "${l_opt//# /}" | xargs)"
+            [ -n "$l_option_value" ] && \
+            a_output+=(" - The default value: \"${l_opt//#/}\"" \
+            "    is being used in the configuration")
+         fi
+         [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
+      }
+      {% endraw %}
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Run the following script to verify systemd-coredump ProcessSizeMax is set to 0
-    - name: "Req 1 - Create temporary audit script"
+    # Requirement 1: Run the provided CIS audit script
+    - name: Req 1 - Execute CIS audit script for systemd-coredump ProcessSizeMax
       copy:
-        dest: "/tmp/cis_audit_1_5_9.sh"
+        dest: "/tmp/cis_audit_1.5.9.sh"
         mode: '0700'
-        content: |
-          {% raw %}
-          #!/usr/bin/env bash
-          {
-             l_analyze_cmd="$(readlink -e /bin/systemd-analyze || \
-             readlink -e /usr/bin/systemd-analyze)"
-             l_conf_file="systemd/coredump.conf" l_block="Coredump"
-             l_option="ProcessSizeMax" l_option_value="" a_output=()
-             while IFS= read -r l_file; do
-                l_file="${l_file//# /}"
-                l_opt="$(awk '/\['"$l_block"'\]/{a=1;next}/\[/{a=0}a' "$l_file" \
-                2>/dev/null | grep -Poi '^\h*'"$l_option"'\h*=\h*\H+\b' | tail -n 1)"
-                   l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
-                [ -n "$l_option_value" ] && \
-                a_output+=(" - \"$l_option\" is set to: \"$l_option_value\"" \
-                "    in: \"$l_file\"")
-             done < <("$l_analyze_cmd" cat-config "$l_conf_file" | tac | \
-             grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
-             if [ "${#a_output[@]}" -le "0" ]; then
-                l_file="/etc/$l_conf_file"
-                l_opt="$(awk '/\['"$l_block"'\]/{a=1;next}/\[/{a=0}a' "$l_file" \
-                2>/dev/null | grep -Poim 1 '^(\h*#)?\h*'"$l_option"'\h*=\h*\H+\b')"
-                l_option_value="$(cut -d= -f2 <<< "${l_opt//# /}" | xargs)"
-                [ -n "$l_option_value" ] && \
-                a_output+=(" - The default value: \"${l_opt//#/}\"" \
-                "    is being used in the configuration")
-             fi
-             [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
-          }
-          {% endraw %}
-      register: script_created_1
+        content: "{{ script_content_1 }}"
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
+      changed_when: false
 
-    - name: "Req 1 - Execute audit script"
-      shell: "/tmp/cis_audit_1_5_9.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_1.5.9.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_1_5_9.sh"
+        path: "/tmp/cis_audit_1.5.9.sh"
         state: absent
       ignore_errors: true
+      changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for ProcessSizeMax"
-        task_1_cmd: "/tmp/cis_audit_1_5_9.sh"
+        task_1_name: "Execute CIS audit script for systemd-coredump ProcessSizeMax"
+        task_1_cmd: "bash /tmp/cis_audit_1.5.9.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: |
-          {{ ('PASS' if ('ProcessSizeMax\" is set to: \"0\"' in result_1.stdout) else 'FAIL') | trim }}
-        rationale_1: |
-          {{ 'PASS when the script output shows \"ProcessSizeMax\" is set to \"0\" in a configuration file, FAIL if it shows any other value or if no explicit setting is found and the default is not 0' | trim }}
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lines = output.split('\n') %}
+            {% set found_valid = false %}
+            {% for line in lines %}
+              {% if '"ProcessSizeMax" is set to: "0"' in line or '"ProcessSizeMax=0"' in line %}
+                {% set found_valid = true %}
+              {% endif %}
+            {% endfor %}
+            {% if found_valid %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when script output shows ProcessSizeMax is set to 0 in any configuration file, FAIL when not set to 0 or no output"
 
-    # Requirement 2: OVERALL Verify: Ensure systemd-coredump ProcessSizeMax is configured
-    - name: "Req 2 - Overall verification"
-      shell: echo "Overall verification based on requirement 1 result"
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
+    # Requirement 2: Overall verification
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "echo 'Overall verification based on requirement 1 result'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "{{ 'PASS when req_1=PASS, FAIL otherwise' | trim }}"
+        task_2_name: "Overall verification of systemd-coredump ProcessSizeMax configuration"
+        task_2_cmd: "N/A - derived from requirement 1"
+        task_2_rc: 0
+        data_2: "{{ data_1 | default('') | trim }}"
+        status_2: "{{ status_1 | default('FAIL') }}"
+        rationale_2: "PASS when requirement 1 is PASS, FAIL otherwise"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.5.9"
           - "========================================================"
-          - "Reference: {{ kcs_article }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.9"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -132,6 +138,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | default('FAIL') | trim }}"
+          - "  Rationale: Overall compliance determined by requirement 2 which is based on requirement 1 status"
           - "========================================================"

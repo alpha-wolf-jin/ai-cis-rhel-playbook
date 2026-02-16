@@ -2,13 +2,13 @@
 - name: Data Collection for CIS 6.3.3.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
     kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.4"
-    req_1: "Check on-disk audit rules for time-change system calls"
-    req_2: "Check on-disk audit rule for /etc/localtime file writes"
-    req_3: "Check loaded audit rules for time-change system calls"
-    req_4: "Check loaded audit rule for /etc/localtime file writes"
+    req_1: "Check on-disk audit rules for 64-bit time-change syscalls"
+    req_2: "Check on-disk audit rule for /etc/localtime file"
+    req_3: "Check loaded audit rules for 64-bit time-change syscalls"
+    req_4: "Check loaded audit rule for /etc/localtime file"
     req_5: "OVERALL Verify: Ensure events that modify date and time information are collected"
 
   tasks:
@@ -27,16 +27,12 @@
         task_4_cmd: "N/A"
         task_4_rc: -1
 
-    # Requirement 1: Check on-disk audit rules for time-change system calls
-    - name: Req 1 - Check on-disk audit rules for time-change system calls
+    # Requirement 1: Check on-disk audit rules for 64-bit time-change syscalls
+    - name: Req 1 - Check on-disk time-change syscall rules
       shell: |
-        awk '/^ *-a *always,exit/ \
-        &&/ -F *arch=b(32|64)/ \
-        &&/ -S/ \
-        &&(/adjtimex/ \
-          ||/settimeofday/ \
-          ||/clock_settime/ ) \
-        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        {% raw %}
+        awk '/^ *-a *always,exit/ &&/ -F *arch=b(32|64)/ &&/ -S/ &&(/adjtimex/ ||/settimeofday/ ||/clock_settime/ ) &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -45,42 +41,33 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check on-disk audit rules for time-change system calls"
+        task_1_name: "Check on-disk audit rules for 64-bit time-change syscalls"
         task_1_cmd: "awk '/^ *-a *always,exit/ &&/ -F *arch=b(32|64)/ &&/ -S/ &&(/adjtimex/ ||/settimeofday/ ||/clock_settime/ ) &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% set expected_rules = [
-            '-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change',
-            '-a always,exit -F arch=b32 -S adjtimex,settimeofday -k time-change',
-            '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -k time-change',
-            '-a always,exit -F arch=b32 -S clock_settime -F a0=0x0 -k time-change'
-          ] %}
           {% set output = result_1.stdout | default('') | trim %}
-          {% if output != '' %}
-            {% set found_rules = [] %}
-            {% for rule in expected_rules %}
-              {% if rule in output %}
-                {% set found_rules = found_rules + [rule] %}
-              {% endif %}
-            {% endfor %}
-            {% if found_rules | length == expected_rules | length %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+          {% if '-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change' in output and
+                '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -k time-change' in output %}
+            PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_1: "PASS when output contains all required rules for both b32 and b64 architectures covering adjtimex, settimeofday, and clock_settime (with a0=0x0 filter) system calls, each tagged with a key (e.g., 'time-change'), FAIL otherwise."
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if '-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change' in output and
+                '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -k time-change' in output %}
+            PASS when output contains lines matching '-a always,exit -F arch=b64 -S adjtimex,settimeofday -k time-change' AND '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -k time-change'
+          {% else %}
+            FAIL: Missing required on-disk audit rules for 64-bit time-change syscalls
+          {% endif %}
 
-    # Requirement 2: Check on-disk audit rule for /etc/localtime file writes
-    - name: Req 2 - Check on-disk audit rule for /etc/localtime file writes
+    # Requirement 2: Check on-disk audit rule for /etc/localtime file
+    - name: Req 2 - Check on-disk /etc/localtime rule
       shell: |
-        awk '/^ *-w/ \
-        &&/\/etc\/localtime/ \
-        &&/ +-p *wa/ \
-        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        {% raw %}
+        awk '/^ *-w/ &&/\/etc\/localtime/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
@@ -89,31 +76,32 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check on-disk audit rule for /etc/localtime file writes"
+        task_2_name: "Check on-disk audit rule for /etc/localtime file"
         task_2_cmd: |
-          awk '/^ *-w/ &&/\/etc\/localtime/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
+          awk '/^ *-w/ &&/\\/etc\\/localtime/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)' /etc/audit/rules.d/*.rules
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% set expected_rule = '-w /etc/localtime -p wa -k time-change' %}
           {% set output = result_2.stdout | default('') | trim %}
-          {% if output != '' and expected_rule in output %}
+          {% if '-w /etc/localtime -p wa -k time-change' in output %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_2: "PASS when output contains a rule to watch the /etc/localtime file for write or attribute changes ('-p wa') tagged with a key (e.g., 'time-change'), FAIL otherwise."
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if '-w /etc/localtime -p wa -k time-change' in output %}
+            PASS when output contains line matching '-w /etc/localtime -p wa -k time-change'
+          {% else %}
+            FAIL: Missing on-disk audit rule for /etc/localtime file
+          {% endif %}
 
-    # Requirement 3: Check loaded audit rules for time-change system calls
-    - name: Req 3 - Check loaded audit rules for time-change system calls
+    # Requirement 3: Check loaded audit rules for 64-bit time-change syscalls
+    - name: Req 3 - Check loaded time-change syscall rules
       shell: |
-        auditctl -l | awk '/^ *-a *always,exit/ \
-        &&/ -F *arch=b(32|64)/ \
-        &&/ -S/ \
-        &&(/adjtimex/ \
-          ||/settimeofday/ \
-          ||/clock_settime/ ) \
-        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+        {% raw %}
+        auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b(32|64)/ &&/ -S/ &&(/adjtimex/ ||/settimeofday/ ||/clock_settime/ ) &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_3
@@ -122,42 +110,33 @@
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check loaded audit rules for time-change system calls"
+        task_3_name: "Check loaded audit rules for 64-bit time-change syscalls"
         task_3_cmd: "auditctl -l | awk '/^ *-a *always,exit/ &&/ -F *arch=b(32|64)/ &&/ -S/ &&(/adjtimex/ ||/settimeofday/ ||/clock_settime/ ) &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: >-
-          {% set expected_patterns = [
-            '-a always,exit -F arch=b64 -S adjtimex,settimeofday -F key=time-change',
-            '-a always,exit -F arch=b32 -S settimeofday,adjtimex -F key=time-change',
-            '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -F key=time-change',
-            '-a always,exit -F arch=b32 -S clock_settime -F a0=0x0 -F key=time-change'
-          ] %}
           {% set output = result_3.stdout | default('') | trim %}
-          {% if output != '' %}
-            {% set found_patterns = [] %}
-            {% for pattern in expected_patterns %}
-              {% if pattern in output %}
-                {% set found_patterns = found_patterns + [pattern] %}
-              {% endif %}
-            {% endfor %}
-            {% if found_patterns | length == expected_patterns | length %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+          {% if '-a always,exit -F arch=b64 -S adjtimex,settimeofday -F key=time-change' in output and
+                '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -F key=time-change' in output %}
+            PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_3: "PASS when output contains all required active rules for both b32 and b64 architectures covering adjtimex, settimeofday, and clock_settime (with a0=0x0 filter) system calls, each tagged with a key (e.g., 'time-change'), FAIL otherwise."
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if '-a always,exit -F arch=b64 -S adjtimex,settimeofday -F key=time-change' in output and
+                '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -F key=time-change' in output %}
+            PASS when output contains lines matching '-a always,exit -F arch=b64 -S adjtimex,settimeofday -F key=time-change' AND '-a always,exit -F arch=b64 -S clock_settime -F a0=0x0 -F key=time-change'
+          {% else %}
+            FAIL: Missing required loaded audit rules for 64-bit time-change syscalls
+          {% endif %}
 
-    # Requirement 4: Check loaded audit rule for /etc/localtime file writes
-    - name: Req 4 - Check loaded audit rule for /etc/localtime file writes
+    # Requirement 4: Check loaded audit rule for /etc/localtime file
+    - name: Req 4 - Check loaded /etc/localtime rule
       shell: |
-        auditctl -l | awk '/^ *-w/ \
-        &&/\/etc\/localtime/ \
-        &&/ +-p *wa/ \
-        &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+        {% raw %}
+        auditctl -l | awk '/^ *-w/ &&/\/etc\/localtime/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_4
@@ -166,77 +145,82 @@
 
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check loaded audit rule for /etc/localtime file writes"
+        task_4_name: "Check loaded audit rule for /etc/localtime file"
         task_4_cmd: |
-          auditctl -l | awk '/^ *-w/ &&/\/etc\/localtime/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
+          auditctl -l | awk '/^ *-w/ &&/\\/etc\\/localtime/ &&/ +-p *wa/ &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)'
         task_4_rc: "{{ result_4.rc | default(-1) }}"
         data_4: "{{ result_4.stdout | default('') | trim }}"
         status_4: >-
-          {% set expected_rule = '-w /etc/localtime -p wa -k time-change' %}
           {% set output = result_4.stdout | default('') | trim %}
-          {% if output != '' and expected_rule in output %}
+          {% if '-w /etc/localtime -p wa -k time-change' in output %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_4: "PASS when output contains an active rule to watch the /etc/localtime file for write or attribute changes ('-p wa') tagged with a key (e.g., 'time-change'), FAIL otherwise."
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if '-w /etc/localtime -p wa -k time-change' in output %}
+            PASS when output contains line matching '-w /etc/localtime -p wa -k time-change'
+          {% else %}
+            FAIL: Missing loaded audit rule for /etc/localtime file
+          {% endif %}
 
-    # Requirement 5: Overall verification
-    - name: Store requirement 5 details
+    # Requirement 5: Overall compliance
+    - name: Store overall requirement details
       set_fact:
         status_5: >-
-          {% if status_1|trim == 'PASS' and status_2|trim == 'PASS' and status_3|trim == 'PASS' and status_4|trim == 'PASS' %}
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_5: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS, FAIL otherwise."
+        rationale_5: >-
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS' %}
+            PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS
+          {% else %}
+            FAIL: Not all individual requirements passed
+          {% endif %}
 
-    # Generate compliance report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 6.3.3.4"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.4"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
           - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

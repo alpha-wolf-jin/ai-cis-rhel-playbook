@@ -1,13 +1,13 @@
 ---
-- name: Data Collection for CIS checkpoint 1.3.1.5
+- name: Data Collection for CIS 1.3.1.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.3.1.5"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.3.1.5"
     req_1: "Verify SELinux's current mode using command: getenforce"
-    req_2: "Verify SELinux's configured mode in /etc/selinux/config using command: grep -i '^SELINUX=' /etc/selinux/config"
-    req_3: "OVERALL Verify: Ensure SELinux mode is enforcing"
+    req_2: "Verify SELinux's configured mode in /etc/selinux/config using command: grep -i SELINUX=enforcing /etc/selinux/config"
+    req_3: "OVERALL Verify: Ensure the SELinux mode is enforcing"
 
   tasks:
     - name: Initialize data variables
@@ -18,9 +18,6 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
     # Requirement 1: Verify SELinux's current mode using command: getenforce
     - name: Req 1 - Check SELinux current mode
@@ -38,11 +35,17 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'Enforcing') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is exactly Enforcing, FAIL otherwise' if (result_1.stdout | default('') | trim == 'Enforcing') else 'FAIL when output is not exactly Enforcing') | trim }}"
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == 'Enforcing' %}
+            PASS when output is exactly 'Enforcing', FAIL otherwise
+          {% else %}
+            FAIL: Expected 'Enforcing', got '{{ output }}'
+          {% endif %}
 
-    # Requirement 2: Verify SELinux's configured mode in /etc/selinux/config using command: grep -i '^SELINUX=' /etc/selinux/config
+    # Requirement 2: Verify SELinux's configured mode in /etc/selinux/config
     - name: Req 2 - Check SELinux configured mode
-      shell: grep -i '^SELINUX=' /etc/selinux/config
+      shell: grep -i SELINUX=enforcing /etc/selinux/config
       args:
         executable: /bin/bash
       register: result_2
@@ -52,21 +55,28 @@
     - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check SELinux configured mode"
-        task_2_cmd: "grep -i '^SELINUX=' /etc/selinux/config"
+        task_2_cmd: "grep -i SELINUX=enforcing /etc/selinux/config"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'SELINUX=enforcing') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when output is exactly SELINUX=enforcing, FAIL otherwise' if (result_2.stdout | default('') | trim == 'SELINUX=enforcing') else 'FAIL when output is not exactly SELINUX=enforcing') | trim }}"
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == 'SELINUX=enforcing' %}
+            PASS when output is exactly 'SELINUX=enforcing', FAIL otherwise
+          {% else %}
+            FAIL: Expected 'SELINUX=enforcing', got '{{ output }}'
+          {% endif %}
 
-    # Requirement 3: OVERALL Verify: Ensure SELinux mode is enforcing
-    - name: Store requirement 3 details
+    # Requirement 3: OVERALL Verify - Ensure SELinux mode is enforcing
+    - name: Calculate overall compliance
       set_fact:
-        task_3_name: "Overall SELinux mode verification"
-        task_3_cmd: "N/A (combined check)"
-        task_3_rc: 0
-        data_3: "Req1: {{ status_1 | default('UNKNOWN') }}, Req2: {{ status_2 | default('UNKNOWN') }}"
         status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL when either req_1 or req_2 is FAIL') | trim }}"
+        rationale_3: >-
+          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+            PASS when req_1=PASS AND req_2=PASS, FAIL otherwise
+          {% else %}
+            FAIL: Not all requirements passed (req_1={{ status_1 | default('FAIL') | trim }}, req_2={{ status_2 | default('FAIL') | trim }})
+          {% endif %}
 
     # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
@@ -75,7 +85,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.3.1.5"
           - "========================================================"
-          - "Reference: CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.3.1.5"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.3.1.5"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -93,14 +103,6 @@
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

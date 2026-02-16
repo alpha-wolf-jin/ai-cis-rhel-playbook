@@ -1,16 +1,14 @@
 ---
-- name: Data Collection for CIS 2.1.16 - Ensure tftp server services are not in use
+- name: Data Collection for CIS checkpoint 2.1.16 - Ensure tftp server services are not in use
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.16"
-    req_1: "Check if tftp-server package is installed using command: rpm -q tftp-server"
-    req_2: "If tftp-server package is installed, check if tftp.socket is enabled"
-    req_3: "If tftp-server package is installed, check if tftp.service is enabled"
-    req_4: "If tftp-server package is installed, check if tftp.socket is active"
-    req_5: "If tftp-server package is installed, check if tftp.service is active"
-    req_6: "OVERALL Verify: Ensure tftp server services are not in use"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.16"
+    req_1: "Verify tftp-server package is not installed"
+    req_2: "Verify tftp.socket and tftp.service are not enabled"
+    req_3: "Verify tftp.socket and tftp.service are not active"
+    req_4: "OVERALL Verify: Ensure tftp server services are not in use"
 
   tasks:
     - name: Initialize data variables
@@ -24,17 +22,11 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
+        task_4_name: "Overall verification"
         task_4_cmd: "N/A"
         task_4_rc: -1
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
-        task_6_name: "Not executed"
-        task_6_cmd: "N/A"
-        task_6_rc: -1
 
-    # Requirement 1: Check if tftp-server package is installed using command: rpm -q tftp-server
+    # Requirement 1: Verify tftp-server package is not installed
     - name: Req 1 - Check tftp-server package installation
       shell: rpm -q tftp-server
       args:
@@ -49,176 +41,105 @@
         task_1_cmd: "rpm -q tftp-server"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% if result_1.stdout | default('') | trim == 'package tftp-server is not installed' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% if result_1.stdout | default('') | trim == 'package tftp-server is not installed' %}
-            PASS when output is "package tftp-server is not installed"
-          {% else %}
-            FAIL when output is not "package tftp-server is not installed"
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package tftp-server is not installed') else 'FAIL') | trim }}"
+        rationale_1: "PASS when output is 'package tftp-server is not installed', FAIL when the package is installed (as the service lacks encryption, access control, and authentication, increasing attack surface)."
 
-    # Requirement 2: If tftp-server package is installed, check if tftp.socket is enabled
-    - name: Req 2 - Check tftp.socket enabled status
-      shell: systemctl is-enabled tftp.socket 2>/dev/null
+    # Requirement 2: Verify tftp.socket and tftp.service are not enabled (only if package is installed)
+    - name: Req 2 - Check if tftp services are enabled
+      shell: systemctl is-enabled tftp.socket tftp.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 == 'FAIL'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check tftp.socket enabled status"
-        task_2_cmd: "systemctl is-enabled tftp.socket 2>/dev/null"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
+        task_2_name: "Check if tftp services are enabled"
+        task_2_cmd: "systemctl is-enabled tftp.socket tftp.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: "{{ result_2.rc | default(-1) if result_2 is defined else -1 }}"
+        data_2: "{{ result_2.stdout | default('') | trim if result_2 is defined else '' }}"
         status_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif result_2.stdout | default('') | trim != 'enabled' %}
+          {% if status_1 == 'PASS' %}
+            NA
+          {% elif result_2 is not defined %}
+            NA
+          {% elif result_2.stdout | trim == '' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_2: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when tftp-server not installed (req1=PASS)
-          {% elif result_2.stdout | default('') | trim != 'enabled' %}
-            PASS when output is NOT "enabled"
+          {% if status_1 == 'PASS' %}
+            Not applicable - package not installed
+          {% elif result_2 is not defined %}
+            Not executed - package not installed
+          {% elif result_2.stdout | trim == '' %}
+            PASS when no output is returned (nothing is enabled)
           {% else %}
-            FAIL when output is "enabled"
+            FAIL when any output containing 'enabled' is returned
           {% endif %}
 
-    # Requirement 3: If tftp-server package is installed, check if tftp.service is enabled
-    - name: Req 3 - Check tftp.service enabled status
-      shell: systemctl is-enabled tftp.service 2>/dev/null
+    # Requirement 3: Verify tftp.socket and tftp.service are not active (only if package is installed)
+    - name: Req 3 - Check if tftp services are active
+      shell: systemctl is-active tftp.socket tftp.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 == 'FAIL'
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check tftp.service enabled status"
-        task_3_cmd: "systemctl is-enabled tftp.service 2>/dev/null"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
+        task_3_name: "Check if tftp services are active"
+        task_3_cmd: "systemctl is-active tftp.socket tftp.service 2>/dev/null | grep '^active'"
+        task_3_rc: "{{ result_3.rc | default(-1) if result_3 is defined else -1 }}"
+        data_3: "{{ result_3.stdout | default('') | trim if result_3 is defined else '' }}"
         status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif result_3.stdout | default('') | trim != 'enabled' %}
+          {% if status_1 == 'PASS' %}
+            NA
+          {% elif result_3 is not defined %}
+            NA
+          {% elif result_3.stdout | trim == '' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when tftp-server not installed (req1=PASS)
-          {% elif result_3.stdout | default('') | trim != 'enabled' %}
-            PASS when output is NOT "enabled"
+          {% if status_1 == 'PASS' %}
+            Not applicable - package not installed
+          {% elif result_3 is not defined %}
+            Not executed - package not installed
+          {% elif result_3.stdout | trim == '' %}
+            PASS when no output is returned (nothing is active)
           {% else %}
-            FAIL when output is "enabled"
+            FAIL when any output containing 'active' is returned
           {% endif %}
 
-    # Requirement 4: If tftp-server package is installed, check if tftp.socket is active
-    - name: Req 4 - Check tftp.socket active status
-      shell: systemctl is-active tftp.socket 2>/dev/null
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      changed_when: false
-      when: status_1 | trim == 'FAIL'
-
+    # Requirement 4: Overall verification
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Check tftp.socket active status"
-        task_4_cmd: "systemctl is-active tftp.socket 2>/dev/null"
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
+        data_4: "Combined results from requirements 1-3"
         status_4: >-
-          {% if status_1 | trim == 'PASS' %}
+          {% if status_1 == 'PASS' %}
             PASS
-          {% elif result_4.stdout | default('') | trim != 'active' %}
+          {% elif status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
         rationale_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when tftp-server not installed (req1=PASS)
-          {% elif result_4.stdout | default('') | trim != 'active' %}
-            PASS when output is NOT "active"
+          {% if status_1 == 'PASS' %}
+            PASS when req_1=PASS (package not installed)
+          {% elif status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS' %}
+            PASS when (req_2=PASS AND req_3=PASS) (if installed, services are not enabled and not active)
           {% else %}
-            FAIL when output is "active"
+            FAIL otherwise
           {% endif %}
 
-    # Requirement 5: If tftp-server package is installed, check if tftp.service is active
-    - name: Req 5 - Check tftp.service active status
-      shell: systemctl is-active tftp.service 2>/dev/null
-      args:
-        executable: /bin/bash
-      register: result_5
-      ignore_errors: true
-      changed_when: false
-      when: status_1 | trim == 'FAIL'
-
-    - name: Store requirement 5 details
-      set_fact:
-        task_5_name: "Check tftp.service active status"
-        task_5_cmd: "systemctl is-active tftp.service 2>/dev/null"
-        task_5_rc: "{{ result_5.rc | default(-1) }}"
-        data_5: "{{ result_5.stdout | default('') | trim }}"
-        status_5: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif result_5.stdout | default('') | trim != 'active' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_5: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when tftp-server not installed (req1=PASS)
-          {% elif result_5.stdout | default('') | trim != 'active' %}
-            PASS when output is NOT "active"
-          {% else %}
-            FAIL when output is "active"
-          {% endif %}
-
-    # Requirement 6: OVERALL Verify: Ensure tftp server services are not in use
-    - name: Store requirement 6 details
-      set_fact:
-        task_6_name: "Overall verification"
-        task_6_cmd: "N/A - Calculated from previous checks"
-        task_6_rc: 0
-        data_6: "Package check: {{ status_1 }}, Socket enabled: {{ status_2 }}, Service enabled: {{ status_3 }}, Socket active: {{ status_4 }}, Service active: {{ status_5 }}"
-        status_6: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif (status_1 | trim == 'FAIL') and (status_2 | trim == 'PASS') and (status_3 | trim == 'PASS') and (status_4 | trim == 'PASS') and (status_5 | trim == 'PASS') %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_6: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when tftp-server package is not installed
-          {% elif (status_1 | trim == 'FAIL') and (status_2 | trim == 'PASS') and (status_3 | trim == 'PASS') and (status_4 | trim == 'PASS') and (status_5 | trim == 'PASS') %}
-            PASS when package is installed but all services are disabled and inactive
-          {% else %}
-            FAIL when package is installed and any service is enabled or active
-          {% endif %}
-
-    # Final report
+    # Final compliance report
     - name: Generate compliance report
       debug:
         msg:
@@ -229,55 +150,31 @@
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name }}"
-          - "  Command: {{ task_4_cmd }}"
-          - "  Exit code: {{ task_4_rc }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Task: {{ task_5_name }}"
-          - "  Command: {{ task_5_cmd }}"
-          - "  Exit code: {{ task_5_rc }}"
-          - "  Data: {{ data_5 | default('') | trim }}"
-          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 6 - {{ req_6 }}:"
-          - "  Task: {{ task_6_name }}"
-          - "  Command: {{ task_6_cmd }}"
-          - "  Exit code: {{ task_6_rc }}"
-          - "  Data: {{ data_6 | default('') | trim }}"
-          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_6 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_6 | trim }}"
-          - "  Rationale: {{ rationale_6 | trim }}"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - "========================================================"

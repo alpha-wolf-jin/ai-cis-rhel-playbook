@@ -1,11 +1,11 @@
 ---
-- name: Data Collection for CIS 1.7.5
+- name: Data Collection for CIS Checkpoint 1.7.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.7.5"
-    req_1: "Check file permissions and ownership of /etc/issue"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.5"
+    req_1: "Check file permissions, ownership, and group of /etc/issue"
     req_2: "OVERALL Verify: Ensure access to /etc/issue is configured"
 
   tasks:
@@ -18,10 +18,12 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Check file permissions and ownership of /etc/issue
+    # Requirement 1: Check file permissions, ownership, and group of /etc/issue
     - name: Req 1 - Check /etc/issue permissions and ownership
       shell: |
+        {% raw %}
         stat -Lc 'Access: (%#a/%A)  Uid: ( %u/ %U) Gid: { %g/ %G)' /etc/issue
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -36,15 +38,15 @@
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% if output %}
-            {% set access_match = output | regex_search('Access: \\(0([0-7][0-7][0-7])') %}
-            {% set uid_match = output | regex_search('Uid: \\( 0/') %}
-            {% set gid_match = output | regex_search('Gid: \\{ 0/') %}
-            {% if access_match and uid_match and gid_match %}
-              {% set access_octal_str = access_match.split('(')[1][1:] %}
-              {% set access_octal = access_octal_str | int %}
-              {# 644 octal = 420 decimal, but we're comparing octal strings #}
-              {% if access_octal <= 644 %}
+          {% if "Access:" in output %}
+            {% set mode_str = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\\1') %}
+            {% set uid_str = output | regex_replace('.*Uid: \(\s*([0-9]+)/.*', '\\1') %}
+            {% set gid_str = output | regex_replace('.*Gid: \{\s*([0-9]+)/.*', '\\1') %}
+            {% if mode_str != '' and uid_str != '' and gid_str != '' %}
+              {% set mode = mode_str | int(base=8) %}
+              {% set uid = uid_str | int %}
+              {% set gid = gid_str | int %}
+              {% if mode <= 420 and uid == 0 and gid == 0 %}
                 PASS
               {% else %}
                 FAIL
@@ -55,19 +57,48 @@
           {% else %}
             FAIL
           {% endif %}
-        rationale_1: "PASS when file access mode is 0644 or more restrictive (i.e., 0644, 0444, 0400, etc.) AND Uid is 0 AND Gid is 0, FAIL otherwise"
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if "Access:" in output %}
+            {% set mode_str = output | regex_replace('.*Access: \(0?([0-7]+)/.*', '\\1') %}
+            {% set uid_str = output | regex_replace('.*Uid: \(\s*([0-9]+)/.*', '\\1') %}
+            {% set gid_str = output | regex_replace('.*Gid: \{\s*([0-9]+)/.*', '\\1') %}
+            {% if mode_str != '' and uid_str != '' and gid_str != '' %}
+              {% set mode = mode_str | int(base=8) %}
+              {% set uid = uid_str | int %}
+              {% set gid = gid_str | int %}
+              {% if mode <= 420 and uid == 0 and gid == 0 %}
+                PASS: File access mode {{ mode_str }} (octal, {{ mode }} decimal) is 0644 or more restrictive, Uid is {{ uid_str }}/root, Gid is {{ gid_str }}/root
+              {% else %}
+                FAIL: Expected file access mode <=0644 (<=420 decimal), Uid=0, Gid=0. Got mode={{ mode_str }} (octal, {{ mode }} decimal), Uid={{ uid_str }}, Gid={{ gid_str }}
+              {% endif %}
+            {% else %}
+              FAIL: Could not parse output: {{ output }}
+            {% endif %}
+          {% else %}
+            FAIL: Command returned no output
+          {% endif %}
 
-    # Requirement 2: OVERALL Verify: Ensure access to /etc/issue is configured
+    # Requirement 2: OVERALL Verify - Ensure access to /etc/issue is configured
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A (based on requirement 1)"
-        task_2_rc: 0
-        data_2: "Based on requirement 1 check"
-        status_2: "{{ status_1 | default('FAIL') | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Overall verify /etc/issue access configuration"
+        task_2_cmd: "N/A (depends on requirement 1)"
+        task_2_rc: -1
+        data_2: "Overall status depends on requirement 1"
+        status_2: >-
+          {% if status_1 is defined and status_1 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 is defined and status_1 | trim == 'PASS' %}
+            PASS when req_1=PASS, FAIL otherwise
+          {% else %}
+            FAIL: requirement 1 failed
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -95,6 +126,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('FAIL') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ 'Overall PASS because requirement 1 passed' if status_2 | trim == 'PASS' else 'Overall FAIL because requirement 1 failed' }}"
           - "========================================================"

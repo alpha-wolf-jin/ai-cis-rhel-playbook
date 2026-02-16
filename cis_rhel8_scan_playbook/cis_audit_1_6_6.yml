@@ -1,95 +1,154 @@
 ---
-- name: Data Collection for CIS 1.6.6
+- name: Data Collection for CIS checkpoint 1.6.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.6.6"
-    req_1: "Verify that CVE-2023-48795 (Terrapin SSH Attack) has NOT been addressed"
-    req_2: "Verify that the system-wide crypto policy disables EtM for SSH by checking that 'ssh_etm' is set to '0'"
-    req_3: "OVERALL Verify: Ensure system wide crypto policy disables EtM for ssh"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.6"
+    req_1: "Check if CVE-2023-48795 (Terrapin SSH Attack) has been addressed"
+    req_2: "Verify system-wide crypto policy disables EtM for SSH"
+    req_3: "Overall Verify: Ensure system wide crypto policy disables EtM for ssh"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_3: "N/A"
 
-    # Requirement 1: Verify that CVE-2023-48795 (Terrapin SSH Attack) has NOT been addressed
-    - name: "Req 1 - Check if CVE-2023-48795 has been addressed"
+    # Requirement 1: Check if CVE-2023-48795 (Terrapin SSH Attack) has been addressed
+    - name: Req 1 - Check if CVE-2023-48795 is addressed
       shell: |
-        # Check if SSH version indicates Terrapin fix
-        ssh_version=$(ssh -V 2>&1 | grep -oP 'OpenSSH_\K[0-9\.]+' | head -1)
-        if [[ -z "$ssh_version" ]]; then
-          echo "ERROR: Could not determine SSH version"
-          exit 1
-        fi
+        # Get OpenSSH version and check if CVE-2023-48795 is addressed
+        # CVE-2023-48795 was addressed in OpenSSH 9.6p1 and later
+        ssh_version_output=$(ssh -V 2>&1 | head -1)
+        echo "OpenSSH version string: $ssh_version_output"
         
-        # Check if version is >= 9.6 (where Terrapin is fixed by default)
-        IFS='.' read -r major minor patch <<< "$ssh_version"
-        if [[ $major -gt 9 ]] || [[ $major -eq 9 && $minor -ge 6 ]]; then
-          echo "CVE_ADDRESSED: SSH version $ssh_version >= 9.6 (Terrapin fixed)"
-          exit 0
+        # Extract version using regex
+        if [[ "$ssh_version_output" =~ OpenSSH_([0-9]+\.[0-9]+)(p[0-9]+)? ]]; then
+          base_version="${BASH_REMATCH[1]}"
+          patch_version="${BASH_REMATCH[2]:-p0}"
+          
+          # Split base version into major and minor
+          major=$(echo "$base_version" | cut -d. -f1)
+          minor=$(echo "$base_version" | cut -d. -f2)
+          
+          # Remove 'p' from patch version to get numeric value
+          patch_num=$(echo "$patch_version" | sed 's/p//')
+          
+          echo "Parsed: Major=$major, Minor=$minor, Patch=$patch_num"
+          
+          # Check if version is 9.6p1 or higher (CVE addressed)
+          if [ "$major" -gt 9 ] || { [ "$major" -eq 9 ] && [ "$minor" -gt 6 ]; } || \
+             { [ "$major" -eq 9 ] && [ "$minor" -eq 6 ] && [ "$patch_num" -ge 1 ]; }; then
+            echo "CVE_ADDRESSED"
+            exit 0
+          else
+            echo "CVE_NOT_ADDRESSED"
+            exit 0
+          fi
         else
-          echo "CVE_NOT_ADDRESSED: SSH version $ssh_version < 9.6"
+          echo "VERSION_PARSE_ERROR"
           exit 1
         fi
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if CVE-2023-48795 has been addressed"
-        task_1_cmd: "Check SSH version and compare against 9.6"
+        task_1_name: "Check if CVE-2023-48795 (Terrapin SSH Attack) is addressed"
+        task_1_cmd: "ssh -V 2>&1 | head -1; parse version to check if >= 9.6p1"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('FAIL' if (result_1.rc | default(-1) == 0) else 'PASS') | trim }}"
-        rationale_1: "{{ 'PASS when the CVE has NOT been addressed (making this recommendation applicable), FAIL when the CVE has been addressed (making this recommendation not applicable)' | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'CVE_NOT_ADDRESSED' in output %}
+              PASS
+            {% elif 'CVE_ADDRESSED' in output %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: "PASS when the vulnerability is NOT addressed (making this recommendation applicable), FAIL when it IS addressed (making this recommendation NOT APPLICABLE)"
 
-    # Requirement 2: Verify that the system-wide crypto policy disables EtM for SSH
-    - name: "Req 2 - Check ssh_etm setting in crypto policy"
-      shell: >
+    # Requirement 2: Verify system-wide crypto policy disables EtM for SSH
+    # Only execute when CVE is NOT addressed (status_1 = PASS)
+    - name: Req 2 - Verify EtM is disabled for SSH
+      shell: |
+        {% raw %}
         grep -Psi -- '^\h*ssh_etm\h*=\h*\d+\b' /etc/crypto-policies/state/CURRENT.pol
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: status_1 | trim == 'PASS'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check ssh_etm setting in crypto policy"
+        task_2_name: "Verify system-wide crypto policy disables EtM for SSH"
         task_2_cmd: |
           grep -Psi -- '^\h*ssh_etm\h*=\h*\d+\b' /etc/crypto-policies/state/CURRENT.pol
         task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'ssh_etm = 0') else 'FAIL') | trim }}"
-        rationale_2: "{{ 'PASS when the command output is exactly ssh_etm = 0, FAIL otherwise' | trim }}"
+        data_2: "{{ result_2.stdout | default('NOT_EXECUTED_CVE_ADDRESSED') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if status_1 | trim == 'FAIL' %}
+            NOT_APPLICABLE
+          {% elif output == 'NOT_EXECUTED_CVE_ADDRESSED' %}
+            NOT_EXECUTED
+          {% elif output == 'ssh_etm = 0' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: "PASS when the exact output is 'ssh_etm = 0', FAIL otherwise"
 
-    # Requirement 3: OVERALL Verify
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify"
-        task_3_cmd: "N/A - Combined check"
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A (combination of previous checks)"
         task_3_rc: 0
-        data_3: "Combined result of requirements 1 and 2"
-        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ 'PASS when req_1=PASS AND req_2=PASS, FAIL otherwise' | trim }}"
+        status_3: >-
+          {% if status_1 | trim == 'FAIL' %}
+            NOT_APPLICABLE
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
+            FAIL
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'NOT_EXECUTED' %}
+            UNKNOWN
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'FAIL' %}
+            NOT APPLICABLE: CVE-2023-48795 is addressed, recommendation does not apply
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+            PASS: CVE is NOT addressed AND ssh_etm = 0
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
+            FAIL: CVE is NOT addressed BUT ssh_etm ≠ 0
+          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'NOT_EXECUTED' %}
+            UNKNOWN: CVE check passed but requirement 2 was not executed
+          {% else %}
+            UNKNOWN: Cannot determine overall status
+          {% endif %}
 
     - name: Generate compliance report
       debug:
@@ -97,35 +156,35 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.6.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.6"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
-          - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

@@ -1,0 +1,217 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.18
+    req_1: Check on-disk audit rules for usermod command
+    req_2: Check loaded audit rules for usermod command
+    req_3: 'OVERALL Verify: Ensure successful and unsuccessful attempts to use the usermod command are collected'
+
+- name: Initialize data variables
+  set_fact:
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+
+    # Requirement 1: Check on-disk audit rules for usermod command
+- name: Req 1 - Create script for on-disk audit rules check
+  copy:
+    dest: "/tmp/cis_audit_6.3.3.18_req1.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+      UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+      [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
+      &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+      &&/ -F *auid>=${UID_MIN}/ \
+      &&/ -F *perm=x/ \
+      &&/ -F *path=\/usr\/sbin\/usermod/ \
+      &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
+      || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+      {% endraw %}
+  register: script_create_1
+  ignore_errors: true
+
+- name: Req 1 - Execute the audit script for on-disk rules
+  shell: "/tmp/cis_audit_6.3.3.18_req1.sh"
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 1 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_6.3.3.18_req1.sh"
+    state: absent
+  ignore_errors: true
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Execute on-disk audit rules check script"
+    task_1_cmd: "{{ result_1.cmd | default('N/A') }}"
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+        {% set expected = '-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=unset -k usermod' %}
+        {% if output == expected %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_1: >-
+      {% set output = result_1.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+        {% set expected = '-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=unset -k usermod' %}
+        {% if output == expected %}
+          PASS when the script output exactly matches the expected line with UID_MIN={{ uid_min }}
+        {% else %}
+          FAIL: Expected "{{ expected }}", got "{{ output }}"
+        {% endif %}
+      {% else %}
+        FAIL: No output from script or UID_MIN is unset
+      {% endif %}
+
+    # Requirement 2: Check loaded audit rules for usermod command
+- name: Req 2 - Create script for loaded audit rules check
+  copy:
+    dest: "/tmp/cis_audit_6.3.3.18_req2.sh"
+    mode: '0700'
+    content: |
+      {% raw %}
+      #!/usr/bin/env bash
+      UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+      [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ \
+      &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+      &&/ -F *auid>=${UID_MIN}/ \
+      &&/ -F *perm=x/ \
+      &&/ -F *path=\/usr\/sbin\/usermod/ \
+      &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" \
+      || printf "ERROR: Variable 'UID_MIN' is unset.\n"
+      {% endraw %}
+  register: script_create_2
+  ignore_errors: true
+
+- name: Req 2 - Execute the audit script for loaded rules
+  shell: "/tmp/cis_audit_6.3.3.18_req2.sh"
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+
+- name: Req 2 - Remove temporary audit script
+  file:
+    path: "/tmp/cis_audit_6.3.3.18_req2.sh"
+    state: absent
+  ignore_errors: true
+
+- name: Store requirement 2 details
+  set_fact:
+    task_2_name: "Execute loaded audit rules check script"
+    task_2_cmd: "{{ result_2.cmd | default('N/A') }}"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% set output = result_2.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+        {% set expected = '-a always,exit -S all -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=-1 -F key=usermod' %}
+        {% if output == expected %}
+          PASS
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_2: >-
+      {% set output = result_2.stdout | default('') | trim %}
+      {% if output != '' %}
+        {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+        {% set expected = '-a always,exit -S all -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=-1 -F key=usermod' %}
+        {% if output == expected %}
+          PASS when the script output exactly matches the expected line with UID_MIN={{ uid_min }}
+        {% else %}
+          FAIL: Expected "{{ expected }}", got "{{ output }}"
+        {% endif %}
+      {% else %}
+        FAIL: No output from script or UID_MIN is unset
+      {% endif %}
+
+    # Requirement 3: Overall verification
+- name: Store requirement 3 details
+  set_fact:
+    task_3_name: "Overall verification"
+    task_3_cmd: "N/A"
+    task_3_rc: 0
+    data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}"
+    status_3: >-
+      {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+        PASS
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_3: >-
+      {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+        PASS when both on-disk and loaded audit rules for usermod are properly configured
+      {% else %}
+        FAIL: Either on-disk ({{ status_1 }}) or loaded ({{ status_2 }}) audit rules for usermod are not properly configured
+      {% endif %}
+
+    # Final report
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 6.3.3.18"
+    - "========================================================"
+    - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.3.3.18"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name | default('Task not recorded') }}"
+    - "  Command: {{ task_1_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_1_rc | default(-1) }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name | default('Task not recorded') }}"
+    - "  Command: {{ task_2_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_2_rc | default(-1) }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name | default('Task not recorded') }}"
+    - "  Command: {{ task_3_cmd | default('N/A') }}"
+    - "  Exit code: {{ task_3_rc | default(-1) }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_6_3_3_18'': status_3 | trim }] }}'

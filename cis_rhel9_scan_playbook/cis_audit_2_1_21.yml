@@ -1,11 +1,12 @@
 ---
-- name: Data Collection for CIS Checkpoint 2.1.21
+- name: Data Collection for CIS 2.1.21
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.21"
-    req_1: "Audit CIS checkpoint: 2.1.21 - Ensure mail transfer agents are configured for local-only mode"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.21"
+    req_1: "Run the provided CIS audit script to verify Ensure mail transfer agents are configured for local-only mode"
+    req_2: "OVERALL Verify: Ensure mail transfer agents are configured for local-only mode"
 
   tasks:
     - name: Initialize data variables
@@ -13,9 +14,31 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
 
-    # Requirement 1: Execute CIS audit script for checkpoint 2.1.21
-    - name: Req 1 - Create CIS audit script for checkpoint 2.1.21
+    # Check if Postfix is installed before running the script
+    - name: Req 1 - Check if postconf command exists
+      command: which postconf
+      register: postconf_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Check if ss command exists
+      command: which ss
+      register: ss_check
+      ignore_errors: true
+      changed_when: false
+
+    # Requirement 1: Run the CIS audit script (only if required commands exist)
+    - name: Req 1 - Execute CIS audit script for mail transfer agent local-only mode
       copy:
         dest: "/tmp/cis_audit_2.1.21.sh"
         mode: '0700'
@@ -47,35 +70,101 @@
           {% endraw %}
       register: script_create_1
       ignore_errors: true
+      when: postconf_check.rc == 0 and ss_check.rc == 0
 
-    - name: Req 1 - Execute CIS audit script
+    - name: Req 1 - Execute the audit script
       shell: "/tmp/cis_audit_2.1.21.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
+      when: postconf_check.rc == 0 and ss_check.rc == 0
 
     - name: Req 1 - Remove temporary audit script
       file:
         path: "/tmp/cis_audit_2.1.21.sh"
         state: absent
       ignore_errors: true
+      when: postconf_check.rc == 0 and ss_check.rc == 0
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for checkpoint 2.1.21"
-        task_1_cmd: "/tmp/cis_audit_2.1.21.sh"
+        task_1_name: "Execute CIS audit script for mail transfer agent local-only mode"
+        task_1_cmd: >-
+          {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+          bash /tmp/cis_audit_2.1.21.sh
+          {% else %}
+          N/A (prerequisite commands not found)
+          {% endif %}
         task_1_rc: "{{ result_1.rc | default(-1) }}"
-        data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if ('** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
-        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script shows '** FAIL **' or indicates non-compliance"
+        data_1: >-
+          {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+          stdout:
+          {{ result_1.stdout | default('') | trim }}
+          stderr:
+          {{ result_1.stderr | default('') | trim }}
+          {% else %}
+          Postfix check: postconf command found: {{ postconf_check.rc == 0 }}
+          Network socket check: ss command found: {{ ss_check.rc == 0 }}
+          Cannot run CIS audit script because required commands are not available.
+          {% endif %}
+        status_1: >-
+          {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if '** PASS **' in output %}
+              PASS
+            {% elif '** FAIL **' in output %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_1: >-
+          {% if postconf_check.rc == 0 and ss_check.rc == 0 %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if '** PASS **' in output %}
+              PASS: Script output shows '** PASS **' indicating compliance with CIS requirement 2.1.21
+            {% elif '** FAIL **' in output %}
+              FAIL: Script output shows '** FAIL **' indicating non-compliance with CIS requirement 2.1.21
+            {% else %}
+              UNKNOWN: Cannot determine PASS/FAIL from script output
+            {% endif %}
+          {% else %}
+            NA: Required commands (postconf and/or ss) are not available, making this requirement not applicable
+          {% endif %}
 
-    # Overall compliance
-    - name: Set overall compliance
+    # Requirement 2: Overall verification (based on requirement 1)
+    - name: Req 2 - Set overall verification status
       set_fact:
-        status_overall: "{{ status_1 | default('UNKNOWN') | trim }}"
-        rationale_overall: "CIS checkpoint 2.1.21. Rationale: PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Overall verification based on requirement 1"
+        task_2_cmd: "N/A (derived from requirement 1)"
+        task_2_rc: "0"
+        data_2: "{{ data_1 }}"
+        status_2: >-
+          {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+          {% if status_1_val == 'PASS' %}
+            PASS
+          {% elif status_1_val == 'FAIL' %}
+            FAIL
+          {% elif status_1_val == 'NA' %}
+            NA
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+          {% if status_1_val == 'PASS' %}
+            PASS: Requirement 1 passed, indicating mail transfer agents are configured for local-only mode
+          {% elif status_1_val == 'FAIL' %}
+            FAIL: Requirement 1 failed, indicating mail transfer agents are not configured for local-only mode
+          {% elif status_1_val == 'NA' %}
+            NA: Postfix is not installed or required commands not available, making this requirement not applicable
+          {% else %}
+            UNKNOWN: Cannot determine overall compliance status
+          {% endif %}
 
     - name: Generate compliance report
       debug:
@@ -94,8 +183,16 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
           - "========================================================"

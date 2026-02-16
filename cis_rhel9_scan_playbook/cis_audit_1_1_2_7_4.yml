@@ -1,12 +1,12 @@
 ---
-- name: Data Collection for CIS 1.1.2.7.4
+- name: Data Collection for CIS 1.1.2.7.4 - Ensure noexec option set on /var/log/audit partition
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 1.1.2.7.4"
-    req_1: "Check if a separate partition exists for /var/log/audit"
-    req_2: "If a separate partition exists, verify the noexec mount option is set"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.7.4"
+    req_1: "Check if a separate partition exists for /var/log/audit using command: findmnt -kn /var/log/audit"
+    req_2: "If a separate partition exists, verify the noexec mount option is set using command: findmnt -kn /var/log/audit | grep -v noexec"
     req_3: "OVERALL Verify: Ensure noexec option set on /var/log/audit partition"
 
   tasks:
@@ -18,13 +18,14 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
+        task_3_name: "OVERALL Verify"
         task_3_cmd: "N/A"
-        task_3_rc: -1
+        task_3_rc: "N/A"
 
-    # Requirement 1: Check if a separate partition exists for /var/log/audit
-    - name: Req 1 - Check if /var/log/audit has separate partition
-      shell: findmnt -kn /var/log/audit
+    # Requirement 1: Check if separate partition exists using correct command
+    - name: Req 1 - Check separate partition for /var/log/audit
+      shell: |
+        findmnt -kn /var/log/audit
       args:
         executable: /bin/bash
       register: result_1
@@ -33,69 +34,64 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if /var/log/audit has separate partition"
+        task_1_name: "Req 1 - Check separate partition for /var/log/audit"
         task_1_cmd: "findmnt -kn /var/log/audit"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the command returns output (a mount point exists), FAIL when no output is returned (no separate partition)' if (result_1.stdout | default('') | trim != '') else 'FAIL when no output is returned (no separate partition)') | trim }}"
+        rationale_1: "{{ ('PASS when output is returned (separate partition exists)' if (result_1.stdout | default('') | trim != '') else 'FAIL when no output is returned (no separate partition)') | trim }}"
 
-    # Requirement 2: If a separate partition exists, verify the noexec mount option is set
-    - name: Req 2 - Check if noexec option is set on /var/log/audit partition
-      shell: findmnt -kn /var/log/audit | grep -q noexec
+    # Requirement 2: Verify noexec option is set using audit procedure command (only if partition exists)
+    - name: Req 2 - Verify noexec option set on /var/log/audit partition
+      shell: |
+        findmnt -kn /var/log/audit | grep -v noexec
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: status_1 | trim == 'PASS'
+      when: result_1.stdout | default('') | trim != ''
 
-    - name: Store requirement 2 details when partition exists
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if noexec option is set on /var/log/audit partition"
-        task_2_cmd: "findmnt -kn /var/log/audit | grep -q noexec"
+        task_2_name: "Req 2 - Verify noexec option set on /var/log/audit partition"
+        task_2_cmd: "findmnt -kn /var/log/audit | grep -v noexec"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.rc | default(1) == 0) else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when the command exit code is 0 (the noexec option is present in the mount options), FAIL when the exit code is not 0 (the noexec option is absent)' if (result_2.rc | default(1) == 0) else 'FAIL when the exit code is not 0 (the noexec option is absent)') | trim }}"
-      when: status_1 | trim == 'PASS'
-
-    - name: Store requirement 2 details when no partition exists
-      set_fact:
-        task_2_name: "Check if noexec option is set on /var/log/audit partition"
-        task_2_cmd: "N/A - Skipped (no separate partition)"
-        task_2_rc: -1
-        data_2: "N/A - Skipped (no separate partition)"
-        status_2: "NA"
-        rationale_2: "Skipped - no separate partition exists for /var/log/audit"
-      when: status_1 | trim == 'FAIL'
-
-    # Requirement 3: OVERALL Verify: Ensure noexec option set on /var/log/audit partition
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "OVERALL Verify: Ensure noexec option set on /var/log/audit partition"
-        task_3_cmd: "N/A - Calculated from requirements 1 and 2"
-        task_3_rc: 0
-        data_3: "N/A - Calculated status"
-        status_3: >-
-          {% if status_1 | trim == 'FAIL' %}
+        status_2: >-
+          {% if result_1.stdout | default('') | trim == '' %}
+            NA
+          {% elif result_2.stdout | default('') | trim == '' %}
             PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL
           {% else %}
-            UNKNOWN
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% if result_1.stdout | default('') | trim == '' %}
+            NA: No separate partition exists for /var/log/audit
+          {% elif result_2.stdout | default('') | trim == '' %}
+            PASS: grep -v noexec returned empty output (noexec option is set on all lines)
+          {% else %}
+            FAIL: grep -v noexec returned output (lines without noexec option found)
+          {% endif %}
+
+    # Requirement 3: Overall verification
+    - name: Store overall requirement 3 details
+      set_fact:
+        data_3: "N/A"
+        status_3: >-
+          {% if status_1 | default('FAIL') == 'FAIL' or (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
           {% endif %}
         rationale_3: >-
-          {% if status_1 | trim == 'FAIL' %}
-            PASS when req_1=FAIL (no separate partition to harden)
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS when req_1=PASS AND req_2=PASS (partition exists and has noexec set)
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'FAIL' %}
-            FAIL when req_1=PASS AND req_2=FAIL (partition exists but lacks noexec)
+          {% if status_1 | default('FAIL') == 'FAIL' %}
+            PASS: No separate partition for /var/log/audit, so noexec option is not required.
+          {% elif status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS: Separate partition exists and noexec option is set.
           {% else %}
-            Cannot determine overall compliance status
+            FAIL: Separate partition exists but noexec option is not set.
           {% endif %}
 
     # Final report
@@ -105,35 +101,35 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.7.4"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

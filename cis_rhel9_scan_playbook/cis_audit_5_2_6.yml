@@ -2,25 +2,16 @@
 - name: Data Collection for CIS checkpoint 5.2.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.6"
-    req_1: "Check for configured timestamp_timeout in sudoers files"
-    req_2: "Check default timeout if no timestamp_timeout is configured"
-    req_3: "OVERALL Verify: Ensure sudo authentication timeout is configured correctly"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.6"
+    req_1: "Check for configured timestamp_timeout in /etc/sudoers* files"
+    req_2: "Check the default sudo authentication timeout"
+    req_3: "Overall Verify: Ensure sudo authentication timeout is configured correctly"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        data_2: ""
-        data_3: ""
-        status_1: "UNKNOWN"
-        status_2: "UNKNOWN"
-        status_3: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        rationale_2: "Not evaluated"
-        rationale_3: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -31,11 +22,11 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Check for configured timestamp_timeout in sudoers files
-    - name: Req 1 - Check for configured timestamp_timeout in sudoers files
+    # Requirement 1: Check for configured timestamp_timeout in /etc/sudoers* files
+    - name: "Req 1 - Check configured timestamp_timeout"
       shell: |
         {% raw %}
-        grep -roP "timestamp_timeout=\K[0-9]*" /etc/sudoers* 2>/dev/null || true
+        grep -roP "timestamp_timeout=\K[0-9]*" /etc/sudoers*
         {% endraw %}
       args:
         executable: /bin/bash
@@ -45,7 +36,7 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for configured timestamp_timeout in sudoers files"
+        task_1_name: "Check configured timestamp_timeout in sudoers files"
         task_1_cmd: |
           grep -roP \"timestamp_timeout=\\K[0-9]*\" /etc/sudoers*
         task_1_rc: "{{ result_1.rc | default(-1) }}"
@@ -56,16 +47,16 @@
             PASS
           {% else %}
             {% set lines = output.split('\n') %}
-            {% set has_fail = false %}
+            {% set fail = false %}
             {% for line in lines %}
-              {% if line != '' %}
-                {% set value = line | int %}
+              {% if line|trim != '' %}
+                {% set value = line|int %}
                 {% if value == -1 or value > 15 %}
-                  {% set has_fail = true %}
+                  {% set fail = true %}
                 {% endif %}
               {% endif %}
             {% endfor %}
-            {% if has_fail %}
+            {% if fail %}
               FAIL
             {% else %}
               PASS
@@ -74,43 +65,42 @@
         rationale_1: >-
           {% set output = result_1.stdout | default('') | trim %}
           {% if output == '' %}
-            PASS when no value is found (proceed to check default)
+            PASS: No configured timestamp_timeout found (default will be used)
           {% else %}
             {% set lines = output.split('\n') %}
-            {% set values = [] %}
-            {% set has_fail = false %}
+            {% set fail = false %}
+            {% set found_values = [] %}
             {% for line in lines %}
-              {% if line != '' %}
-                {% set value = line | int %}
-                {% set values = values + [value] %}
+              {% if line|trim != '' %}
+                {% set value = line|int %}
+                {% set found_values = found_values + [value|string] %}
                 {% if value == -1 or value > 15 %}
-                  {% set has_fail = true %}
+                  {% set fail = true %}
                 {% endif %}
               {% endif %}
             {% endfor %}
-            {% if has_fail %}
-              FAIL when a value of -1 is found OR when a numeric value greater than 15 is found (found: {{ values }})
+            {% if fail %}
+              FAIL: Found timestamp_timeout values {{ found_values|join(', ') }} - value must be between 0 and 15 minutes, not -1
             {% else %}
-              PASS when the found numeric value is greater than -1 and less than or equal to 15 (found: {{ values }})
+              PASS: Found timestamp_timeout values {{ found_values|join(', ') }} - all values are <= 15 minutes
             {% endif %}
           {% endif %}
 
-    # Requirement 2: Check default timeout if no timestamp_timeout is configured
-    - name: Req 2 - Check default timeout if no timestamp_timeout is configured
+    # Requirement 2: Check the default sudo authentication timeout
+    - name: "Req 2 - Check default sudo authentication timeout"
       shell: |
         {% raw %}
-        sudo -V 2>/dev/null | grep "Authentication timestamp timeout:" || true
+        sudo -V | grep "Authentication timestamp timeout:"
         {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: data_1 == ''
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check default timeout if no timestamp_timeout is configured"
+        task_2_name: "Check default sudo authentication timeout"
         task_2_cmd: |
           sudo -V | grep \"Authentication timestamp timeout:\"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
@@ -118,76 +108,55 @@
         status_2: >-
           {% set output = result_2.stdout | default('') | trim %}
           {% if output == '' %}
-            UNKNOWN
+            FAIL
           {% else %}
-            {% set match = output | regex_search('Authentication timestamp timeout:\\s*([0-9.-]+)') %}
-            {% if match %}
-              {% set value_str = match.split(':')[1] | trim %}
-              {% set value = value_str | int %}
-              {% if value == -1 or value > 15 %}
-                FAIL
-              {% else %}
+            {% set minutes_match = output | regex_search('Authentication timestamp timeout: ([0-9]+\\.?[0-9]*) minutes?') %}
+            {% if minutes_match %}
+              {% set minutes_str = output | regex_replace('.*Authentication timestamp timeout: ([0-9]+\\.?[0-9]*).*', '\\1') %}
+              {% set minutes = minutes_str | float %}
+              {% if minutes >= 0 and minutes <= 15 %}
                 PASS
+              {% else %}
+                FAIL
               {% endif %}
+            {% elif 'Authentication timestamp timeout: 5 minutes' in output %}
+              PASS
             {% else %}
-              UNKNOWN
+              FAIL
             {% endif %}
           {% endif %}
         rationale_2: >-
           {% set output = result_2.stdout | default('') | trim %}
           {% if output == '' %}
-            No output from sudo -V command
+            FAIL: Could not retrieve authentication timestamp timeout value
           {% else %}
-            {% set match = output | regex_search('Authentication timestamp timeout:\\s*([0-9.-]+)') %}
-            {% if match %}
-              {% set value_str = match.split(':')[1] | trim %}
-              {% set value = value_str | int %}
-              {% if value == -1 or value > 15 %}
-                FAIL when the extracted value is -1 or greater than 15 (found: {{ value }})
+            {% set minutes_match = output | regex_search('Authentication timestamp timeout: ([0-9]+\\.?[0-9]*) minutes?') %}
+            {% if minutes_match %}
+              {% set minutes_str = output | regex_replace('.*Authentication timestamp timeout: ([0-9]+\\.?[0-9]*).*', '\\1') %}
+              {% set minutes = minutes_str | float %}
+              {% if minutes == -1 %}
+                FAIL: Authentication timestamp timeout is disabled (-1)
+              {% elif minutes >= 0 and minutes <= 15 %}
+                PASS: Authentication timestamp timeout is {{ minutes_str }} minutes (<= 15 minutes)
               {% else %}
-                PASS when the extracted numeric value from the output is greater than -1 and less than or equal to 15 (found: {{ value }})
+                FAIL: Authentication timestamp timeout is {{ minutes_str }} minutes (exceeds 15 minutes)
               {% endif %}
+            {% elif 'Authentication timestamp timeout: 5 minutes' in output %}
+              PASS: Default authentication timeout is 5 minutes (<= 15 minutes)
             {% else %}
-              Could not extract timeout value from output
+              FAIL: Could not parse authentication timeout value from output: {{ output }}
             {% endif %}
           {% endif %}
-      when: data_1 == ''
 
-    # Requirement 3: OVERALL Verify
-    - name: Req 3 - OVERALL Verify sudo authentication timeout configuration
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify sudo authentication timeout configuration"
-        task_3_cmd: "N/A (calculated from previous requirements)"
-        task_3_rc: 0
-        data_3: "Req1 status: {{ status_1 }}, Req2 status: {{ status_2 }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' %}
-            FAIL
-          {% else %}
-            {% if status_2 | trim == 'PASS' %}
-              PASS
-            {% elif status_2 | trim == 'FAIL' %}
-              FAIL
-            {% else %}
-              UNKNOWN
-            {% endif %}
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS when req_1=PASS
-          {% elif status_1 | trim == 'FAIL' %}
-            FAIL when req_1=FAIL
-          {% else %}
-            {% if status_2 | trim == 'PASS' %}
-              PASS when (req_1 result is 'no value found' AND req_2=PASS)
-            {% elif status_2 | trim == 'FAIL' %}
-              FAIL when (req_1 result is 'no value found' AND req_2=FAIL)
-            {% else %}
-              UNKNOWN - cannot determine overall status
-            {% endif %}
-          {% endif %}
+        task_3_name: "Overall verification of sudo authentication timeout"
+        task_3_cmd: "N/A (combined result of requirements 1 and 2)"
+        task_3_rc: "0"
+        data_3: "N/A"
+        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS: Both requirements 1 and 2 are satisfied' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL: One or more requirements are not satisfied (req1=' + (status_1 | default('UNKNOWN') | trim) + ', req2=' + (status_2 | default('UNKNOWN') | trim) + ')') }}"
 
     # Final report
     - name: Generate compliance report
@@ -196,7 +165,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.2.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.6"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

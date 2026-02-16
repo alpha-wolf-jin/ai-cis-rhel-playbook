@@ -1,0 +1,610 @@
+#!/usr/bin/env python3
+"""
+Automated CIS RHEL 9 Playbook Generator
+
+This script:
+1. Extracts all CIS checkpoint indices from the benchmark PDF
+2. Queries the CIS RHEL 9 Benchmark using RAG to get checkpoint audit info
+3. Uses DeepSeek AI to generate playbook requirements based on each checkpoint
+4. Generates Ansible playbooks to audit all CIS checkpoints
+5. Saves all playbooks to the specified output directory
+
+Usage:
+    python3 auto_rhel9_cis_playbook.py
+    python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks
+    python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks --target-host 192.168.122.16
+"""
+
+import os
+import sys
+import re
+import argparse
+from pathlib import Path
+from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# =============================================================================
+# Import shared functions from single_rhel9_cis_checkpoint_to_playbook.py
+# =============================================================================
+
+from single_rhel9_cis_checkpoint_to_playbook import (
+    load_or_create_vector_store,
+    get_checkpoint_info_with_agent,
+    parse_agent_response_to_checkpoint_info,
+    generate_playbook_requirements_from_checkpoint,
+    run_playbook_generation
+)
+
+# =============================================================================
+# Checkpoint Index Extraction (unique to auto script)
+# =============================================================================
+
+def read_checkpoint_indices_from_file(index_file_path: str) -> list:
+    """
+    Read checkpoint indices from a text file.
+    
+    Args:
+        index_file_path: Path to the file containing checkpoint indices (one per line)
+        
+    Returns:
+        list: List of checkpoint strings (e.g., ["1.1.1.1 Ensure...", "1.1.1.2 Ensure..."])
+    """
+    checkpoints = []
+    
+    try:
+        with open(index_file_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # Skip empty lines and comments
+                if line and not line.startswith('#'):
+                    checkpoints.append(line)
+        
+        print(f"✅ Read {len(checkpoints)} checkpoint indices from {index_file_path}")
+        return checkpoints
+    except FileNotFoundError:
+        print(f"❌ Error: Index file not found: {index_file_path}")
+        raise
+    except Exception as e:
+        print(f"❌ Error reading index file {index_file_path}: {e}")
+        raise
+
+
+def extract_checkpoint_indices(pdf_path: str) -> list:
+    """
+    Extract all CIS checkpoint indices from the benchmark PDF.
+    
+    Args:
+        pdf_path: Path to the CIS benchmark PDF
+        
+    Returns:
+        list: List of checkpoint strings (e.g., ["1.1.1.1 Ensure...", "1.1.1.2 Ensure..."])
+    """
+    from langchain_community.document_loaders import PyPDFLoader
+    
+    print(f"Loading PDF from {pdf_path}...")
+    loader = PyPDFLoader(pdf_path)
+    data = loader.load()
+    print(f"Loaded {len(data)} pages from CIS benchmark document")
+    
+    # Patterns for extraction
+    start_pattern = r"^Recommendations[\s.]+\d+$"
+    end_pattern = r"^Appendix:\sSummary\sTable[\s.]+\d+$"
+    section_start_regex = r"^\d+(\.\d+)+"  # Matches "6.3.3.19"
+    strip_dots_pattern = r"\s*\.{2,}.*$"
+    
+    found_start = False
+    buffer = ""
+    extracted_items = []
+    
+    for doc in data:
+        lines = doc.page_content.splitlines()
+        
+        for line in lines:
+            clean_line = line.strip()
+            
+            # Skip empty lines
+            if not clean_line:
+                continue
+            
+            # Check for start marker
+            if re.search(start_pattern, clean_line, re.IGNORECASE):
+                found_start = True
+                continue
+            
+            # Check for end marker
+            if re.search(end_pattern, clean_line, re.IGNORECASE):
+                found_start = False
+                break
+            
+            # Extract checkpoints
+            if found_start:
+                # Skip noise
+                if re.match(r"Page\s\d+", clean_line) or "Internal Only" in clean_line:
+                    continue
+                
+                clean_line = re.sub(strip_dots_pattern, "", clean_line)
+                clean_line = clean_line.strip()
+                
+                # Logic to handle wrapped lines
+                if "(Automated)" in clean_line or "(Manual)" in clean_line:
+                    if re.match(section_start_regex, clean_line):
+                        final_text = clean_line
+                    else:
+                        final_text = buffer + " " + clean_line
+                    extracted_items.append(final_text.strip())
+                else:
+                    if re.match(section_start_regex, clean_line):
+                        buffer = clean_line
+    
+    print(f"✅ Extracted {len(extracted_items)} checkpoint indices")
+    return extracted_items
+
+
+# =============================================================================
+# Automated Checkpoint Processing (unique to auto script)
+# =============================================================================
+
+def process_checkpoint_automated(vector_store, checkpoint: str, output_dir: Path, target_host: str, 
+                                  test_host: str, become_user: str, skip_execution: bool, 
+                                  verbose: bool = False, enhance: bool = True, skip_test: bool = False) -> dict:
+    """
+    Process a single CIS checkpoint and generate playbook (automated, no user input).
+    
+    Returns:
+        dict: {
+            'checkpoint': str,
+            'success': bool,
+            'filename': str,
+            'error': str or None
+        }
+    """
+    result = {
+        'checkpoint': checkpoint,
+        'success': False,
+        'filename': None,
+        'error': None
+    }
+    
+    try:
+        # When skip_test is True, we don't need to query CIS benchmark
+        # We just execute the existing playbook directly
+        if skip_test:
+            # Extract checkpoint ID from checkpoint string (e.g., "2.1.6" from "2.1.6 Ensure...")
+            checkpoint_match = re.search(r'^(\d+\.\d+\.\d+)', checkpoint)
+            checkpoint_id = checkpoint_match.group(1) if checkpoint_match else "0.0.0"
+            
+            # Generate playbook filename
+            safe_checkpoint_id = checkpoint_id.replace('.', '_')
+            base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
+            filename = str(output_dir / base_filename)
+            result['filename'] = filename
+            
+            # Use minimal values for objective and requirements since we're just executing existing playbook
+            objective = f"Audit CIS checkpoint {checkpoint_id}: {checkpoint}"
+            requirements = [f"Execute existing playbook for CIS checkpoint {checkpoint_id}"]
+            
+            # Call run_playbook_generation directly without CIS benchmark query
+            success, output = run_playbook_generation(
+                objective=objective,
+                requirements=requirements,
+                target_host=target_host,
+                test_host=test_host if test_host else target_host,
+                become_user=become_user,
+                filename=filename,
+                skip_execution=skip_execution,
+                audit_procedure=None,
+                enhance=enhance,
+                skip_test=skip_test
+            )
+        else:
+            # Step 1: Use Agent-based RAG to get checkpoint info
+            if verbose:
+                print(f"\n{'='*100}")
+                print(f"Querying CIS RHEL 9 Benchmark using Agent RAG for: '{checkpoint}'")
+                print(f"{'='*100}")
+            
+            agent_response = get_checkpoint_info_with_agent(vector_store, checkpoint, verbose=verbose)
+            
+            # Step 2: Parse the agent response into structured format
+            checkpoint_info = parse_agent_response_to_checkpoint_info(checkpoint, agent_response)
+            checkpoint_info['raw_agent_response'] = agent_response
+            
+            checkpoint_id = checkpoint_info.get('checkpoint_id', '0.0.0.0')
+            if not checkpoint_id or checkpoint_id in ['None', 'N/A', '']:
+                # Extract from original checkpoint string
+                id_match = re.search(r'(\d+\.\d+[\d\.]*)', checkpoint)
+                checkpoint_id = id_match.group(1) if id_match else 'unknown'
+            
+            # Step 3: Generate playbook requirements
+            playbook_spec = generate_playbook_requirements_from_checkpoint(checkpoint_info)
+            
+            objective = playbook_spec.get('objective', '')
+            requirements = playbook_spec.get('requirements', [])
+            
+            # Add CIS reference to requirements
+            requirements.append(f"Add comment referencing CIS RHEL 9 Benchmark v2.0.0, checkpoint {checkpoint_id}")
+            requirements.append(f"""Create a task named 'Generate compliance report' that displays a debug msg with this EXACT format:
+========================================================
+        COMPLIANCE REPORT - CIS {checkpoint_id}
+========================================================
+Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint {checkpoint_id}
+========================================================
+
+REQUIREMENT 1 - <requirement description>:
+  Task: <task name>
+  Command: <command executed>
+  Exit code: <exit code>
+  Data: <command output>
+  Status: PASS or FAIL
+  Rationale: <why PASS or FAIL based on the requirement's rationale>
+
+(repeat for each requirement)
+
+========================================================
+OVERALL COMPLIANCE:
+  Result: PASS or FAIL
+  Rationale: <overall pass/fail logic explanation>
+========================================================
+
+Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
+            requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks (except `set_fact`, `debug` tasks) so all checks complete and report status")
+            
+            # Print requirements before generating playbook
+            print(f"\n{'='*100}")
+            print(f"📋 Generated Playbook Requirements for {checkpoint_id}")
+            print(f"{'='*100}")
+            print(f"Objective: {objective}")
+            print(f"\nRequirements ({len(requirements)} items):")
+            for idx, req in enumerate(requirements, 1):
+                # Truncate very long requirements for display
+                display_req = req[:200] + '...' if len(req) > 200 else req
+                print(f"  {idx}. {display_req}")
+            print(f"{'='*100}\n")
+            
+            # Step 4: Generate playbook filename
+            safe_checkpoint_id = checkpoint_id.replace('.', '_')
+            base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
+            filename = str(output_dir / base_filename)
+            result['filename'] = filename
+            
+            # Get the audit procedure from checkpoint info
+            audit_procedure = checkpoint_info.get('audit_procedure', '')
+            raw_response = checkpoint_info.get('raw_agent_response', '')
+            
+            # If audit_procedure is empty or generic, try to extract from raw_agent_response
+            if not audit_procedure or audit_procedure in ['Not specified', 'See Full Agent Response above', 'N/A', '']:
+                if raw_response:
+                    audit_patterns = [
+                        r'\*\*Audit(?:\s+Procedure)?\*\*[:\s]*\n?(.*?)(?=\*\*(?:Remediation|Impact|Default|References)|\n\n\*\*|$)',
+                        r'(?:Audit|AUDIT)(?:\s+Procedure)?[:\s]*\n(.*?)(?=(?:Remediation|REMEDIATION|Impact|IMPACT|Default|DEFAULT|References|$))',
+                        r'\d+\.\s*(?:Audit|AUDIT)[^\n]*\n(.*?)(?=\d+\.\s*(?:Remediation|Impact)|$)',
+                    ]
+                    
+                    for pattern in audit_patterns:
+                        audit_match = re.search(pattern, raw_response, re.DOTALL | re.IGNORECASE)
+                        if audit_match and len(audit_match.group(1).strip()) > 50:
+                            audit_procedure = audit_match.group(1).strip()
+                            break
+                    
+                    if not audit_procedure or len(audit_procedure) < 50:
+                        audit_procedure = raw_response
+            
+            # Step 5: Generate and optionally execute playbook
+            success, output = run_playbook_generation(
+                objective=objective,
+                requirements=requirements,
+                target_host=target_host,
+                test_host=test_host if test_host else target_host,
+                become_user=become_user,
+                filename=filename,
+                skip_execution=skip_execution,
+                audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None,
+                enhance=enhance,
+                skip_test=skip_test
+            )
+        
+        result['success'] = success
+        if not success:
+            result['error'] = output
+        
+        return result
+        
+    except Exception as e:
+        import traceback
+        result['error'] = f"{str(e)}\n{traceback.format_exc()}"
+        return result
+
+
+def log_failed_checkpoint(checkpoint: str, error: str, log_file: Path):
+    """
+    Log a failed checkpoint to the failed_playbooks.log file.
+    
+    Args:
+        checkpoint: The checkpoint string that failed
+        error: The error message
+        log_file: Path to the log file
+    """
+    try:
+        # Ensure error is not None or empty
+        if not error:
+            error = "Unknown error (no error message provided)"
+        
+        # Ensure log_file is a Path object
+        if isinstance(log_file, str):
+            log_file = Path(log_file)
+        
+        # Ensure parent directory exists
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write to log file with explicit flushing
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"{'='*80}\n")
+            f.write(f"Checkpoint: {checkpoint}\n")
+            f.write(f"Error: {error}\n")
+            f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+            f.write(f"{'='*80}\n\n")
+            f.flush()  # Explicitly flush to ensure data is written
+            os.fsync(f.fileno())  # Force write to disk
+        
+        # Verify the write was successful
+        if log_file.exists() and log_file.stat().st_size > 0:
+            print(f"    📝 Logged failure to: {log_file}")
+        else:
+            print(f"    ⚠️  Warning: Log file write may have failed: {log_file}")
+    except Exception as e:
+        print(f"    ⚠️  Warning: Failed to write to log file {log_file}: {e}")
+        import traceback
+        print(f"    Traceback: {traceback.format_exc()}")
+
+
+# =============================================================================
+# Main
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Automated CIS RHEL 9 Playbook Generator - Generates playbooks for all CIS checkpoints',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive output directory prompt
+  python3 auto_rhel9_cis_playbook.py
+  
+  # Specify output directory
+  python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks
+  
+  # With custom target host
+  python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks --target-host 192.168.122.16
+  
+  # Skip execution (generate only)
+  python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks --skip-execution
+  
+  # Use checkpoint indices from file (skips PDF extraction)
+  python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks --index-file checkpoints.txt
+"""
+    )
+    
+    parser.add_argument(
+        '--output-dir', '-d',
+        type=str,
+        default=None,
+        help='Output directory for generated playbooks (will prompt if not provided)'
+    )
+    
+    parser.add_argument(
+        '--target-host', '-t',
+        type=str,
+        default='192.168.122.16',
+        help='Target host for playbook execution (default: 192.168.122.16)'
+    )
+    
+    parser.add_argument(
+        '--test-host',
+        type=str,
+        default=None,
+        help='Test host for validation before target execution'
+    )
+    
+    parser.add_argument(
+        '--become-user', '-u',
+        type=str,
+        default='root',
+        help='User to become when executing tasks (default: root)'
+    )
+    
+    parser.add_argument(
+        '--skip-execution',
+        action='store_true',
+        help='Generate playbook but skip execution'
+    )
+    
+    parser.add_argument(
+        '--skip-test',
+        dest='skip_test',
+        action='store_true',
+        help='Skip all test-related tasks and execute directly on target host (playbook must exist)'
+    )
+    
+    parser.add_argument(
+        '--verbose', '-v',
+        action='store_true',
+        help='Show verbose output including raw search results for debugging'
+    )
+    
+    parser.add_argument(
+        '--pdf-path',
+        type=str,
+        default=None,
+        help='Path to CIS benchmark PDF (default: resources/CIS_Red_Hat_Enterprise_Linux_9_Benchmark_v2.0.0.pdf)'
+    )
+    
+    parser.add_argument(
+        '--index-file', '-i',
+        type=str,
+        default=None,
+        help='Path to file containing checkpoint indices (one per line). If provided and file exists, reads indices from this file. If file does not exist, falls back to PDF extraction.'
+    )
+    
+    parser.add_argument(
+        '--generate',
+        action='store_true',
+        help='Force playbook generation regardless of whether playbook exists (equivalent to --no-enhance)'
+    )
+    
+    args = parser.parse_args()
+    
+    args.enhance = True
+    # If --generate is specified, set enhance=False
+    if args.generate:
+        args.enhance = False
+    
+    try:
+        # Get output directory (required user input)
+        if args.output_dir:
+            output_dir = Path(args.output_dir)
+        else:
+            output_dir_str = input("\nEnter output directory for playbooks (e.g., ./playbooks): ").strip()
+            if not output_dir_str:
+                print("❌ Output directory is required. Exiting.")
+                sys.exit(1)
+            output_dir = Path(output_dir_str)
+        
+        # Create output directory if it doesn't exist
+        output_dir.mkdir(parents=True, exist_ok=True)
+        print(f"✅ Output directory: {output_dir.absolute()}")
+        
+        # Initialize failed playbooks log file
+        failed_log_file = output_dir / "failed_playbooks.log"
+        # Clear or create the log file
+        if failed_log_file.exists():
+            failed_log_file.unlink()
+        failed_log_file.touch()
+        print(f"📝 Failed playbooks will be logged to: {failed_log_file.absolute()}")
+        
+        # When skip_test is True, we don't need to load vector store
+        # We just execute existing playbooks directly
+        vector_store = None
+        if not getattr(args, 'skip_test', False):
+            # Load vector store for normal flow
+            print("\n" + "="*100)
+            print("🔧 Initializing CIS RHEL 9 Benchmark Vector Store")
+            print("="*100)
+            
+            vector_store = load_or_create_vector_store()
+            print("✅ Vector store ready")
+        
+        # Get checkpoint indices - either from file or extract from PDF
+        if args.index_file and os.path.exists(args.index_file):
+            # Read checkpoint indices from provided file
+            print("\n" + "="*100)
+            print("📋 Reading CIS Checkpoint Indices from File")
+            print("="*100)
+            checkpoints = read_checkpoint_indices_from_file(args.index_file)
+        else:
+            # Extract checkpoint indices from PDF
+            if args.index_file:
+                print(f"\n⚠️  Index file not found: {args.index_file}")
+                print("   Falling back to PDF extraction...")
+            print("\n" + "="*100)
+            print("📋 Extracting CIS Checkpoint Indices from PDF")
+            print("="*100)
+            # Import PDF_PATH from single_rhel9_cis_checkpoint_to_playbook
+            from single_rhel9_cis_checkpoint_to_playbook import PDF_PATH
+            pdf_path = args.pdf_path or PDF_PATH
+            checkpoints = extract_checkpoint_indices(pdf_path)
+        
+        if not checkpoints:
+            print("❌ No checkpoints found. Exiting.")
+            sys.exit(1)
+        
+        print(f"\n✅ Found {len(checkpoints)} checkpoints to process")
+        
+        # Process all checkpoints
+        print("\n" + "="*100)
+        print("🚀 Starting Automated Playbook Generation")
+        print("="*100)
+        print(f"Total checkpoints: {len(checkpoints)}")
+        print(f"Output directory: {output_dir.absolute()}")
+        print(f"Target host: {args.target_host}")
+        print(f"Skip execution: {args.skip_execution}")
+        if getattr(args, 'skip_test', False):
+            print(f"Skip test: {args.skip_test} (will skip all test tasks, execute directly on target)")
+        print("="*100)
+        
+        results = []
+        successful = 0
+        failed = 0
+        
+        for idx, checkpoint in enumerate(checkpoints, 1):
+            print(f"\n{'='*100}")
+            print(f"Processing checkpoint {idx}/{len(checkpoints)}: {checkpoint[:80]}...")
+            print(f"{'='*100}")
+            
+            result = process_checkpoint_automated(
+                vector_store=vector_store,
+                checkpoint=checkpoint,
+                output_dir=output_dir,
+                target_host=args.target_host,
+                test_host=args.test_host,
+                become_user=args.become_user,
+                skip_execution=args.skip_execution,
+                verbose=args.verbose,
+                enhance=args.enhance,
+                skip_test=getattr(args, 'skip_test', False)
+            )
+            
+            results.append(result)
+            
+            if result['success']:
+                successful += 1
+                print(f"✅ Success: {result['filename']}")
+            else:
+                failed += 1
+                error_msg = result.get('error', 'Unknown error')
+                print(f"❌ Failed: {error_msg[:200]}..." if len(error_msg) > 200 else f"❌ Failed: {error_msg}")
+                
+                # Log failed checkpoint to file
+                try:
+                    log_failed_checkpoint(
+                        checkpoint=result.get('checkpoint', checkpoint),
+                        error=error_msg,
+                        log_file=failed_log_file
+                    )
+                except Exception as log_error:
+                    print(f"    ⚠️  Critical: Failed to log checkpoint to file: {log_error}")
+            
+            # Progress summary
+            print(f"\nProgress: {idx}/{len(checkpoints)} | Successful: {successful} | Failed: {failed}")
+        
+        # Final summary
+        print("\n" + "="*100)
+        print("📊 FINAL SUMMARY")
+        print("="*100)
+        print(f"Total checkpoints processed: {len(checkpoints)}")
+        print(f"✅ Successful: {successful}")
+        print(f"❌ Failed: {failed}")
+        print(f"📁 Output directory: {output_dir.absolute()}")
+        print(f"📝 Failed checkpoints log: {failed_log_file.absolute()}")
+        
+        if failed > 0:
+            print("\nFailed checkpoints (also logged to failed_playbooks.log):")
+            for result in results:
+                if not result['success']:
+                    print(f"  - {result['checkpoint']}: {result['error'][:100]}...")
+        
+        print("\n✅ Automated playbook generation completed!")
+            
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n❌ Error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

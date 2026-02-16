@@ -1,5 +1,5 @@
 ---
-- name: Data Collection for CIS Checkpoint 6.3.3.18
+- name: Data Collection for CIS 6.3.3.18
   hosts: all
   become: yes
   gather_facts: false
@@ -22,145 +22,161 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Extract UID_MIN once for use in expected rules
-    - name: Extract UID_MIN from /etc/login.defs
-      shell: |
-        awk '/^\\s*UID_MIN/{print $2}' /etc/login.defs
-      args:
-        executable: /bin/bash
-      register: uid_min_extract
-      ignore_errors: true
-      changed_when: false
-
-    - name: Set UID_MIN fact
-      set_fact:
-        uid_min: "{{ uid_min_extract.stdout | default('1000') | trim }}"
-
-    - name: Build expected audit rules based on UID_MIN
-      set_fact:
-        expected_on_disk: "-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>={{ uid_min }} -F auid!=unset -k usermod"
-        expected_loaded: "-a always,exit -S all -F path=/usr/sbin/usermod -F perm=x -F auid>={{ uid_min }} -F auid!=-1 -F key=usermod"
-
     # Requirement 1: Check on-disk audit rules for usermod command
-    - name: Req 1 - Execute on-disk audit rules script
+    - name: Req 1 - Create script for on-disk audit rules check
       copy:
-        dest: "/tmp/cis_audit_req_1.sh"
+        dest: "/tmp/cis_audit_6.3.3.18_req1.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
-          {
-            UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-            [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
-            &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
-            &&/ -F *auid>=${UID_MIN}/ \
-            &&/ -F *perm=x/ \
-            &&/ -F *path=\/usr\/sbin\/usermod/ \
-            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
-            || printf "ERROR: Variable 'UID_MIN' is unset.\n"
-          }
+          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+          [ -n "${UID_MIN}" ] && awk "/^ *-a *always,exit/ \
+          &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+          &&/ -F *auid>=${UID_MIN}/ \
+          &&/ -F *perm=x/ \
+          &&/ -F *path=\/usr\/sbin\/usermod/ \
+          &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" /etc/audit/rules.d/*.rules \
+          || printf "ERROR: Variable 'UID_MIN' is unset.\n"
           {% endraw %}
       register: script_create_1
       ignore_errors: true
 
-    - name: Req 1 - Execute the on-disk audit script
-      shell: "/tmp/cis_audit_req_1.sh"
+    - name: Req 1 - Execute the audit script for on-disk rules
+      shell: "/tmp/cis_audit_6.3.3.18_req1.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
-    - name: Req 1 - Remove temporary on-disk audit script
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_req_1.sh"
+        path: "/tmp/cis_audit_6.3.3.18_req1.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Req 1 - Check on-disk audit rules for usermod command"
-        task_1_cmd: "Execute CIS on-disk audit script for usermod"
+        task_1_name: "Execute on-disk audit rules check script"
+        task_1_cmd: "{{ result_1.cmd | default('N/A') }}"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% if result_1.stderr is defined and 'ERROR' in result_1.stderr %}
-            FAIL
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+            {% set expected = '-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=unset -k usermod' %}
+            {% if output == expected %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
-            {{ 'PASS' if (result_1.stdout | default('') | trim == expected_on_disk) else 'FAIL' }}
+            FAIL
           {% endif %}
         rationale_1: >-
-          {% if result_1.stderr is defined and 'ERROR' in result_1.stderr %}
-            FAIL: Script reported error: {{ result_1.stderr | trim }}
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+            {% set expected = '-a always,exit -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=unset -k usermod' %}
+            {% if output == expected %}
+              PASS when the script output exactly matches the expected line with UID_MIN={{ uid_min }}
+            {% else %}
+              FAIL: Expected "{{ expected }}", got "{{ output }}"
+            {% endif %}
           {% else %}
-            {{ 'PASS: Output exactly matches the expected on-disk rule for usermod' if (result_1.stdout | default('') | trim == expected_on_disk) else 'FAIL: Output does not exactly match the expected on-disk rule for usermod. Expected: ' + expected_on_disk + ', Got: ' + (result_1.stdout | default('') | trim) }}
+            FAIL: No output from script or UID_MIN is unset
           {% endif %}
 
     # Requirement 2: Check loaded audit rules for usermod command
-    - name: Req 2 - Execute loaded audit rules script
+    - name: Req 2 - Create script for loaded audit rules check
       copy:
-        dest: "/tmp/cis_audit_req_2.sh"
+        dest: "/tmp/cis_audit_6.3.3.18_req2.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
-          {
-            UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
-            [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ \
-            &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
-            &&/ -F *auid>=${UID_MIN}/ \
-            &&/ -F *perm=x/ \
-            &&/ -F *path=\/usr\/sbin\/usermod/ \
-            &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" \
-            || printf "ERROR: Variable 'UID_MIN' is unset.\n"
-          }
+          UID_MIN=$(awk '/^\s*UID_MIN/{print $2}' /etc/login.defs)
+          [ -n "${UID_MIN}" ] && auditctl -l | awk "/^ *-a *always,exit/ \
+          &&(/ -F *auid!=unset/||/ -F *auid!=-1/||/ -F *auid!=4294967295/) \
+          &&/ -F *auid>=${UID_MIN}/ \
+          &&/ -F *perm=x/ \
+          &&/ -F *path=\/usr\/sbin\/usermod/ \
+          &&(/ key= *[!-~]* *$/||/ -k *[!-~]* *$/)" \
+          || printf "ERROR: Variable 'UID_MIN' is unset.\n"
           {% endraw %}
       register: script_create_2
       ignore_errors: true
 
-    - name: Req 2 - Execute the loaded audit script
-      shell: "/tmp/cis_audit_req_2.sh"
+    - name: Req 2 - Execute the audit script for loaded rules
+      shell: "/tmp/cis_audit_6.3.3.18_req2.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
 
-    - name: Req 2 - Remove temporary loaded audit script
+    - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_req_2.sh"
+        path: "/tmp/cis_audit_6.3.3.18_req2.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Req 2 - Check loaded audit rules for usermod command"
-        task_2_cmd: "Execute CIS loaded audit script for usermod"
+        task_2_name: "Execute loaded audit rules check script"
+        task_2_cmd: "{{ result_2.cmd | default('N/A') }}"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% if result_2.stderr is defined and 'ERROR' in result_2.stderr %}
-            FAIL
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+            {% set expected = '-a always,exit -S all -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=-1 -F key=usermod' %}
+            {% if output == expected %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
-            {{ 'PASS' if (result_2.stdout | default('') | trim == expected_loaded) else 'FAIL' }}
+            FAIL
           {% endif %}
         rationale_2: >-
-          {% if result_2.stderr is defined and 'ERROR' in result_2.stderr %}
-            FAIL: Script reported error: {{ result_2.stderr | trim }}
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set uid_min = ansible_facts.get('uid_min', '1000') %}
+            {% set expected = '-a always,exit -S all -F path=/usr/sbin/usermod -F perm=x -F auid>=' ~ uid_min ~ ' -F auid!=-1 -F key=usermod' %}
+            {% if output == expected %}
+              PASS when the script output exactly matches the expected line with UID_MIN={{ uid_min }}
+            {% else %}
+              FAIL: Expected "{{ expected }}", got "{{ output }}"
+            {% endif %}
           {% else %}
-            {{ 'PASS: Output exactly matches the expected loaded rule for usermod' if (result_2.stdout | default('') | trim == expected_loaded) else 'FAIL: Output does not exactly match the expected loaded rule for usermod. Expected: ' + expected_loaded + ', Got: ' + (result_2.stdout | default('') | trim) }}
+            FAIL: No output from script or UID_MIN is unset
           {% endif %}
 
-    # Requirement 3: OVERALL Verify
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Req 3 - OVERALL Verify usermod audit collection"
-        task_3_cmd: "Evaluate overall compliance"
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
         task_3_rc: 0
-        data_3: "N/A"
-        status_3: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS: Both on-disk and loaded audit rules for usermod are properly configured' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') else 'FAIL: Missing or incorrect usermod audit rules in on-disk configuration and/or running configuration') | trim }}"
+        data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}"
+        status_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS when both on-disk and loaded audit rules for usermod are properly configured
+          {% else %}
+            FAIL: Either on-disk ({{ status_1 }}) or loaded ({{ status_2 }}) audit rules for usermod are not properly configured
+          {% endif %}
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:

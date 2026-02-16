@@ -1,11 +1,12 @@
 ---
-- name: Data Collection for CIS 2.2.2
+- name: Data Collection for CIS Checkpoint 2.2.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.2.2"
-    req_1: "Verify that the openldap-clients package is not installed using command: rpm -q openldap-clients"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.2.2"
+    # REQUIREMENT VARIABLES - MUST be quoted strings
+    req_1: "Verify openldap-clients package is not installed using command: `rpm -q openldap-clients`"
     req_2: "OVERALL Verify: Ensure ldap client is not installed"
 
   tasks:
@@ -18,8 +19,8 @@
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify that the openldap-clients package is not installed using command: rpm -q openldap-clients
-    - name: Req 1 - Check if openldap-clients is installed
+    # Requirement 1: Verify openldap-clients package is not installed using command: `rpm -q openldap-clients`
+    - name: "Req 1 - Check if openldap-clients is installed"
       shell: rpm -q openldap-clients
       args:
         executable: /bin/bash
@@ -34,19 +35,24 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package openldap-clients is not installed') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the exact output is package openldap-clients is not installed, FAIL otherwise' if (result_1.stdout | default('') | trim == 'package openldap-clients is not installed') else 'FAIL - Output does not match expected') | trim }}"
+        rationale_1: >-
+          {% if result_1.stdout | default('') | trim == 'package openldap-clients is not installed' %}
+            PASS when output is exactly "package openldap-clients is not installed", FAIL otherwise
+          {% else %}
+            FAIL: Expected "package openldap-clients is not installed", got "{{ result_1.stdout | default('') | trim }}"
+          {% endif %}
 
     # Requirement 2: OVERALL Verify: Ensure ldap client is not installed
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A - Derived from requirement 1"
-        task_2_rc: "{{ task_1_rc }}"
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise' if (status_1 | trim == 'PASS') else 'FAIL - Requirement 1 failed') | trim }}"
+        task_2_name: "Overall verification - no command"
+        task_2_cmd: "N/A"
+        task_2_rc: 0
+        data_2: "N/A"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: '{{ ("PASS when req_1=PASS, FAIL otherwise" if (status_1 | trim == "PASS") else "FAIL: req_1 status is " + (status_1 | trim)) | trim }}'
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:

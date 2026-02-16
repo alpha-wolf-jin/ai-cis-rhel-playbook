@@ -1,13 +1,13 @@
 ---
-- name: Data Collection for CIS 2.1.17
+- name: Data Collection for CIS 2.1.17 - Web proxy server services
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 9 Benchmark v4.0.0 checkpoint 2.1.17"
-    req_1: "Check if squid package is installed using command: rpm -q squid"
-    req_2: "If squid package is installed, check if squid.service is enabled using command: systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'"
-    req_3: "If squid package is installed, check if squid.service is active using command: systemctl is-active squid.service 2>/dev/null | grep '^active'"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.17"
+    req_1: "Check if squid package is installed"
+    req_2: "If squid package is installed, check if squid.service is enabled"
+    req_3: "If squid package is installed, check if squid.service is active"
     req_4: "OVERALL Verify: Ensure web proxy server services are not in use"
 
   tasks:
@@ -16,17 +16,29 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        task_4_name: "OVERALL Verify"
         task_4_cmd: "N/A"
-        task_4_rc: -1
+        task_4_rc: 0
+        data_4: ""
+        status_4: "UNKNOWN"
+        rationale_4: "Not evaluated"
 
-    # Requirement 1: Check if squid package is installed using command: rpm -q squid
+    # Requirement 1: Check if squid package is installed
     - name: Req 1 - Check squid package installation
       shell: rpm -q squid
       args:
@@ -42,11 +54,12 @@
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package squid is not installed') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when output is package squid is not installed, FAIL otherwise') | trim }}"
+        rationale_1: "{{ ('PASS: squid package is not installed' if (result_1.stdout | default('') | trim == 'package squid is not installed') else 'FAIL: squid package is installed') | trim }}"
 
-    # Requirement 2: If squid package is installed, check if squid.service is enabled
-    - name: Req 2 - Check if squid.service is enabled
-      shell: systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'
+    # Requirement 2: Check if squid.service is enabled (only if package is installed)
+    - name: Req 2 - Check if squid service is enabled
+      shell: |
+        systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
@@ -56,27 +69,17 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if squid.service is enabled"
+        task_2_name: "Check if squid service is enabled"
         task_2_cmd: "systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when no output is returned (service is not enabled), FAIL when output contains enabled') | trim }}"
-      when: status_1 | trim == 'FAIL'
+        status_2: "{% if status_1 | trim == 'PASS' %}NA{% else %}{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}{% endif %}"
+        rationale_2: "{% if status_1 | trim == 'PASS' %}Not applicable because squid package is not installed{% elif result_2.stdout | default('') | trim == '' %}PASS: squid.service is not enabled{% else %}FAIL: squid.service is enabled{% endif %}"
 
-    - name: Set requirement 2 as NA when squid not installed
-      set_fact:
-        task_2_name: "Check if squid.service is enabled"
-        task_2_cmd: "systemctl is-enabled squid.service 2>/dev/null | grep 'enabled'"
-        task_2_rc: -1
-        data_2: "Not applicable - squid package not installed"
-        status_2: "NA"
-        rationale_2: "Squid package not installed, requirement not applicable"
-      when: status_1 | trim == 'PASS'
-
-    # Requirement 3: If squid package is installed, check if squid.service is active
-    - name: Req 3 - Check if squid.service is active
-      shell: systemctl is-active squid.service 2>/dev/null | grep '^active'
+    # Requirement 3: Check if squid.service is active (only if package is installed)
+    - name: Req 3 - Check if squid service is active
+      shell: |
+        systemctl is-active squid.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
@@ -86,42 +89,20 @@
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if squid.service is active"
+        task_3_name: "Check if squid service is active"
         task_3_cmd: "systemctl is-active squid.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when no output is returned (service is not active), FAIL when output contains ^active') | trim }}"
-      when: status_1 | trim == 'FAIL'
+        status_3: "{% if status_1 | trim == 'PASS' %}NA{% else %}{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}{% endif %}"
+        rationale_3: "{% if status_1 | trim == 'PASS' %}Not applicable because squid package is not installed{% elif result_3.stdout | default('') | trim == '' %}PASS: squid.service is not active{% else %}FAIL: squid.service is active{% endif %}"
 
-    - name: Set requirement 3 as NA when squid not installed
-      set_fact:
-        task_3_name: "Check if squid.service is active"
-        task_3_cmd: "systemctl is-active squid.service 2>/dev/null | grep '^active'"
-        task_3_rc: -1
-        data_3: "Not applicable - squid package not installed"
-        status_3: "NA"
-        rationale_3: "Squid package not installed, requirement not applicable"
-      when: status_1 | trim == 'PASS'
-
-    # Requirement 4: OVERALL Verify: Ensure web proxy server services are not in use
+    # Requirement 4: OVERALL Verify
     - name: Store requirement 4 details
       set_fact:
-        task_4_name: "Overall compliance verification"
-        task_4_cmd: "N/A - calculated from previous requirements"
-        task_4_rc: 0
-        data_4: "Package check: {{ status_1 | trim }}, Service enabled: {{ status_2 | default('NA') | trim }}, Service active: {{ status_3 | default('NA') | trim }}"
-        status_4: >-
-          {% if status_1 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' and status_2 | default('FAIL') | trim == 'PASS' and status_3 | default('FAIL') | trim == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        data_4: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}, Requirement 3: {{ status_3 }}"
+        status_4: "{% set s1 = status_1 | trim %}{% set s2 = status_2 | trim %}{% set s3 = status_3 | trim %}{% if s1 == 'PASS' %}PASS{% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}PASS{% elif s1 == 'FAIL' and s2 == 'NA' and s3 == 'NA' %}FAIL{% elif s1 == 'FAIL' and (s2 == 'FAIL' or s3 == 'FAIL') %}FAIL{% else %}UNKNOWN{% endif %}"
+        rationale_4: "{% set s1 = status_1 | trim %}{% set s2 = status_2 | trim %}{% set s3 = status_3 | trim %}{% if s1 == 'PASS' %}PASS: squid package is not installed{% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}PASS: squid is installed but service is not enabled and not active{% elif s1 == 'FAIL' and s2 == 'NA' and s3 == 'NA' %}FAIL: squid package is installed (service status not checked){% elif s1 == 'FAIL' and s2 == 'FAIL' %}FAIL: squid is installed and service is enabled{% elif s1 == 'FAIL' and s3 == 'FAIL' %}FAIL: squid is installed and service is active{% else %}UNKNOWN: cannot determine overall status from collected data{% endif %}"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -132,39 +113,39 @@
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Rationale: {{ rationale_2 }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Rationale: {{ rationale_3 }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 }}"
+          - "  Status: {{ status_4 }}"
+          - "  Rationale: {{ rationale_4 }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_4 }}"
+          - "  Rationale: {{ rationale_4 }}"
           - "========================================================"

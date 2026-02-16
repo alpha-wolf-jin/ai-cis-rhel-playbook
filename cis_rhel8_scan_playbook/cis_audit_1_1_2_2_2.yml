@@ -1,62 +1,102 @@
 ---
-- name: Data Collection for CIS 1.1.2.2.2
+- name: Data Collection for CIS checkpoint 1.1.2.2.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 1.1.2.2.2"
-    req_1: "Verify the /dev/shm mount point has the 'nodev' option set using command: findmnt -kn /dev/shm | grep -v 'nodev'"
-    req_2: "OVERALL Verify: Ensure nodev option set on /dev/shm partition"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.2"
+    req_1: "Check if /dev/shm is mounted as a separate partition"
+    req_2: "If a separate partition exists for /dev/shm, verify the nodev mount option is set"
+    req_3: "Ensure nodev option set on /dev/shm partition"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify the /dev/shm mount point has the 'nodev' option set using command: findmnt -kn /dev/shm | grep -v 'nodev'
-    - name: "Req 1 - Check nodev option on /dev/shm"
-      shell: >
-        findmnt -kn /dev/shm | grep -v 'nodev'
+    # Requirement 1: Check if /dev/shm is mounted as a separate partition
+    - name: Req 1 - Check /dev/shm partition mount
+      shell: |
+        findmnt -kn /dev/shm
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check nodev option on /dev/shm"
-        task_1_cmd: "findmnt -kn /dev/shm | grep -v 'nodev'"
+        task_1_name: "Check /dev/shm partition mount"
+        task_1_cmd: "findmnt -kn /dev/shm"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when command returns no output (indicating nodev is present), FAIL when output is returned (indicating nodev is missing)') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_1: "PASS when the command returns output (indicating a separate mount exists), FAIL when no output is returned (indicating no separate partition, making the check N/A)"
 
-    # Requirement 2: OVERALL Verify: Ensure nodev option set on /dev/shm partition
-    - name: "Req 2 - Determine overall compliance"
+    # Requirement 2: If a separate partition exists, verify nodev option
+    - name: Req 2 - Verify nodev option on /dev/shm
+      shell: |
+        findmnt -kn /dev/shm | grep -v 'nodev'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | length > 0
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "{{ ('PASS when req_1=PASS, FAIL otherwise') | trim }}"
+        task_2_name: "Verify nodev option on /dev/shm"
+        task_2_cmd: "findmnt -kn /dev/shm | grep -v 'nodev'"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if data_1 | length > 0 %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if data_1 | length > 0 %}
+            {% if result_2.stdout | default('') | trim == '' %}
+              PASS when the command returns no output (nodev option is present), FAIL when any output is returned (nodev option is missing)
+            {% else %}
+              FAIL when the command returns no output (nodev option is present), FAIL when any output is returned (nodev option is missing)
+            {% endif %}
+          {% else %}
+            Not applicable: /dev/shm is not a separate partition
+          {% endif %}
 
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "Calculated from req_1 and req_2"
+        task_3_rc: 0
+        data_3: "req_1={{ status_1 | trim }}, req_2={{ status_2 | trim }}"
+        status_3: >-
+          {% if (status_1 | trim == 'FAIL') or (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') %}
+            PASS
+          {% elif (status_1 | trim == 'PASS' and status_2 | trim == 'FAIL') %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: "PASS when (req_1=FAIL) OR (req_1=PASS AND req_2=PASS), FAIL when req_1=PASS AND req_2=FAIL"
+
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 1.1.2.2.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.2"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -75,8 +115,16 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

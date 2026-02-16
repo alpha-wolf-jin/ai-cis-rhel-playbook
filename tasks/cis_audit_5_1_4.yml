@@ -1,0 +1,242 @@
+---
+- name: Initialize meta data variables
+  set_fact:
+    kcs_article: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.4
+    req_1: 'Verify sshd configured ciphers using command: `sshd -T | grep -Pi ''^ciphers\h+\"?([^#\n\r]+,)?((3des|blowfish|cast128|aes(128|192|256))-cbc|arcfour(128|256)?|rijndael-cbc@lysator\.liu\.se|chacha20-poly1305@openssh\.com)\b''`. Rationale: PASS when the command returns no output (i.e., no weak ciphers are configured), FAIL when any output is returned.
+
+      '
+    req_2: 'If the output from the previous command contains ''chacha20-poly1305@openssh.com'', verify the system is patched against CVE-2023-48795 using command: `rpm -q openssh-server`. Rationale: PASS when the openssh-server version is patched (version must be determined by referencing vendor security advisories for CVE-2023-48795; if version is unknown, treat as FAIL), FAIL when the version is unpatched or unknown.'
+    req_3: 'OVERALL Verify: Ensure sshd Ciphers are configured. Rationale: PASS when req_1=PASS AND (req_2=PASS OR req_2 is not applicable because ''chacha20-poly1305@openssh.com'' was not found in req_1 output), FAIL otherwise.'
+
+- name: Initialize data variables
+  set_fact:
+    data_1: ""
+    data_2: ""
+    data_3: ""
+    status_1: "UNKNOWN"
+    status_2: "NA"
+    status_3: "UNKNOWN"
+    rationale_1: "Not evaluated"
+    rationale_2: "Not applicable - condition not met"
+    rationale_3: "Not evaluated"
+    task_1_name: "Not executed"
+    task_1_cmd: "N/A"
+    task_1_rc: -1
+    task_2_name: "Not executed"
+    task_2_cmd: "N/A"
+    task_2_rc: -1
+    task_3_name: "Not executed"
+    task_3_cmd: "N/A"
+    task_3_rc: -1
+
+- name: "Req 1 - Check for weak ciphers in sshd config"
+  shell: |
+    {% raw %}
+    sshd -T | grep -Pi '^ciphers\h+\"?([^#\n\r]+,)?((3des|blowfish|cast128|aes(128|192|256))-cbc|arcfour(128|256)?|rijndael-cbc@lysator\.liu\.se|chacha20-poly1305@openssh\.com)\b'
+    {% endraw %}
+  args:
+    executable: /bin/bash
+  register: result_1
+  ignore_errors: true
+  changed_when: false
+
+- name: Store requirement 1 details
+  set_fact:
+    task_1_name: "Check for weak ciphers in sshd config"
+    task_1_cmd: |
+      sshd -T | grep -Pi '^ciphers\h+\"?([^#\n\r]+,)?((3des|blowfish|cast128|aes(128|192|256))-cbc|arcfour(128|256)?|rijndael-cbc@lysator\.liu\.se|chacha20-poly1305@openssh\.com)\b'
+    task_1_rc: "{{ result_1.rc | default(-1) }}"
+    data_1: "{{ result_1.stdout | default('') | trim }}"
+    status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+    rationale_1: "{{ ('PASS: No weak ciphers found' if (result_1.stdout | default('') | trim == '') else ('FAIL: Weak ciphers found: ' + (result_1.stdout | default('') | trim))) | trim }}"
+
+- name: Check if chacha20-poly1305@openssh.com is present
+  set_fact:
+    chacha_found: "{{ 'chacha20-poly1305@openssh.com' in data_1 }}"
+
+- name: "Req 2 - Check openssh-server version for CVE-2023-48795 patch"
+  shell: |
+    rpm -q openssh-server
+  args:
+    executable: /bin/bash
+  register: result_2
+  ignore_errors: true
+  changed_when: false
+  when: chacha_found
+
+- name: Store requirement 2 details when condition met
+  set_fact:
+    task_2_name: "Check openssh-server version for CVE-2023-48795 patch"
+    task_2_cmd: "rpm -q openssh-server"
+    task_2_rc: "{{ result_2.rc | default(-1) }}"
+    data_2: "{{ result_2.stdout | default('') | trim }}"
+    status_2: >-
+      {% if result_2.rc is defined and result_2.rc == 0 %}
+        {% set version_output = result_2.stdout | default('') | trim %}
+        {% if version_output != '' %}
+          {% set match = version_output | regex_search('openssh-server-([0-9]+\.[0-9]+p[0-9]+)-([0-9]+)\.(el[0-9_]+(?:\.[^\.]+)?)') %}
+          {% if match %}
+            {% set version_part = match.split('-')[1] %}
+            {% set release_str = match.split('-')[2] %}
+            {% set release_parts = release_str.split('.') %}
+            {% set release_num = release_parts[0] | int %}
+            {% set distro = release_parts[1] %}
+            {% set version_components = version_part.split('p') %}
+            {% if version_components|length >= 2 %}
+              {% set base_version = version_components[0] | float %}
+              {% set patch_level = version_components[1] | int %}
+              {% if distro.startswith('el9') %}
+                {% if base_version > 8.7 %}
+                  PASS
+                {% elif base_version == 8.7 and patch_level >= 1 and release_num >= 24 %}
+                  PASS
+                {% else %}
+                  FAIL
+                {% endif %}
+              {% elif distro.startswith('el8') %}
+                {% if base_version > 8.0 %}
+                  PASS
+                {% elif base_version == 8.0 and patch_level >= 1 and release_num >= 13 %}
+                  PASS
+                {% else %}
+                  FAIL
+                {% endif %}
+              {% elif distro.startswith('el7') %}
+                {% if base_version > 7.4 %}
+                  PASS
+                {% elif base_version == 7.4 and patch_level >= 1 and release_num >= 23 %}
+                  PASS
+                {% else %}
+                  FAIL
+                {% endif %}
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        {% else %}
+          FAIL
+        {% endif %}
+      {% else %}
+        FAIL
+      {% endif %}
+    rationale_2: >-
+      {% if result_2.rc is defined and result_2.rc == 0 %}
+        {% set version_output = result_2.stdout | default('') | trim %}
+        {% if version_output != '' %}
+          {% set match = version_output | regex_search('openssh-server-([0-9]+\.[0-9]+p[0-9]+)-([0-9]+)\.(el[0-9_]+(?:\.[^\.]+)?)') %}
+          {% if match %}
+            {% set version_part = match.split('-')[1] %}
+            {% set release_str = match.split('-')[2] %}
+            {% set release_parts = release_str.split('.') %}
+            {% set release_num = release_parts[0] | int %}
+            {% set distro = release_parts[1] %}
+            {% set version_components = version_part.split('p') %}
+            {% if version_components|length >= 2 %}
+              {% set base_version = version_components[0] | float %}
+              {% set patch_level = version_components[1] | int %}
+              {% if distro.startswith('el9') %}
+                {% if base_version > 8.7 %}
+                  PASS: Version {{ version_output }} is patched against CVE-2023-48795 (RHEL 9, version > 8.7)
+                {% elif base_version == 8.7 and patch_level >= 1 and release_num >= 24 %}
+                  PASS: Version {{ version_output }} is patched against CVE-2023-48795 (RHEL 9, release >= 24)
+                {% else %}
+                  FAIL: Version {{ version_output }} is NOT patched against CVE-2023-48795 (RHEL 9 requires >= 8.7p1-24.el9_2)
+                {% endif %}
+              {% elif distro.startswith('el8') %}
+                {% if base_version > 8.0 %}
+                  PASS: Version {{ version_output }} is patched against CVE-2023-48795 (RHEL 8, version > 8.0)
+                {% elif base_version == 8.0 and patch_level >= 1 and release_num >= 13 %}
+                  PASS: Version {{ version_output }} is patched against CVE-2023-48795 (RHEL 8, release >= 13)
+                {% else %}
+                  FAIL: Version {{ version_output }} is NOT patched against CVE-2023-48795 (RHEL 8 requires >= 8.0p1-13.el8)
+                {% endif %}
+              {% elif distro.startswith('el7') %}
+                {% if base_version > 7.4 %}
+                  PASS: Version {{ version_output }} is patched against CVE-2023-48795 (RHEL 7, version > 7.4)
+                {% elif base_version == 7.4 and patch_level >= 1 and release_num >= 23 %}
+                  PASS: Version {{ version_output }} is patched against CVE-2023-48795 (RHEL 7, release >= 23)
+                {% else %}
+                  FAIL: Version {{ version_output }} is NOT patched against CVE-2023-48795 (RHEL 7 requires >= 7.4p1-23.el7)
+                {% endif %}
+              {% else %}
+                FAIL: Version {{ version_output }} is for an unsupported distribution ({{ distro }}). Cannot determine patched status.
+              {% endif %}
+            {% else %}
+              FAIL: Could not parse openssh-server version (missing patch level): {{ version_output }}
+            {% endif %}
+          {% else %}
+            FAIL: Could not parse openssh-server version (invalid format): {{ version_output }}
+          {% endif %}
+        {% else %}
+          FAIL: No output from rpm -q openssh-server
+        {% endif %}
+      {% else %}
+        FAIL: Failed to query openssh-server package (exit code: {{ result_2.rc | default(-1) }})
+      {% endif %}
+  when: chacha_found
+
+- name: Trim status and rationale variables
+  set_fact:
+    status_1: "{{ status_1 | trim }}"
+    rationale_1: "{{ rationale_1 | trim }}"
+    status_2: "{{ status_2 | trim }}"
+    rationale_2: "{{ rationale_2 | trim }}"
+    status_3: "{{ status_3 | trim }}"
+    rationale_3: "{{ rationale_3 | trim }}"
+
+- name: "Req 3 - Overall verify sshd ciphers configuration"
+  set_fact:
+    task_3_name: "Overall verify sshd ciphers configuration"
+    task_3_cmd: "N/A (computed)"
+    task_3_rc: 0
+    data_3: "req_1: {{ status_1 }}, req_2: {{ status_2 }}, chacha_found: {{ chacha_found }}"
+    status_3: "{{ ('PASS' if (status_1 == 'PASS' and (status_2 == 'PASS' or status_2 == 'NA')) else 'FAIL') | trim }}"
+    rationale_3: "{{ ('PASS: req_1 passed and req_2 is either passed or not applicable' if (status_1 == 'PASS' and (status_2 == 'PASS' or status_2 == 'NA')) else 'FAIL: req_1 failed or req_2 failed when applicable') | trim }}"
+
+- name: Generate compliance report
+  debug:
+    msg:
+    - "========================================================"
+    - "        COMPLIANCE REPORT - CIS 5.1.4"
+    - "========================================================"
+    - "Reference: {{ kcs_article }}"
+    - "========================================================"
+    - ""
+    - "REQUIREMENT 1 - {{ req_1 }}:"
+    - "  Task: {{ task_1_name }}"
+    - "  Command: {{ task_1_cmd }}"
+    - "  Exit code: {{ task_1_rc }}"
+    - "  Data: {{ data_1 | default('') | trim }}"
+    - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+    - ""
+    - "REQUIREMENT 2 - {{ req_2 }}:"
+    - "  Task: {{ task_2_name }}"
+    - "  Command: {{ task_2_cmd }}"
+    - "  Exit code: {{ task_2_rc }}"
+    - "  Data: {{ data_2 | default('') | trim }}"
+    - "  Status: {{ status_2 | default('NA') | trim }}"
+    - "  Rationale: {{ rationale_2 | default('Not applicable - condition not met') | trim }}"
+    - ""
+    - "REQUIREMENT 3 - {{ req_3 }}:"
+    - "  Task: {{ task_3_name }}"
+    - "  Command: {{ task_3_cmd }}"
+    - "  Exit code: {{ task_3_rc }}"
+    - "  Data: {{ data_3 | default('') | trim }}"
+    - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+    - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+    - ""
+    - "========================================================"
+    - "OVERALL COMPLIANCE:"
+    - "  Result: {{ status_3 | trim }}"
+    - "  Rationale: {{ rationale_3 | trim }}"
+    - "========================================================"
+
+- name: Set HTML Report Params
+  set_fact:
+    audit_result: '{{ audit_result | default([]) + [{ ''status_5_1_4'': status_3 | trim }] }}'

@@ -65,3 +65,25 @@ python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --no-interactive
 
 ./single_cis_checkpoint_to_playbook.py --checkpoint '2.1.6 Ensure dnsmasq services are not in use (Automated)' --target-host 192.168.122.16,192.168.122.17 --skip-test --no-interactive 
 
+
+# Convert all playbooks
+python3 playbook_convert.py
+
+# Convert a specific file
+python3 playbook_convert.py --file cis_audit_6_3_3_12.yml
+
+# Skip testing
+python3 playbook_convert.py --skip-test
+
+# Custom source/target directories
+python3 playbook_convert.py --source-dir ./cis_rhel9_scan_playbook --target-dir ./tasks
+
+# Custom test host
+python3 playbook_convert.py --test-host 192.168.122.57
+
+
+./cis_rhel9_cotent.py -o ./tmp/log10.txt
+
+./cis_rhel9_parse.py -i tmp/log10.txt -o tmp/log10.json
+
+./cis_rhel9_checkpoints.py -i resources/CIS_Red_Hat_Enterprise_Linux_9_Benchmark_v2.0.0.json -o ./tmp/rhel9_cis_id.txt --id-only
