@@ -1,0 +1,319 @@
+---
+- name: Remediation for CIS 1.8.2 - Ensure GDM login banner is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_8_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.2"
+    req_1: "Run the provided CIS remediation script to fix Ensure GDM login banner is configured"
+    req_2: "VERIFY: Run the CIS audit procedure to confirm Ensure GDM login banner is configured is now properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/dconf/profile/gdm from backup"
+      copy:
+        src: "{{ state_guard_dir }}/dconf_profile_gdm.present"
+        dest: "/etc/dconf/profile/gdm"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete /etc/dconf/profile/gdm (created by remediation)"
+      file:
+        path: "/etc/dconf/profile/gdm"
+        state: absent
+      when: _sg_flag.stat.exists and not (lookup('file', state_guard_dir + '/dconf_profile_gdm.present') == "present")
+      ignore_errors: true
+
+    - name: "State Guard - Restore /etc/dconf/db/gdm.d directory from backup"
+      shell: |
+        tar -xzf "{{ state_guard_dir }}/dconf_db_gdm_d.tar.gz" -C "/etc/dconf/db/"
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists and (lookup('file', state_guard_dir + '/dconf_db_gdm_d.absent') != "absent")
+      ignore_errors: true
+
+    - name: "State Guard - Delete /etc/dconf/db/gdm.d directory (created by remediation)"
+      file:
+        path: "/etc/dconf/db/gdm.d"
+        state: absent
+      when: _sg_flag.stat.exists and (lookup('file', state_guard_dir + '/dconf_db_gdm_d.absent') == "absent")
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if each file exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/dconf/profile/gdm exists"
+      stat:
+        path: "/etc/dconf/profile/gdm"
+      register: _sg_dconf_profile_gdm_stat
+
+    - name: "State Guard - Check if /etc/dconf/db/gdm.d directory exists"
+      stat:
+        path: "/etc/dconf/db/gdm.d"
+      register: _sg_dconf_db_gdm_d_stat
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/dconf/profile/gdm (present)"
+      copy:
+        src: "/etc/dconf/profile/gdm"
+        dest: "{{ state_guard_dir }}/dconf_profile_gdm.present"
+        remote_src: true
+      when: _sg_dconf_profile_gdm_stat.stat.exists
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/dconf/profile/gdm as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/dconf_profile_gdm.absent"
+      when: not _sg_dconf_profile_gdm_stat.stat.exists
+
+    - name: "State Guard - Backup /etc/dconf/db/gdm.d directory (present)"
+      shell: |
+        tar -czf "{{ state_guard_dir }}/dconf_db_gdm_d.tar.gz" -C "/etc/dconf/db/" "gdm.d"
+      args:
+        executable: /bin/bash
+      when: _sg_dconf_db_gdm_d_stat.stat.exists and _sg_dconf_db_gdm_d_stat.stat.isdir
+
+    - name: "State Guard - Mark /etc/dconf/db/gdm.d directory as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/dconf_db_gdm_d.absent"
+      when: not _sg_dconf_db_gdm_d_stat.stat.exists or not _sg_dconf_db_gdm_d_stat.stat.isdir
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the provided CIS remediation script to fix Ensure GDM login banner is configured
+    - name: "Req 1 - Execute CIS remediation script for GDM login banner"
+      copy:
+        dest: "/tmp/cis_remediation_1.8.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          {
+             l_pkgoutput=""
+             if command -v dpkg-query > /dev/null 2>&1; then
+                l_pq="dpkg-query -W"
+             elif command -v rpm > /dev/null 2>&1; then
+                l_pq="rpm -q"
+             fi
+             l_pcl="gdm gdm3" # Space separated list of packages to check
+             for l_pn in $l_pcl; do
+                $l_pq "$l_pn" > /dev/null 2>&1 && l_pkgoutput="$l_pkgoutput\n - Package: \"$l_pn\" exists on the system\n - checking configuration"
+             done
+             if [ -n "$l_pkgoutput" ]; then
+
+                l_gdmprofile="gdm" # Set this to desired profile name IaW Local site policy
+                l_bmessage="'Authorized uses only. All activity may be monitored and reported'" # Set to desired banner message
+                if [ ! -f "/etc/dconf/profile/$l_gdmprofile" ]; then
+                   echo "Creating profile \"$l_gdmprofile\""
+                   echo -e "user-db:user\nsystem-db:$l_gdmprofile\nfile- db:/usr/share/$l_gdmprofile/greeter-dconf-defaults" > /etc/dconf/profile/$l_gdmprofile
+                fi
+                if [ ! -d "/etc/dconf/db/$l_gdmprofile.d/" ]; then
+                   echo "Creating dconf database directory \"/etc/dconf/db/$l_gdmprofile.d/\""
+                   mkdir /etc/dconf/db/$l_gdmprofile.d/
+                fi
+                if ! grep -Piq '^\h*banner-message-enable\h*=\h*true\b' /etc/dconf/db/$l_gdmprofile.d/*; then
+                   echo "creating gdm keyfile for machine-wide settings"
+                   if ! grep -Piq -- '^\h*banner-message-enable\h*=\h*' /etc/dconf/db/$l_gdmprofile.d/*; then
+                      l_kfile="/etc/dconf/db/$l_gdmprofile.d/01-banner-message"
+                      echo -e "\n[org/gnome/login-screen]\nbanner-message-enable=true" >> "$l_kfile"
+                   else
+                      l_kfile="$(grep -Pil -- '^\h*banner-message-enable\h*=\h*' /etc/dconf/db/$l_gdmprofile.d/*)"
+                      ! grep -Pq '^\h*\[org\/gnome\/login-screen\]' "$l_kfile" && sed -ri '/^\s*banner- message-enable/ i\[org/gnome/login-screen]' "$l_kfile"
+                      ! grep -Pq '^\h*banner-message-enable\h*=\h*true\b' "$l_kfile" && sed -ri 's/^\s*(banner-message-enable\s*=\s*)(\S+)(\s*.*$)/\1true \3//' "$l_kfile"
+           #           sed -ri '/^\s*\[org\/gnome\/login-screen\]/ a\\nbanner-message-enable=true' "$l_kfile"
+                   fi
+                fi
+                if ! grep -Piq "^\h*banner-message-text=[\'\"]+\S+" "$l_kfile"; then
+                   sed -ri "/^\s*banner-message-enable/ a\banner-message-text=$l_bmessage" "$l_kfile"
+                fi
+                dconf update
+             else
+                echo -e "\n\n - GNOME Desktop Manager isn't installed\n - Recommendation is Not Applicable\n - No remediation required\n"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Execute the remediation script"
+      shell: "/tmp/cis_remediation_1.8.2.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_1.8.2.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: "Store requirement 1 details"
+      set_fact:
+        task_1_name: "Execute CIS remediation script for GDM login banner"
+        task_1_cmd: "/tmp/cis_remediation_1.8.2.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'GNOME Desktop Manager isn''t installed' in output or 'Recommendation is Not Applicable' in output %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'GNOME Desktop Manager isn''t installed' in output or 'Recommendation is Not Applicable' in output %}
+            SKIPPED: GDM is not installed, remediation not applicable
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: Script applied GDM banner configuration successfully
+          {% else %}
+            FAILED: Script failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: VERIFY: Run the CIS audit procedure to confirm Ensure GDM login banner is configured is now properly configured
+    - name: "Req 2 - Verify GDM login banner configuration"
+      shell: |
+        # Check if GDM is installed
+        if command -v dpkg-query > /dev/null 2>&1; then
+          l_pq="dpkg-query -W"
+        elif command -v rpm > /dev/null 2>&1; then
+          l_pq="rpm -q"
+        fi
+        l_pcl="gdm gdm3"
+        l_gdm_installed=false
+        for l_pn in $l_pcl; do
+          $l_pq "$l_pn" > /dev/null 2>&1 && l_gdm_installed=true
+        done
+        
+        if [ "$l_gdm_installed" = "true" ]; then
+          echo "=== GDM is installed, checking configuration ==="
+          echo "=== Checking /etc/dconf/profile/gdm ==="
+          if [ -f "/etc/dconf/profile/gdm" ]; then
+            cat /etc/dconf/profile/gdm
+          else
+            echo "File does not exist"
+          fi
+          echo ""
+          echo "=== Checking /etc/dconf/db/gdm.d/ files ==="
+          if [ -d "/etc/dconf/db/gdm.d/" ]; then
+            for file in /etc/dconf/db/gdm.d/*; do
+              if [ -f "$file" ]; then
+                echo "File: $file"
+                cat "$file"
+                echo ""
+              fi
+            done
+          else
+            echo "Directory does not exist"
+          fi
+          echo ""
+          echo "=== Checking dconf settings ==="
+          dconf dump /org/gnome/login-screen/ 2>/dev/null || echo "dconf settings not available"
+        else
+          echo "GDM is not installed - verification not applicable"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: "Store requirement 2 details"
+      set_fact:
+        task_2_name: "Verify GDM login banner configuration"
+        task_2_cmd: "Check GDM installation and dconf configuration"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'GDM is not installed' in output %}
+            SKIPPED
+          {% elif 'banner-message-enable=true' in output and 'banner-message-text=' in output %}
+            APPLIED
+          {% elif result_2.rc | default(-1) == 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'GDM is not installed' in output %}
+            SKIPPED: GDM is not installed, verification not applicable
+          {% elif 'banner-message-enable=true' in output and 'banner-message-text=' in output %}
+            APPLIED: GDM login banner is properly configured
+          {% elif result_2.rc | default(-1) == 0 %}
+            FAILED: GDM is installed but banner configuration is not found
+          {% else %}
+            FAILED: Verification command failed with exit code {{ result_2.rc | default(-1) }}
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.8.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Details: {{ rationale_2 | trim }}"
+          - "========================================================"

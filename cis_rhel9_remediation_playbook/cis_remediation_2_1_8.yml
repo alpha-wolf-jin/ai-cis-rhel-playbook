@@ -1,0 +1,397 @@
+---
+- name: Remediation for CIS 2.1.8 - Ensure message access server services are not in use
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_8"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.8"
+    
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if dovecot or cyrus-imapd packages are installed"
+    req_2: "Stop dovecot.socket, dovecot.service, and cyrus-imapd.services"
+    req_3: "Remove dovecot and cyrus-imapd packages"
+    req_4: "Mask dovecot.socket, dovecot.service, and cyrus-imapd.services (if required for dependencies)"
+    req_5: "Verify dovecot and cyrus-imapd are not installed and services are stopped/masked"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        req_1_name: "Not executed"
+        req_1_cmd: "N/A"
+        req_1_rc: -1
+        req_2_name: "Not executed"
+        req_2_cmd: "N/A"
+        req_2_rc: -1
+        req_3_name: "Not executed"
+        req_3_cmd: "N/A"
+        req_3_rc: -1
+        req_4_name: "Not executed"
+        req_4_cmd: "N/A"
+        req_4_rc: -1
+        req_5_name: "Not executed"
+        req_5_cmd: "N/A"
+        req_5_rc: -1
+        # Initialize status and rationale for requirements 2,3,4,5 as SKIPPED
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: Remediation not applicable - packages not installed"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: Remediation not applicable - packages not installed"
+        status_4: "SKIPPED"
+        rationale_4: "SKIPPED: Remediation not applicable - packages not installed"
+        status_5: "SKIPPED"
+        rationale_5: "SKIPPED: Verification not applicable - packages not installed on this server"
+        # Initialize data variables
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+
+    # Requirement 1: Check if dovecot or cyrus-imapd packages are installed
+    - name: "Req 1 - Check for dovecot and cyrus-imapd packages"
+      shell: |
+        rpm -q dovecot cyrus-imapd 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        req_1_name: "Check for dovecot and cyrus-imapd packages"
+        req_1_cmd: "rpm -q dovecot cyrus-imapd 2>/dev/null"
+        req_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        # FIXED: Correctly set SKIPPED when both packages are not installed
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == '' %}
+            SKIPPED
+          {% else %}
+            {% set lines = output.split('\n') %}
+            {% set has_installed = false %}
+            {% for line in lines %}
+              {% if 'not installed' not in line and 'is not installed' not in line %}
+                {% set has_installed = true %}
+              {% endif %}
+            {% endfor %}
+            {% if has_installed %}
+              APPLIED
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == '' %}
+            SKIPPED: Remediation not applicable - dovecot and cyrus-imapd are not installed on this server
+          {% else %}
+            {% set lines = output.split('\n') %}
+            {% set has_installed = false %}
+            {% for line in lines %}
+              {% if 'not installed' not in line and 'is not installed' not in line %}
+                {% set has_installed = true %}
+              {% endif %}
+            {% endfor %}
+            {% if has_installed %}
+              APPLIED: Packages found - proceeding with remediation
+            {% else %}
+              SKIPPED: Remediation not applicable - dovecot and cyrus-imapd are not installed on this server
+            {% endif %}
+          {% endif %}
+
+    # Requirement 2: Stop dovecot.socket, dovecot.service, and cyrus-imapd.service
+    # FIXED: Added when condition to skip if packages are not installed
+    - name: "Req 2 - Stop message access server services"
+      shell: |
+        systemctl stop dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim != 'SKIPPED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        req_2_name: "Stop message access server services"
+        req_2_cmd: "systemctl stop dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null"
+        req_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        # FIXED: Set SKIPPED when task wasn't executed (packages not installed)
+        status_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_2 is defined %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% elif result_2.rc | default(-1) == 5 %}
+              SKIPPED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - packages not installed
+          {% elif result_2 is defined %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: Services stopped successfully
+            {% elif result_2.rc | default(-1) == 5 %}
+              SKIPPED: Services not found or already stopped
+            {% else %}
+              FAILED: Could not stop services
+            {% endif %}
+          {% else %}
+            SKIPPED: Remediation not applicable - packages not installed
+          {% endif %}
+
+    # Requirement 3: Remove dovecot and cyrus-imapd packages
+    # FIXED: Added when condition to skip if packages are not installed
+    - name: "Req 3 - Remove dovecot and cyrus-imapd packages"
+      shell: |
+        dnf remove -y dovecot cyrus-imapd
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim != 'SKIPPED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        req_3_name: "Remove dovecot and cyrus-imapd packages"
+        req_3_cmd: "dnf remove -y dovecot cyrus-imapd"
+        req_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        # FIXED: Set SKIPPED when task wasn't executed (packages not installed)
+        status_3: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_3 is defined %}
+            {% if result_3.rc | default(-1) == 0 %}
+              {% if 'No match for argument' in result_3.stdout or 'Nothing to do' in result_3.stdout %}
+                SKIPPED
+              {% else %}
+                APPLIED
+              {% endif %}
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - packages not installed
+          {% elif result_3 is defined %}
+            {% if result_3.rc | default(-1) == 0 %}
+              {% if 'No match for argument' in result_3.stdout or 'Nothing to do' in result_3.stdout %}
+                SKIPPED: Packages were not installed - nothing to remove
+              {% else %}
+                APPLIED: Packages removed successfully
+              {% endif %}
+            {% else %}
+              FAILED: Could not remove packages - may be required for dependencies
+            {% endif %}
+          {% else %}
+            SKIPPED: Remediation not applicable - packages not installed
+          {% endif %}
+
+    # Requirement 4: Mask services if removal failed (package required for dependencies)
+    # FIXED: Updated when condition to check status_1 is not SKIPPED
+    - name: "Req 4 - Mask message access server services"
+      shell: |
+        systemctl mask dovecot.socket dovecot.service cyrus-imapd.service
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: >
+        status_1 | trim != 'SKIPPED' and
+        status_3 | default('SKIPPED') | trim == 'FAILED'
+
+    - name: Store requirement 4 details
+      set_fact:
+        req_4_name: "Mask message access server services"
+        req_4_cmd: "systemctl mask dovecot.socket dovecot.service cyrus-imapd.service"
+        req_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        # FIXED: Set SKIPPED when task wasn't executed (packages not installed or removal succeeded)
+        status_4: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_4 is defined %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - packages not installed
+          {% elif result_4 is defined %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED: Services masked successfully
+            {% else %}
+              FAILED: Could not mask services
+            {% endif %}
+          {% else %}
+            SKIPPED: Remediation not applicable - packages not installed or removal succeeded
+          {% endif %}
+
+    # Requirement 5: Verify remediation - USING EXACT COMMAND FROM REQUIREMENTS
+    # FIXED: Skip verification if packages are not installed (status_1 is SKIPPED)
+    - name: "Req 5 - Verify dovecot and cyrus-imapd are not installed and services are stopped/masked"
+      shell: |
+        (rpm -q dovecot cyrus-imapd 2>/dev/null | grep -E 'not installed|is not installed') && (systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep -v 'inactive' | wc -l) && (systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep -v 'masked' | wc -l)
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: "status_1 | trim != 'SKIPPED'"
+
+    - name: Store requirement 5 details
+      set_fact:
+        req_5_name: "Verify remediation"
+        req_5_cmd: "(rpm -q dovecot cyrus-imapd 2>/dev/null | grep -E 'not installed|is not installed') && (systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep -v 'inactive' | wc -l) && (systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep -v 'masked' | wc -l)"
+        req_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        # FIXED: Set SKIPPED when verification wasn't executed (packages not installed)
+        status_5: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_5 is defined %}
+            {% if result_5.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Verification not applicable - packages were not installed on this server
+          {% elif result_5 is defined %}
+            {% if result_5.rc | default(-1) == 0 %}
+              APPLIED: Verification passed - packages not installed, services not active, and services not enabled or masked
+            {% else %}
+              FAILED: Verification failed - packages may still be installed or services may still be active/enabled
+            {% endif %}
+          {% else %}
+            SKIPPED: Verification not applicable - packages were not installed on this server
+          {% endif %}
+
+    # Calculate overall remediation status
+    - name: "Compute overall remediation status"
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_5 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_3 | default('SKIPPED') | trim == 'APPLIED' or status_4 | default('SKIPPED') | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - dovecot and cyrus-imapd are not installed on this server
+          {% elif status_5 | trim == 'APPLIED' %}
+            APPLIED: System verified compliant with CIS requirement
+          {% elif status_3 | default('SKIPPED') | trim == 'APPLIED' %}
+            APPLIED: Packages successfully removed and system verified compliant
+          {% elif status_4 | default('SKIPPED') | trim == 'APPLIED' %}
+            PARTIALLY APPLIED: Packages required for dependencies - services masked instead of removed
+          {% else %}
+            FAILED: Remediation could not be applied - packages may still be installed and services running
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.8"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.8"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ req_1_name | default('Task not recorded') }}"
+          - "  Command: {{ req_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ req_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ req_2_name | default('Task not recorded') }}"
+          - "  Command: {{ req_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ req_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ req_3_name | default('Task not recorded') }}"
+          - "  Command: {{ req_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ req_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ req_4_name | default('Task not recorded') }}"
+          - "  Command: {{ req_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ req_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ req_5_name | default('Task not recorded') }}"
+          - "  Command: {{ req_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ req_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

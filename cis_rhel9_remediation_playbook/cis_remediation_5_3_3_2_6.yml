@@ -1,0 +1,459 @@
+---
+- name: Remediation for CIS 5.3.3.2.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_2_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.6"
+    req_1: "Edit any file ending in .conf in the /etc/security/pwquality.conf.d/ directory and/or the file /etc/security/pwquality.conf and comment out or remove any instance of dictcheck = 0"
+    req_2: "Run the provided bash script to remove setting dictcheck on the pam_pwquality.so module in the PAM files"
+    req_3: "Verify the remediation by running the CIS audit procedure to confirm Ensure password dictionary check is enabled"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Restore pwquality.conf from backup
+      copy:
+        src: "{{ state_guard_dir }}/pwquality.conf.present"
+        dest: "/etc/security/pwquality.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restore pwquality.conf.d .conf files from backup
+      shell: |
+        for f in "{{ state_guard_dir }}"/*.conf.present; do
+          if [ -f "$f" ]; then
+            base_name=$(basename "$f" .present)
+            dest_file="/etc/security/pwquality.conf.d/$base_name"
+            cp "$f" "$dest_file"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/security/pwquality.conf exists
+      stat:
+        path: "/etc/security/pwquality.conf"
+      register: _sg_pwquality_stat
+
+    - name: State Guard - Check if /etc/security/pwquality.conf.d exists
+      stat:
+        path: "/etc/security/pwquality.conf.d"
+      register: _sg_pwquality_d_stat
+
+    - name: State Guard - Backup /etc/security/pwquality.conf (present)
+      copy:
+        src: "/etc/security/pwquality.conf"
+        dest: "{{ state_guard_dir }}/pwquality.conf.present"
+        remote_src: true
+      when: _sg_pwquality_stat.stat.exists
+
+    - name: State Guard - Backup existing .conf files in /etc/security/pwquality.conf.d
+      shell: |
+        for f in /etc/security/pwquality.conf.d/*.conf; do
+          if [ -f "$f" ]; then
+            base_name=$(basename "$f")
+            cp "$f" "{{ state_guard_dir }}/$base_name.present"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      when: _sg_pwquality_d_stat.stat.isdir
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        authselect_used: false
+        authselect_failed: false
+
+    - name: Check if system uses authselect
+      shell: |
+        if [ -f /etc/authselect/authselect.conf ] && head -1 /etc/authselect/authselect.conf 2>/dev/null | grep -q 'custom/'; then
+          echo "true"
+        else
+          echo "false"
+        fi
+      args:
+        executable: /bin/bash
+      register: authselect_check
+      ignore_errors: true
+
+    - name: Set authselect usage fact
+      set_fact:
+        authselect_used: "{{ authselect_check.stdout | default('false') | trim == 'true' }}"
+
+    - name: Req 1 - Capture pwquality.conf files before modification
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/security/pwquality.conf 2>/dev/null || echo "File /etc/security/pwquality.conf does not exist"
+        echo "=== /etc/security/pwquality.conf.d/*.conf ==="
+        for f in /etc/security/pwquality.conf.d/*.conf; do
+          echo "=== $f ==="
+          cat "$f" 2>/dev/null || echo "File does not exist"
+        done
+      args:
+        executable: /bin/bash
+      register: result_1_capture
+      ignore_errors: true
+
+    - name: Req 1 - Comment out dictcheck = 0 in pwquality.conf files
+      shell: |
+        {% raw %}
+        sed -ri 's/^\s*dictcheck\s*=/# &/' /etc/security/pwquality.conf 2>/dev/null
+        for f in /etc/security/pwquality.conf.d/*.conf; do
+          sed -ri 's/^\s*dictcheck\s*=/# &/' "$f" 2>/dev/null
+        done
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Req 1 - Capture pwquality.conf files after modification
+      shell: |
+        echo "=== AFTER ==="
+        cat /etc/security/pwquality.conf 2>/dev/null || echo "File /etc/security/pwquality.conf does not exist"
+        echo "=== /etc/security/pwquality.conf.d/*.conf ==="
+        for f in /etc/security/pwquality.conf.d/*.conf; do
+          echo "=== $f ==="
+          cat "$f" 2>/dev/null || echo "File does not exist"
+        done
+      args:
+        executable: /bin/bash
+      register: result_1_after
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Comment out dictcheck = 0 in pwquality.conf files"
+        task_1_cmd: |
+          sed -ri 's/^\s*dictcheck\s*=/# &/' /etc/security/pwquality.conf 2>/dev/null
+          for f in /etc/security/pwquality.conf.d/*.conf; do
+            sed -ri 's/^\s*dictcheck\s*=/# &/' "$f" 2>/dev/null
+          done
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: |
+          {{ result_1_capture.stdout | default('') | trim }}
+          {{ result_1_after.stdout | default('') | trim }}
+        status_1: >-
+          {% set before = result_1_capture.stdout | default('') | trim %}
+          {% set after = result_1_after.stdout | default('') | trim %}
+          {% if before == '' and after == '' %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set before = result_1_capture.stdout | default('') | trim %}
+          {% set after = result_1_after.stdout | default('') | trim %}
+          {% if before == '' and after == '' %}
+            SKIPPED: pwquality.conf files do not exist, remediation not applicable
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: Commented out dictcheck = 0 lines in pwquality.conf files
+          {% else %}
+            FAILED: Failed to modify pwquality.conf files
+          {% endif %}
+
+    - name: Req 2 - Create CIS remediation script for authselect systems
+      copy:
+        dest: "/tmp/cis_remediation_pam_dictcheck_authselect.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          {
+             for l_pam_file in system-auth password-auth; do
+               l_authselect_file="/etc/authselect/$(head -1 /etc/authselect/authselect.conf | grep 'custom/')/$l_pam_file"
+               sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*)(\s+ dictcheck\s*=\s*\S+)(.*$)/\1\4/' "$l_authselect_file"
+             done
+             authselect apply-changes
+          }
+          {% endraw %}
+      register: script_create_2_authselect
+      ignore_errors: true
+      when: authselect_used
+
+    - name: Req 2 - Execute the authselect remediation script
+      shell: "/tmp/cis_remediation_pam_dictcheck_authselect.sh"
+      args:
+        executable: /bin/bash
+      register: result_2_authselect
+      ignore_errors: true
+      when: authselect_used
+
+    - name: Req 2 - Remove temporary authselect remediation script
+      file:
+        path: "/tmp/cis_remediation_pam_dictcheck_authselect.sh"
+        state: absent
+      ignore_errors: true
+      when: authselect_used
+
+    - name: Req 2 - Set authselect_failed fact if authselect script failed
+      set_fact:
+        authselect_failed: "{{ result_2_authselect.rc | default(0) != 0 }}"
+      when: authselect_used
+
+    - name: Req 2 - Capture PAM files before modification (non-authselect or failed authselect)
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/pam.d/system-auth 2>/dev/null || echo "File /etc/pam.d/system-auth does not exist"
+        cat /etc/pam.d/password-auth 2>/dev/null || echo "File /etc/pam.d/password-auth does not exist"
+      args:
+        executable: /bin/bash
+      register: pam_before
+      ignore_errors: true
+      when: (not authselect_used) or (authselect_used and authselect_failed)
+
+    - name: Req 2 - Remove dictcheck parameter from PAM files (non-authselect or failed authselect)
+      shell: |
+        {% raw %}
+        for pam_file in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+          if [ -f "$pam_file" ]; then
+            sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*)(\s+ dictcheck\s*=\s*\S+)(.*$)/\1\4/' "$pam_file"
+          fi
+        done
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2_non_authselect
+      ignore_errors: true
+      when: (not authselect_used) or (authselect_used and authselect_failed)
+
+    - name: Req 2 - Capture PAM files after modification (non-authselect or failed authselect)
+      shell: |
+        echo "=== AFTER ==="
+        cat /etc/pam.d/system-auth 2>/dev/null || echo "File /etc/pam.d/system-auth does not exist"
+        cat /etc/pam.d/password-auth 2>/dev/null || echo "File /etc/pam.d/password-auth does not exist"
+      args:
+        executable: /bin/bash
+      register: pam_after
+      ignore_errors: true
+      when: (not authselect_used) or (authselect_used and authselect_failed)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: >-
+          {% if authselect_used and not authselect_failed %}
+            Execute CIS remediation script for authselect PAM files
+          {% elif authselect_used and authselect_failed %}
+            Execute CIS remediation script for authselect PAM files (failed) then fallback to direct PAM modification
+          {% else %}
+            Remove dictcheck parameter from non-authselect PAM files
+          {% endif %}
+        task_2_cmd: >-
+          {% if authselect_used and not authselect_failed %}
+            /tmp/cis_remediation_pam_dictcheck_authselect.sh
+          {% else %}
+            sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*)(\s+ dictcheck\s*=\s*\S+)(.*$)/\1\4/' /etc/pam.d/system-auth /etc/pam.d/password-auth
+          {% endif %}
+        task_2_rc: >-
+          {% if authselect_used and not authselect_failed %}
+            {{ result_2_authselect.rc | default(-1) }}
+          {% else %}
+            {{ result_2_non_authselect.rc | default(-1) }}
+          {% endif %}
+        data_2: >-
+          {% if authselect_used and not authselect_failed %}
+            {{ result_2_authselect.stdout | default('') | trim }}
+          {% else %}
+            {{ pam_before.stdout | default('') | trim }}
+            {{ pam_after.stdout | default('') | trim }}
+          {% endif %}
+        status_2: >-
+          {% if authselect_used and not authselect_failed %}
+            {% if result_2_authselect.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            {% if result_2_non_authselect.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if authselect_used and not authselect_failed %}
+            {% if result_2_authselect.rc | default(-1) == 0 %}
+              APPLIED: Script executed successfully, dictcheck parameter removed from authselect-managed PAM files
+            {% else %}
+              FAILED: Authselect script failed to execute or apply changes
+            {% endif %}
+          {% elif authselect_used and authselect_failed %}
+            {% if result_2_non_authselect.rc | default(-1) == 0 %}
+              APPLIED: Authselect script failed, but dictcheck parameter successfully removed from PAM files via direct modification
+            {% else %}
+              FAILED: Both authselect script and direct PAM modification failed
+            {% endif %}
+          {% else %}
+            {% if result_2_non_authselect.rc | default(-1) == 0 %}
+              APPLIED: dictcheck parameter removed from non-authselect PAM files
+            {% else %}
+              FAILED: Failed to modify non-authselect PAM files
+            {% endif %}
+          {% endif %}
+
+    - name: Req 3 - Verify remediation by checking for dictcheck=0
+      shell: |
+        # Check pwquality.conf files for dictcheck=0
+        echo "=== Checking pwquality.conf files for dictcheck=0 ==="
+        grep -rE '^\s*dictcheck\s*=\s*0' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf 2>/dev/null
+        
+        # Check PAM files for dictcheck=0
+        echo "=== Checking PAM files for dictcheck=0 ==="
+        custom_profile=$(head -1 /etc/authselect/authselect.conf 2>/dev/null | grep 'custom/')
+        if [ -n "$custom_profile" ]; then
+          for l_pam_file in system-auth password-auth; do
+            pam_file="/etc/authselect/$custom_profile/$l_pam_file"
+            if [ -f "$pam_file" ]; then
+              grep -E '^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*dictcheck\s*=\s*0' "$pam_file" 2>/dev/null
+            fi
+          done
+        else
+          # Check non-authselect PAM files
+          for pam_file in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+            if [ -f "$pam_file" ]; then
+              grep -E '^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*dictcheck\s*=\s*0' "$pam_file" 2>/dev/null
+            fi
+          done
+        fi
+        
+        # Exit with 0 if no dictcheck=0 found, 1 if found
+        if grep -rE '^\s*dictcheck\s*=\s*0' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf 2>/dev/null | grep -q '.'; then
+          exit 1
+        fi
+        
+        if [ -n "$custom_profile" ]; then
+          for l_pam_file in system-auth password-auth; do
+            pam_file="/etc/authselect/$custom_profile/$l_pam_file"
+            if [ -f "$pam_file" ] && grep -E '^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*dictcheck\s*=\s*0' "$pam_file" 2>/dev/null | grep -q '.'; then
+              exit 1
+            fi
+          done
+        else
+          for pam_file in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+            if [ -f "$pam_file" ] && grep -E '^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*dictcheck\s*=\s*0' "$pam_file" 2>/dev/null | grep -q '.'; then
+              exit 1
+            fi
+          done
+        fi
+        
+        echo "No dictcheck=0 found"
+        exit 0
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify remediation by checking for dictcheck=0"
+        task_3_cmd: |
+          # Check pwquality.conf files for dictcheck=0
+          # Check PAM files for dictcheck=0
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED: No dictcheck=0 found, system is compliant
+          {% else %}
+            FAILED: dictcheck=0 still present in configuration
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.2.6"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.6"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ 'APPLIED' if (status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED') else 'FAILED' }}"
+          - "  Details: >-
+              {% if status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+                Remediation fully applied: both pwquality.conf and PAM files updated
+              {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+                Remediation FAILED: pwquality.conf files updated but PAM files could not be modified. Manual intervention required for PAM configuration.
+              {% elif status_1 | trim == 'FAILED' and status_2 | trim == 'APPLIED' %}
+                Remediation FAILED: PAM files updated but pwquality.conf files could not be modified.
+              {% elif status_1 | trim == 'FAILED' and status_2 | trim == 'FAILED' %}
+                Remediation FAILED: Both pwquality.conf and PAM files could not be modified.
+              {% elif status_1 | trim == 'SKIPPED' or status_2 | trim == 'SKIPPED' %}
+                Remediation SKIPPED: Required configuration files not present or system not applicable
+              {% else %}
+                Remediation status unknown
+              {% endif %}"
+          - "========================================================"

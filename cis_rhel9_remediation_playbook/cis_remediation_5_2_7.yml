@@ -1,0 +1,291 @@
+---
+- name: Remediation for CIS 5.2.7 - Ensure access to the su command is restricted
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_2_7"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.7"
+    req_1: "Create an empty group named 'sugroup'"
+    req_2: "Configure PAM to restrict su access to the 'sugroup' group"
+    req_3: "Verify Ensure access to the su command is restricted is properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Restore /etc/pam.d/su from backup if it existed
+    - name: "State Guard - Restore /etc/pam.d/su from backup"
+      copy:
+        src: "{{ state_guard_dir }}/su.present"
+        dest: "/etc/pam.d/su"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Remove the group 'sugroup' if it was created by previous remediation (didn't exist before)
+    - name: "State Guard - Remove sugroup group (created by remediation)"
+      shell: |
+        {% raw %}
+        if getent group sugroup >/dev/null 2>&1 && [ -f "{{ state_guard_dir }}/sugroup.group.absent" ]; then
+          groupdel sugroup
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if /etc/pam.d/su exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/pam.d/su exists"
+      stat:
+        path: "/etc/pam.d/su"
+      register: _sg_su_stat
+
+    # Backup existing /etc/pam.d/su with .present suffix
+    - name: "State Guard - Backup /etc/pam.d/su (present)"
+      copy:
+        src: "/etc/pam.d/su"
+        dest: "{{ state_guard_dir }}/su.present"
+        remote_src: true
+      when: _sg_su_stat.stat.exists
+
+    # Mark non-existing /etc/pam.d/su with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/pam.d/su as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/su.absent"
+      when: not _sg_su_stat.stat.exists
+
+    # Check if group 'sugroup' exists before remediation
+    - name: "State Guard - Check if sugroup group exists"
+      shell: |
+        {% raw %}
+        if getent group sugroup >/dev/null 2>&1; then
+          echo "present"
+        else
+          echo "absent"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: _sg_group_stat
+      ignore_errors: true
+
+    # Create marker for group state
+    - name: "State Guard - Mark sugroup group state"
+      copy:
+        content: "{{ _sg_group_stat.stdout | default('absent') | trim }}"
+        dest: "{{ state_guard_dir }}/sugroup.group.marker"
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Create an empty group named 'sugroup' using command: `groupadd -r sugroup`.
+    - name: "Req 1 - Create empty group sugroup"
+      shell: |
+        {% raw %}
+        echo "=== Checking if group 'sugroup' exists ==="
+        if getent group sugroup >/dev/null 2>&1; then
+          echo "Group 'sugroup' already exists"
+        else
+          echo "Creating group 'sugroup'"
+          groupadd -r sugroup
+          echo "Group 'sugroup' created"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Create empty group sugroup"
+        task_1_cmd: "groupadd -r sugroup (with existence check)"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 or 'already exists' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 or 'already exists' in output %}
+            Group 'sugroup' created or already exists
+          {% else %}
+            Failed to create group 'sugroup'
+          {% endif %}
+
+    # Requirement 2: Configure PAM to restrict su access to the 'sugroup' group
+    # Capture file contents before and after modification
+    - name: "Req 2 - Configure PAM to restrict su access"
+      shell: |
+        {% raw %}
+        echo "=== BEFORE ==="
+        cat /etc/pam.d/su 2>/dev/null || echo "File /etc/pam.d/su does not exist"
+        echo "=== APPLYING CHANGE ==="
+        # Check if the line already exists
+        if ! grep -q '^auth\s\+required\s\+pam_wheel\.so\s\+use_uid\s\+group=sugroup' /etc/pam.d/su 2>/dev/null; then
+          echo 'auth required pam_wheel.so use_uid group=sugroup' >> /etc/pam.d/su
+          echo "Line added to /etc/pam.d/su"
+        else
+          echo "Line already exists in /etc/pam.d/su"
+        fi
+        echo "=== AFTER ==="
+        cat /etc/pam.d/su 2>/dev/null || echo "File /etc/pam.d/su does not exist"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Configure PAM to restrict su access"
+        task_2_cmd: "echo 'auth required pam_wheel.so use_uid group=sugroup' >> /etc/pam.d/su (with duplicate check)"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 %}
+            PAM configuration updated in /etc/pam.d/su
+          {% else %}
+            Failed to update PAM configuration in /etc/pam.d/su
+          {% endif %}
+
+    # Requirement 3: Verify the configuration
+    - name: "Req 3 - Verify access to su command is restricted"
+      shell: |
+        {% raw %}
+        grep -E '^auth\s+required\s+pam_wheel\.so\s+use_uid\s+group=sugroup' /etc/pam.d/su && echo 'PAM rule found'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify access to su command is restricted"
+        task_3_cmd: |
+          grep -E '^auth\s+required\s+pam_wheel\.so\s+use_uid\s+group=sugroup' /etc/pam.d/su && echo 'PAM rule found'
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if 'PAM rule found' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if 'PAM rule found' in output %}
+            Verification passed: PAM rule found in /etc/pam.d/su
+          {% else %}
+            Verification failed: PAM rule not found in /etc/pam.d/su
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.2.7"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: >-
+              {% if status_3 | default('UNKNOWN') | trim == 'APPLIED' %}
+                Remediation applied successfully: Group 'sugroup' created/verified and PAM configuration updated to restrict su access
+              {% elif status_2 | default('UNKNOWN') | trim == 'APPLIED' %}
+                PARTIALLY APPLIED: Configuration changes made but verification failed
+              {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' %}
+                PARTIALLY APPLIED: Group created but PAM configuration failed
+              {% else %}
+                FAILED: Remediation could not be applied
+              {% endif %}"
+          - "========================================================"

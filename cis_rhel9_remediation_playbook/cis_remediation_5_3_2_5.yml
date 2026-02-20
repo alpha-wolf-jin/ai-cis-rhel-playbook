@@ -1,0 +1,293 @@
+---
+- name: Remediation for CIS 5.3.2.5
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_2_5"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.5"
+    req_1: "Run the provided CIS remediation script to verify pam_unix.so lines exist in the profile templates"
+    req_2: "Update authselect profile templates to include pam_unix entries if missing"
+    req_3: "Verify the remediation by running the CIS audit procedure"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Run the provided CIS remediation script to verify pam_unix.so lines exist in the profile templates
+    - name: Req 1 - Execute CIS verification script
+      copy:
+        dest: "/tmp/cis_verification_5.3.2.5.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_module_name="unix"
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- "\bpam_$l_module_name\.so\b" "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the verification script
+      shell: "/tmp/cis_verification_5.3.2.5.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Req 1 - Remove temporary verification script
+      file:
+        path: "/tmp/cis_verification_5.3.2.5.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS verification script for pam_unix.so"
+        task_1_cmd: "/tmp/cis_verification_5.3.2.5.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        verification_passed: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output != '' and '/password-auth:' in output and '/system-auth:' in output %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output != '' and '/password-auth:' in output and '/system-auth:' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output != '' and '/password-auth:' in output and '/system-auth:' in output %}
+            APPLIED: pam_unix.so module is properly configured in both password-auth and system-auth files
+          {% else %}
+            FAILED: pam_unix.so module is missing from one or both auth files - remediation needed
+          {% endif %}
+
+    # Requirement 2: Update authselect profile templates to include pam_unix entries if missing
+    - name: Req 2 - Check if remediation is needed
+      set_fact:
+        remediation_needed: "{{ verification_passed | default('false') == 'false' }}"
+      ignore_errors: true
+
+    - name: Req 2 - Enable pam_unix feature in authselect profile
+      shell: |
+        echo "=== BEFORE remediation ==="
+        cat /etc/authselect/authselect.conf 2>/dev/null || echo "authselect.conf not found"
+        echo "=== APPLYING CHANGE ==="
+        # Enable the with-pam-unix feature which includes pam_unix.so in profile templates
+        authselect enable-feature with-pam-unix
+        echo "=== AFTER remediation ==="
+        cat /etc/authselect/authselect.conf 2>/dev/null || echo "authselect.conf not found"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: remediation_needed | default(false)
+
+    - name: Req 2 - Skip remediation if already compliant
+      set_fact:
+        task_2_name: "Skip - pam_unix.so already configured"
+        task_2_cmd: "N/A - verification passed"
+        task_2_rc: 0
+        data_2: "pam_unix.so already properly configured in authselect profile"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: pam_unix.so module is already properly configured in authselect profile templates"
+      when: not remediation_needed | default(false)
+
+    - name: Store requirement 2 details when remediation applied
+      set_fact:
+        task_2_name: "Enable pam_unix feature in authselect profile"
+        task_2_cmd: "authselect enable-feature with-pam-unix"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: Successfully enabled with-pam-unix feature in authselect profile
+          {% else %}
+            FAILED: Could not enable with-pam-unix feature in authselect profile
+          {% endif %}
+      when: remediation_needed | default(false) and result_2 is defined
+
+    # Requirement 3: Verify the remediation by running the CIS audit procedure
+    - name: Req 3 - Execute CIS audit verification script
+      copy:
+        dest: "/tmp/cis_audit_5.3.2.5.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_module_name="unix"
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- "\bpam_$l_module_name\.so\b" "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_3
+      ignore_errors: true
+
+    - name: Req 3 - Execute the audit script
+      shell: "/tmp/cis_audit_5.3.2.5.sh"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Req 3 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.3.2.5.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Execute CIS audit verification script"
+        task_3_cmd: "/tmp/cis_audit_5.3.2.5.sh"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 and output != '' %}
+            {% if '/password-auth:' in output and '/system-auth:' in output %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% elif result_3.rc | default(-1) != 0 and output == '' %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 and output != '' %}
+            {% if '/password-auth:' in output and '/system-auth:' in output %}
+              APPLIED: System is compliant - pam_unix.so module is properly configured in both auth files
+            {% else %}
+              FAILED: System is not compliant - pam_unix.so module is missing from one or both auth files
+            {% endif %}
+          {% elif result_3.rc | default(-1) != 0 and output == '' %}
+            FAILED: Audit script returned no output (exit code {{ result_3.rc | default(-1) }})
+          {% else %}
+            FAILED: Unable to determine audit status
+          {% endif %}
+
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_3 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | default('') | trim == 'SKIPPED' and status_1 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | default('') | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_3 | default('') | trim == 'APPLIED' %}
+            System is compliant - pam_unix.so module is properly configured in authselect profile templates
+          {% elif status_2 | default('') | trim == 'SKIPPED' and status_1 | default('') | trim == 'APPLIED' %}
+            System was already compliant - no changes needed
+          {% elif status_2 | default('') | trim == 'APPLIED' %}
+            Remediation was applied but final verification may not be complete
+          {% else %}
+            Remediation failed - pam_unix.so module is not properly configured
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.2.5"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

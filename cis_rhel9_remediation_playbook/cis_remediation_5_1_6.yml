@@ -1,0 +1,659 @@
+---
+- name: Remediation for CIS 5.1.6 - Ensure sshd MACs are configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.6"
+    req_1: "Check if openssh-server is installed"
+    req_2: "Apply system-wide crypto policy to disable weak MACs by creating a policy module file"
+    req_3: "Apply updated crypto policy by running update-crypto-policies with the DEFAULT policy and required subpolicies"
+    req_4: "Alternative method - Configure weak MACs directly in sshd_config if crypto-policy fails"
+    req_5: "Apply the new crypto policy to the running sshd service by reloading it"
+    req_6: "Run audit check to confirm Ensure sshd MACs are configured is properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Restore crypto policy module file if it was created
+    - name: "State Guard - Restore /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod from backup"
+      copy:
+        src: "{{ state_guard_dir }}/NO-SSHWEAKMACS.pmod.present"
+        dest: "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Delete the crypto policy module file if it didn't exist before
+    - name: "State Guard - Delete NO-SSHWEAKMACS.pmod (created by remediation)"
+      file:
+        path: "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Restore sshd_config if modified
+    - name: "State Guard - Restore /etc/ssh/sshd_config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Restore crypto policy state if backup exists
+    - name: "State Guard - Restore crypto policy state"
+      shell: |
+        {% raw %}
+        if [ -f "{{ state_guard_dir }}/current_policy" ]; then
+          current_policy=$(cat "{{ state_guard_dir }}/current_policy")
+          if [ -n "$current_policy" ]; then
+            update-crypto-policies --set "$current_policy"
+          fi
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if crypto policy module file exists
+    - name: "State Guard - Check if NO-SSHWEAKMACS.pmod exists"
+      stat:
+        path: "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod"
+      register: _sg_nossweakmacs_stat
+
+    # Backup existing module file
+    - name: "State Guard - Backup NO-SSHWEAKMACS.pmod (present)"
+      copy:
+        src: "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod"
+        dest: "{{ state_guard_dir }}/NO-SSHWEAKMACS.pmod.present"
+        remote_src: true
+      when: _sg_nossweakmacs_stat.stat.exists
+
+    # Mark non-existing module file with .absent suffix
+    - name: "State Guard - Mark NO-SSHWEAKMACS.pmod as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/NO-SSHWEAKMACS.pmod.absent"
+      when: not _sg_nossweakmacs_stat.stat.exists
+
+    # Check if sshd_config exists
+    - name: "State Guard - Check if /etc/ssh/sshd_config exists"
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    # Backup existing sshd_config
+    - name: "State Guard - Backup sshd_config (present)"
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+
+    # Capture current crypto policy state
+    - name: "State Guard - Capture current crypto policy"
+      shell: |
+        {% raw %}
+        update-crypto-policies --show 2>/dev/null || echo "DEFAULT"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: _sg_current_policy
+      ignore_errors: true
+
+    - name: "State Guard - Store current policy state"
+      copy:
+        content: "{{ _sg_current_policy.stdout | default('DEFAULT') | trim }}"
+        dest: "{{ state_guard_dir }}/current_policy"
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        openssh_installed: false
+        crypto_policy_failed: false
+
+    # Requirement 1: Check if openssh-server is installed
+    - name: "Req 1 - Check if openssh-server is installed"
+      shell: |
+        rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check openssh-server installation"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        openssh_installed: "{{ result_1.rc | default(-1) == 0 }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: openssh-server is installed on this server
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED: openssh-server is not installed on this server - remediation not applicable
+          {% else %}
+            FAILED: Error checking openssh-server installation
+          {% endif %}
+
+    # Requirement 2: Create policy module file to disable weak MACs (use exact command from requirements)
+    - name: "Req 2 - Create crypto policy module file"
+      shell: |
+        {% raw %}
+        echo "=== BEFORE ==="
+        if [ -f "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod" ]; then
+          cat "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod"
+        else
+          echo "File does not exist"
+        fi
+        echo "=== APPLYING CHANGE ==="
+        # Use the exact command from the requirements
+        printf '%s\n' '# This is a subpolicy to disable weak MACs' '# for the SSH protocol (libssh and OpenSSH)' 'mac@SSH = -HMAC-MD5* -UMAC-64* -UMAC-128*' >> /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod
+        echo "=== AFTER ==="
+        cat "/etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: openssh_installed
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Create NO-SSHWEAKMACS.pmod file"
+        task_2_cmd: |
+          printf '%s\n' '# This is a subpolicy to disable weak MACs' '# for the SSH protocol (libssh and OpenSSH)' 'mac@SSH = -HMAC-MD5* -UMAC-64* -UMAC-128*' >> /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: Created or updated /etc/crypto-policies/policies/modules/NO-SSHWEAKMACS.pmod with weak MACs exclusion as per CIS procedure
+          {% else %}
+            FAILED: Could not create or update NO-SSHWEAKMACS.pmod
+          {% endif %}
+      when: openssh_installed
+
+    # Requirement 3: Update crypto policy - SIMPLIFIED version that just attempts the command
+    - name: "Req 3 - Update crypto policy"
+      shell: |
+        {% raw %}
+        echo "=== BEFORE ==="
+        current_policy=$(update-crypto-policies --show 2>/dev/null || echo "DEFAULT")
+        echo "Current policy: $current_policy"
+        echo ""
+        echo "=== APPLYING CHANGE ==="
+        # Try the CIS policy command
+        update-crypto-policies --set DEFAULT:NO-SHA1:NO-WEAKMAC:NO-SSHCBC:NO-SSHCHACHA20:NO-SSHETM:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS
+        update_exit_code=$?
+        echo "update-crypto-policies exit code: $update_exit_code"
+        echo ""
+        echo "=== AFTER ==="
+        echo "New policy: $(update-crypto-policies --show 2>/dev/null || echo 'DEFAULT')"
+        echo ""
+        # Check if weak MACs are actually disabled in the generated config
+        echo "=== VERIFYING CONFIGURATION ==="
+        if [ -f "/etc/crypto-policies/back-ends/opensshserver.config" ]; then
+          macs_line=$(grep -i "^MACs" /etc/crypto-policies/back-ends/opensshserver.config || true)
+          if [ -n "$macs_line" ]; then
+            echo "MACs line in opensshserver.config: $macs_line"
+            # Check if weak MACs are disabled (prefixed with -)
+            if echo "$macs_line" | grep -q "\-HMAC-MD5\*" && \
+               echo "$macs_line" | grep -q "\-UMAC-64\*" && \
+               echo "$macs_line" | grep -q "\-UMAC-128\*"; then
+              echo "Crypto policy verification: PASS - Weak MACs are disabled"
+              exit $update_exit_code
+            else
+              echo "Crypto policy verification: FAIL - Weak MACs are NOT disabled in opensshserver.config"
+              exit 1
+            fi
+          else
+            echo "No MACs line found in opensshserver.config"
+            exit 1
+          fi
+        else
+          echo "/etc/crypto-policies/back-ends/opensshserver.config not found"
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: openssh_installed
+
+    - name: Determine if crypto policy failed and store requirement 3 details
+      set_fact:
+        task_3_name: "Update crypto policy"
+        task_3_cmd: "update-crypto-policies --set DEFAULT:NO-SHA1:NO-WEAKMAC:NO-SSHCBC:NO-SSHCHACHA20:NO-SSHETM:NO-SSHWEAKCIPHERS:NO-SSHWEAKMACS"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED: Updated system-wide crypto policy and verified weak MACs are disabled
+          {% else %}
+            FAILED: Crypto policy update failed or verification showed weak MACs are not disabled. Exit code: {{ result_3.rc | default(-1) }}
+          {% endif %}
+        crypto_policy_failed: "{{ result_3.rc | default(-1) != 0 }}"
+      when: openssh_installed
+
+    # Requirement 4: Alternative method - Configure weak MACs directly in sshd_config if crypto-policy fails
+    - name: "Req 4 - Configure weak MACs directly in sshd_config (alternative method)"
+      shell: |
+        {% raw %}
+        echo "=== BEFORE - sshd_config ==="
+        cat /etc/ssh/sshd_config 2>/dev/null || echo "File not found"
+        echo ""
+        echo "=== APPLYING ALTERNATIVE METHOD ==="
+        # Remove any existing MACs line
+        sed -i '/^MACs[[:space:]]/d' /etc/ssh/sshd_config 2>/dev/null || true
+        # Add the MACs line with weak MACs excluded
+        # Based on CIS procedure example and CVE-2023-48795 requirements
+        echo 'MACs -hmac-md5,hmac-md5-96,hmac-ripemd160,hmac-sha1-96,umac-64@openssh.com,hmac-md5-etm@openssh.com,hmac-md5-96-etm@openssh.com,hmac-ripemd160-etm@openssh.com,hmac-sha1-96-etm@openssh.com,umac-64-etm@openssh.com,umac-128-etm@openssh.com,hmac-sha1-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com' >> /etc/ssh/sshd_config
+        echo ""
+        echo "=== AFTER - sshd_config ==="
+        cat /etc/ssh/sshd_config 2>/dev/null || echo "File not found"
+        echo ""
+        echo "=== VERIFYING CHANGE ==="
+        # Verify the MACs line was added
+        if grep -q '^MACs.*-hmac-md5' /etc/ssh/sshd_config; then
+          echo "Alternative method applied successfully"
+          exit 0
+        else
+          echo "Failed to apply alternative method"
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: openssh_installed and crypto_policy_failed
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Configure weak MACs directly in sshd_config"
+        task_4_cmd: "Add MACs line with weak MACs excluded to /etc/ssh/sshd_config"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if openssh_installed and crypto_policy_failed %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if openssh_installed and crypto_policy_failed %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED: Alternative method applied - weak MACs excluded directly in sshd_config
+            {% else %}
+              FAILED: Alternative method could not be applied to sshd_config
+            {% endif %}
+          {% else %}
+            SKIPPED: Crypto policy succeeded or openssh-server not installed
+          {% endif %}
+      when: openssh_installed
+
+    # Requirement 5: Apply the new configuration to the running sshd service
+    - name: "Req 5 - Reload sshd service"
+      shell: |
+        {% raw %}
+        echo "=== RELOADING SSHD SERVICE ==="
+        systemctl reload-or-restart sshd
+        echo "sshd service reload exit code: $?"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: openssh_installed and ((status_3 | default('UNKNOWN') | trim == 'APPLIED') or (status_4 | default('UNKNOWN') | trim == 'APPLIED'))
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Reload sshd service"
+        task_5_cmd: "systemctl reload-or-restart sshd"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if openssh_installed and ((status_3 | default('UNKNOWN') | trim == 'APPLIED') or (status_4 | default('UNKNOWN') | trim == 'APPLIED')) %}
+            {% if result_5.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if openssh_installed and ((status_3 | default('UNKNOWN') | trim == 'APPLIED') or (status_4 | default('UNKNOWN') | trim == 'APPLIED')) %}
+            {% if result_5.rc | default(-1) == 0 %}
+              APPLIED: sshd service reloaded with updated configuration
+            {% else %}
+              FAILED: Could not reload sshd service
+            {% endif %}
+          {% else %}
+            SKIPPED: No successful configuration changes were applied
+          {% endif %}
+      when: openssh_installed
+
+    # Requirement 6: Verify remediation
+    - name: "Req 6 - Verify sshd MACs configuration"
+      shell: |
+        {% raw %}
+        # Comprehensive verification that checks both methods
+        echo "=== COMPREHENSIVE VERIFICATION ==="
+        echo ""
+        
+        # Check 1: Verify crypto policy if it was applied
+        echo "1. Checking crypto policy (if applicable):"
+        current_policy=$(update-crypto-policies --show 2>/dev/null || echo "DEFAULT")
+        echo "   Current crypto policy: $current_policy"
+        
+        # Check 2: Verify opensshserver.config if it exists
+        echo ""
+        echo "2. Checking opensshserver.config:"
+        if [ -f "/etc/crypto-policies/back-ends/opensshserver.config" ]; then
+          macs_line=$(grep -i "^MACs" /etc/crypto-policies/back-ends/opensshserver.config || true)
+          if [ -n "$macs_line" ]; then
+            echo "   MACs line: $macs_line"
+            if echo "$macs_line" | grep -q "\-HMAC-MD5\*" && \
+               echo "$macs_line" | grep -q "\-UMAC-64\*" && \
+               echo "$macs_line" | grep -q "\-UMAC-128\*"; then
+              echo "   ✓ Weak MACs are disabled via crypto policy"
+              crypto_policy_check="PASS"
+            else
+              echo "   ✗ Weak MACs are NOT disabled via crypto policy"
+              crypto_policy_check="FAIL"
+            fi
+          else
+            echo "   No MACs line found"
+            crypto_policy_check="FAIL"
+          fi
+        else
+          echo "   File not found (crypto policy may not be in use)"
+          crypto_policy_check="N/A"
+        fi
+        
+        # Check 3: Verify sshd_config directly
+        echo ""
+        echo "3. Checking sshd_config directly:"
+        if grep -q '^MACs' /etc/ssh/sshd_config; then
+          sshd_macs_line=$(grep '^MACs' /etc/ssh/sshd_config)
+          echo "   MACs line in sshd_config: $sshd_macs_line"
+          # Check if weak MACs are excluded (prefixed with -)
+          if echo "$sshd_macs_line" | grep -q '\-hmac-md5' && \
+             echo "$sshd_macs_line" | grep -q '\-hmac-md5-96' && \
+             echo "$sshd_macs_line" | grep -q '\-umac-64@openssh.com'; then
+            echo "   ✓ Weak MACs are excluded in sshd_config"
+            sshd_config_check="PASS"
+          else
+            echo "   ✗ Weak MACs are NOT properly excluded in sshd_config"
+            sshd_config_check="FAIL"
+          fi
+        else
+          echo "   No MACs line in sshd_config (using crypto policy or defaults)"
+          sshd_config_check="N/A"
+        fi
+        
+        # Check 4: Test sshd configuration
+        echo ""
+        echo "4. Testing sshd configuration:"
+        if sshd -T 2>/dev/null | grep -q "macs"; then
+          sshd_macs=$(sshd -T 2>/dev/null | grep "macs" | head -1)
+          echo "   sshd runtime MACs: $sshd_macs"
+          # Check if weak MACs are present (should not be)
+          if echo "$sshd_macs" | grep -q 'hmac-md5' || \
+             echo "$sshd_macs" | grep -q 'umac-64@openssh.com' || \
+             echo "$sshd_macs" | grep -q 'hmac-md5-etm@openssh.com'; then
+            echo "   ✗ Weak MACs are enabled in sshd runtime configuration"
+            sshd_runtime_check="FAIL"
+          else
+            echo "   ✓ Weak MACs are NOT enabled in sshd runtime configuration"
+            sshd_runtime_check="PASS"
+          fi
+        else
+          echo "   Could not get MACs from sshd -T"
+          sshd_runtime_check="UNKNOWN"
+        fi
+        
+        # Overall compliance determination
+        echo ""
+        echo "=== COMPLIANCE DETERMINATION ==="
+        
+        # Determine if system is compliant
+        compliant=false
+        
+        # If crypto policy is working and weak MACs are disabled
+        if [ "$crypto_policy_check" = "PASS" ]; then
+          echo "✓ System is compliant via crypto policy"
+          compliant=true
+        fi
+        
+        # If sshd_config has weak MACs excluded
+        if [ "$sshd_config_check" = "PASS" ]; then
+          echo "✓ System is compliant via sshd_config configuration"
+          compliant=true
+        fi
+        
+        # If neither method worked but sshd runtime shows no weak MACs (maybe already fixed)
+        if [ "$sshd_runtime_check" = "PASS" ]; then
+          echo "✓ System is compliant (weak MACs not enabled in sshd)"
+          compliant=true
+        fi
+        
+        if [ "$compliant" = "true" ]; then
+          echo ""
+          echo "OVERALL STATUS: COMPLIANT"
+          echo "System is properly configured to disable weak MACs"
+          exit 0
+        else
+          echo ""
+          echo "OVERALL STATUS: NON-COMPLIANT"
+          echo "Weak MACs are not properly disabled"
+          echo "Summary:"
+          echo "  Crypto policy check: $crypto_policy_check"
+          echo "  sshd_config check: $sshd_config_check"
+          echo "  sshd runtime check: $sshd_runtime_check"
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: openssh_installed
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Verify sshd MACs configuration"
+        task_6_cmd: "Comprehensive verification checking all configuration methods"
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: >-
+          {% if openssh_installed %}
+            {% if result_6.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_6: >-
+          {% if openssh_installed %}
+            {% if result_6.rc | default(-1) == 0 %}
+              APPLIED: System is compliant - weak MACs are properly disabled
+            {% else %}
+              FAILED: System is not compliant - verification check failed
+            {% endif %}
+          {% else %}
+            SKIPPED: openssh-server not installed
+          {% endif %}
+      when: openssh_installed
+
+    # Calculate overall remediation status
+    - name: Calculate overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if not openssh_installed %}
+            SKIPPED
+          {% elif status_6 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | default('UNKNOWN') | trim == 'FAILED' and status_4 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED
+          {% elif status_6 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_details: >-
+          {% if not openssh_installed %}
+            SKIPPED: openssh-server is not installed on this server - remediation not applicable
+          {% elif status_6 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED: System is compliant with CIS 5.1.6 - sshd MACs are properly configured
+          {% elif status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED: openssh-server is not installed - remediation not applicable
+          {% elif status_3 | default('UNKNOWN') | trim == 'FAILED' and status_4 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED: Both crypto policy and alternative method failed
+          {% elif status_6 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED: Verification failed - system is not compliant with CIS 5.1.6 requirements
+          {% else %}
+            PARTIALLY APPLIED: Some remediation steps were applied but system may not be fully compliant
+          {% endif %}
+
+    # Generate final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.6"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

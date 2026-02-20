@@ -1,37 +1,34 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0, checkpoint 5.1.4
 - name: Data Collection for CIS 5.1.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0, checkpoint 5.1.4"
-    req_1: "Run the following script to verify SSH private host key files are owned by root and have appropriate group ownership and permissions"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.4"
+    req_1: "Run the provided CIS audit script to verify SSH private host key files are configured correctly"
     req_2: "OVERALL Verify: Ensure access to SSH private host key files is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Run the following script to verify SSH private host key files are owned by root and have appropriate group ownership and permissions
-    - name: Req 1 - Create temporary audit script
+    - name: Req 1 - Execute CIS audit script for SSH private host key files
       copy:
         dest: "/tmp/cis_audit_5.1.4.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
              a_output=() a_output2=() l_ssh_group="" l_out="root"
-             grep -Psiq -- '^\h*ID_LIKE="?([^#\n\r]+)?\bfedora\b' /etc/os-release && \
+             grep -Psiq -- '^\h*ID_LIKE=\"?([^#\n\r]+)?\bfedora\b' /etc/os-release && \
              l_ssh_group="$(grep -Pso -- '^ssh_keys\b' /etc/group)" && \
              l_out="$l_ssh_group or $l_out"
              f_file_chk()
@@ -61,8 +58,8 @@
                    fi
                 done < <(stat -Lc '%#a:%U:%G' "$l_file")
              }
-             while IFS= read -r -d $'\0' l_file; do  
-                if ssh-keygen -lf &>/dev/null "$l_file"; then  
+             while IFS= read -r -d $'\0' l_file; do
+                if ssh-keygen -lf &>/dev/null "$l_file"; then
                    file "$l_file" | \
                    grep -Piq -- '\bopenssh\h+([^#\n\r]+\h+)?private\h+key\b' && f_file_chk
                 fi
@@ -77,16 +74,15 @@
              fi
           }
           {% endraw %}
-      register: script_created_1
-      changed_when: false
+      register: script_create_1
+      ignore_errors: true
 
-    - name: Req 1 - Execute audit script
+    - name: Req 1 - Execute the audit script
       shell: "/tmp/cis_audit_5.1.4.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Req 1 - Remove temporary audit script
@@ -95,23 +91,22 @@
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
         task_1_name: "Execute CIS audit script for SSH private host key files"
         task_1_cmd: "/tmp/cis_audit_5.1.4.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script output shows '** PASS **' and lists all SSH private host key files with correct ownership and permissions, FAIL when the script output shows '** FAIL **' and lists files with incorrect ownership, group, or permissions"
+        status_1: "{{ ('PASS' if (result_1.stdout is defined and '** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
 
-    # Requirement 2: OVERALL Verify: Ensure access to SSH private host key files is configured
-    - name: Req 2 - Determine overall verification status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall verification status"
-        task_2_cmd: "Derived from requirement 1 status"
-        task_2_rc: 0
-        data_2: "Overall status derived from requirement 1"
-        status_2: "{{ status_1 | trim }}"
+        task_2_name: "Overall verification of SSH private host key files configuration"
+        task_2_cmd: "N/A"
+        task_2_rc: "0"
+        data_2: "N/A"
+        status_2: "{{ status_1 }}"
         rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
     - name: Generate compliance report
@@ -120,27 +115,27 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.4"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.4"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.4"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Rationale: {{ rationale_1 }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Rationale: {{ rationale_2 }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: Overall compliance depends on requirement 1: PASS when req_1=PASS, FAIL otherwise"
           - "========================================================"

@@ -1,117 +1,213 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.16
-- name: Data Collection for CIS 5.1.16 - Ensure sshd LogLevel is configured
+- name: Data Collection for CIS checkpoint 5.1.16
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    req_1: "Run the following script to verify the sshd LogLevel is set to VERBOSE or INFO in the global configuration"
-    req_2: "If Match blocks are used, run the following script to verify the sshd LogLevel is set to VERBOSE or INFO for the specified connection parameters (e.g., user=sshuser)"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.16"
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Run the provided CIS audit script to verify Ensure sshd LogLevel is configured"
+    req_2: "Run match block audit script for sshd LogLevel configuration"
     req_3: "OVERALL Verify: Ensure sshd LogLevel is configured"
-    check_match_blocks: false  # Set to true if your environment uses Match blocks
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
-        task_2_name: "Not executed"
+        task_2_name: "Not executed (no match blocks found)"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_2: "No match blocks found, audit not required"
+        status_2: "NA"
+        rationale_2: "Match blocks not used in environment, audit not required"
+        match_blocks_used: "false"
 
-    # Requirement 1: Verify sshd LogLevel in global configuration
-    - name: "Req 1 - Check sshd LogLevel in global configuration"
+    # Check if match blocks are used in sshd configuration
+    - name: Check for match blocks in sshd config
       shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY | grep -i loglevel
+        # Check main sshd_config and included files for Match directives
+        if grep -r -i "^Match" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null | grep -q .; then
+          echo "true"
+        else
+          echo "false"
+        fi
+      args:
+        executable: /bin/bash
+      register: match_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set match blocks usage fact
+      set_fact:
+        match_blocks_used: "{{ match_check.stdout | default('false') | trim }}"
+        match_blocks_exist: "{{ match_check.stdout | default('false') | trim == 'true' }}"
+
+    # Requirement 1: Run the provided CIS audit script to verify Ensure sshd LogLevel is configured
+    - name: Req 1 - Execute CIS audit script for sshd LogLevel
+      copy:
+        dest: "/tmp/cis_audit_5.1.16_basic.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -i loglevel
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.16_basic.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.16_basic.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check sshd LogLevel in global configuration"
-        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i loglevel"
+        task_1_name: "Execute CIS audit script for sshd LogLevel"
+        task_1_cmd: "Run provided bash script for basic audit"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
+        # FIX: Use inline expression with trim to avoid extra whitespace
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'loglevel VERBOSE' or result_1.stdout | default('') | trim == 'loglevel INFO') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'loglevel VERBOSE' or 'loglevel INFO', FAIL otherwise"
+        # FIX: Use inline expression with trim
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == 'loglevel VERBOSE' or output == 'loglevel INFO' %}
+            PASS when script output shows loglevel VERBOSE or loglevel INFO
+          {% else %}
+            FAIL: Expected loglevel VERBOSE or loglevel INFO, got {{ output }}
+          {% endif %}
 
-    # Requirement 2: Verify sshd LogLevel for Match blocks (conditional)
-    - name: "Req 2 - Check sshd LogLevel for Match blocks"
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i loglevel
+    # Requirement 2: Run match block audit script for sshd LogLevel configuration
+    # ONLY if match blocks are used in the environment
+    - name: Req 2 - Execute match block audit script for sshd LogLevel
+      copy:
+        dest: "/tmp/cis_audit_5.1.16_match.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i loglevel
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: match_blocks_exist
+
+    - name: Req 2 - Execute the match block audit script
+      shell: "/tmp/cis_audit_5.1.16_match.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: check_match_blocks
+      when: match_blocks_exist
 
-    - name: Store requirement 2 details and determine status
+    - name: Req 2 - Remove temporary match block audit script
+      file:
+        path: "/tmp/cis_audit_5.1.16_match.sh"
+        state: absent
+      ignore_errors: true
+      when: match_blocks_exist
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sshd LogLevel for Match blocks"
-        task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i loglevel"
+        task_2_name: "Execute match block audit script for sshd LogLevel"
+        task_2_cmd: "Run provided bash script for match block audit with user=sshuser"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
+        # FIX: Use inline expression with trim
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'loglevel VERBOSE' or result_2.stdout | default('') | trim == 'loglevel INFO') else 'FAIL') | trim }}"
-        rationale_2: "PASS when output is 'loglevel VERBOSE' or 'loglevel INFO', FAIL otherwise"
-      when: check_match_blocks
+        # FIX: Use inline expression with trim
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == 'loglevel VERBOSE' or output == 'loglevel INFO' %}
+            PASS when match block audit shows loglevel VERBOSE or loglevel INFO
+          {% else %}
+            FAIL: Expected loglevel VERBOSE or loglevel INFO for match block with user=sshuser, got {{ output }}
+          {% endif %}
+      when: match_blocks_exist
 
-    - name: Set NA status for requirement 2 when not checked
+    # Requirement 3: OVERALL Verify: Ensure sshd LogLevel is configured
+    # Overall compliance depends on whether match blocks are used
+    - name: Req 3 - Overall compliance for sshd LogLevel
       set_fact:
-        task_2_name: "Check sshd LogLevel for Match blocks"
-        task_2_cmd: "N/A - Match blocks not checked"
-        task_2_rc: -1
-        data_2: "Match blocks not checked in this audit"
-        status_2: "NA"
-        rationale_2: "Match blocks not checked in this audit (check_match_blocks=false)"
-      when: not check_match_blocks
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "req_1 status: {{ status_1 }}, req_2 status: {{ status_2 }}, match_blocks_used: {{ match_blocks_used }}"
+        # FIX: Use inline expression with trim and correct logic
+        status_3: "{{ ('PASS' if (not match_blocks_exist and status_1 == 'PASS') or (match_blocks_exist and status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        # FIX: Use inline expression with trim
+        rationale_3: >-
+          {% if match_blocks_exist %}
+            {% if status_1 == 'PASS' and status_2 == 'PASS' %}
+              PASS when both basic audit and match block audit are PASS
+            {% else %}
+              FAIL: Either basic audit or match block audit failed
+            {% endif %}
+          {% else %}
+            {% if status_1 == 'PASS' %}
+              PASS when basic audit is PASS (no match blocks used)
+            {% else %}
+              FAIL: Basic audit failed
+            {% endif %}
+          {% endif %}
 
-    # Requirement 3: Overall verification
-    - name: Store requirement 3 details and determine overall status
-      set_fact:
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and (not check_match_blocks or status_2 | trim == 'PASS')) else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
-
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
-        msg: |
-          ========================================================
-                  COMPLIANCE REPORT - CIS 5.1.16
-          ========================================================
-          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.16
-          ========================================================
-
-          REQUIREMENT 1 - {{ req_1 }}:
-            Task: {{ task_1_name | default('Task not recorded') }}
-            Command: {{ task_1_cmd | default('N/A') }}
-            Exit code: {{ task_1_rc | default(-1) }}
-            Data: {{ data_1 | default('') | trim }}
-            Status: {{ status_1 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 2 - {{ req_2 }}:
-            Task: {{ task_2_name | default('Task not recorded') }}
-            Command: {{ task_2_cmd | default('N/A') }}
-            Exit code: {{ task_2_rc | default(-1) }}
-            Data: {{ data_2 | default('') | trim }}
-            Status: {{ status_2 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
-
-          ========================================================
-          OVERALL COMPLIANCE:
-            Result: {{ status_3 | trim }}
-            Rationale: {{ rationale_3 | trim }}
-          ========================================================
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.16"
+          - "========================================================"
+          - "Reference: {{ cis_checkpoint }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Overall pass/fail logic not evaluated') | trim }}"
+          - "========================================================"

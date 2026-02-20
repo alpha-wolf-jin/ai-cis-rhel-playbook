@@ -1,0 +1,384 @@
+---
+- name: Remediation for CIS 5.3.3.4.4 - Ensure pam_unix includes use_authtok
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_4_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.4.4"
+    req_1: "Run script to verify the active authselect profile includes use_authtok on the password stack's pam_unix.so module lines"
+    req_2: "Run script to update authselect profile templates if use_authtok is not set"
+    req_3: "Apply authselect changes to update PAM configuration"
+    req_4: "VERIFY: Run the CIS audit procedure to confirm Ensure pam_unix includes use_authtok is now properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE (only if checkpoint exists from previous failed run) ---
+    - name: "State Guard - Restore authselect configuration"
+      shell: |
+        if [ -f /etc/authselect/authselect.conf ]; then
+          authselect apply-changes
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/authselect/authselect.conf"
+      copy:
+        src: "/etc/authselect/authselect.conf"
+        dest: "{{ state_guard_dir }}/authselect.conf.present"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Backup current PAM files"
+      shell: |
+        for file in password-auth system-auth; do
+          if [ -f /etc/pam.d/$file ]; then
+            cp /etc/pam.d/$file {{ state_guard_dir }}/$file.present
+          else
+            echo "absent" > {{ state_guard_dir }}/$file.absent
+          fi
+        done
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        req_1: "{{ req_1 }}"
+        req_2: "{{ req_2 }}"
+        req_3: "{{ req_3 }}"
+        req_4: "{{ req_4 }}"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Run verification script
+    - name: "Req 1 - Execute verification script for use_authtok"
+      copy:
+        dest: "/tmp/cis_verify_use_authtok.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- '^\h*password\h+(requisite|required|sufficient)\h+pam_unix\.so\h+([^#\n\r]+\h+)?use_authtok\b' "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Run verification script"
+      shell: "/tmp/cis_verify_use_authtok.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary verification script"
+      file:
+        path: "/tmp/cis_verify_use_authtok.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Run verification script for use_authtok"
+        task_1_cmd: "bash /tmp/cis_verify_use_authtok.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output | length > 0 and 'use_authtok' in output %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 1 and output | length == 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output | length > 0 and 'use_authtok' in output %}
+            PASS: use_authtok found in authselect profile
+          {% elif result_1.rc | default(-1) == 1 and output | length == 0 %}
+            FAIL: use_authtok not found in authselect profile
+          {% else %}
+            FAIL: Verification script failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Run remediation script if verification failed
+    - name: "Req 2 - Execute remediation script for use_authtok"
+      copy:
+        dest: "/tmp/cis_remediate_use_authtok.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             for l_authselect_file in "$l_pam_profile_path"/password-auth "$l_pam_profile_path"/system-auth; do
+                if  grep -Pq '^\h*password\h+([^#\n\r]+)\h+pam_unix\.so\h+([^#\n\r]+\h+)?use_authtok\b' "$l_authselect_file"; then
+                   echo "- \"use_authtok\" is already set"
+                else
+                   echo "- \"use_authtok\" is not set. Updating template"
+                   sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_unix\.so\s+.*)$/& use_authtok/g' "$l_authselect_file"
+                fi
+             done
+          }
+          {% endraw %}
+      when: "status_1 | trim == 'FAILED'"
+      register: script_create_2
+      ignore_errors: true
+
+    - name: "Req 2 - Run remediation script"
+      shell: "/tmp/cis_remediate_use_authtok.sh"
+      args:
+        executable: /bin/bash
+      when: "status_1 | trim == 'FAILED'"
+      register: result_2
+      ignore_errors: true
+
+    - name: "Req 2 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediate_use_authtok.sh"
+        state: absent
+      when: "status_1 | trim == 'FAILED'"
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Run remediation script for use_authtok"
+        task_2_cmd: "bash /tmp/cis_remediate_use_authtok.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim != 'FAILED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != 'FAILED' %}
+            SKIPPED: Verification passed, no remediation needed
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Remediation script executed successfully
+          {% else %}
+            FAILED: Remediation script failed with exit code {{ result_2.rc | default(-1) }}
+          {% endif %}
+      when: true
+
+    # Requirement 3: Apply authselect changes
+    - name: "Req 3 - Apply authselect changes"
+      shell: "authselect apply-changes"
+      args:
+        executable: /bin/bash
+      when: "status_2 | trim == 'APPLIED'"
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Apply authselect changes"
+        task_3_cmd: "authselect apply-changes"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_2 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if status_2 | trim != 'APPLIED' %}
+            SKIPPED: No changes to apply
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: Authselect changes applied successfully
+          {% else %}
+            FAILED: Authselect apply-changes failed with exit code {{ result_3.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 4: Post-remediation verification
+    - name: "Req 4 - Execute post-remediation verification script"
+      copy:
+        dest: "/tmp/cis_post_remediation_verify.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- '^\h*password\h+(requisite|required|sufficient)\h+pam_unix\.so\h+([^#\n\r]+\h+)?use_authtok\b' "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_4
+      ignore_errors: true
+
+    - name: "Req 4 - Run post-remediation verification"
+      shell: "/tmp/cis_post_remediation_verify.sh"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+
+    - name: "Req 4 - Remove temporary verification script"
+      file:
+        path: "/tmp/cis_post_remediation_verify.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Post-remediation verification for use_authtok"
+        task_4_cmd: "bash /tmp/cis_post_remediation_verify.sh"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if result_4.rc | default(-1) == 0 and output | length > 0 and 'use_authtok' in output %}
+            APPLIED
+          {% elif result_4.rc | default(-1) == 1 and output | length == 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if result_4.rc | default(-1) == 0 and output | length > 0 and 'use_authtok' in output %}
+            PASS: use_authtok found in authselect profile after remediation
+          {% elif result_4.rc | default(-1) == 1 and output | length == 0 %}
+            FAIL: use_authtok not found in authselect profile after remediation
+          {% else %}
+            FAIL: Post-remediation verification failed with exit code {{ result_4.rc | default(-1) }}
+          {% endif %}
+
+    # Determine overall status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'FAILED' and (status_2 | trim == 'SKIPPED' or status_3 | trim == 'SKIPPED') %}
+            PARTIALLY APPLIED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'APPLIED' %}
+            System was already compliant, no changes needed.
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            System was non-compliant and has been remediated successfully.
+          {% elif status_1 | trim == 'FAILED' and (status_2 | trim == 'SKIPPED' or status_3 | trim == 'SKIPPED') %}
+            Verification failed but remediation was not applied (authselect not installed or not applicable).
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'FAILED' %}
+            Remediation was applied but post-remediation verification failed.
+          {% else %}
+            Remediation failed or incomplete. Check individual requirement statuses for details.
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.4.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.4.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | trim }}"
+          - "  Details: {{ overall_rationale | trim }}"
+          - "========================================================"

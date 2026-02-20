@@ -1,0 +1,387 @@
+---
+- name: Remediation for CIS 1.1.2.4.3 - Ensure nosuid option set on /var partition
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_4_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.4.3"
+    req_1: "Check if a separate partition for /var exists by examining /etc/fstab"
+    req_2: "Edit /etc/fstab file and add nosuid to the fourth field (mounting options) for the /var partition"
+    req_3: "Remount the /var partition with the updated options using command: mount -o remount /var"
+    req_4: "Confirm the nosuid option is set on the /var mount using command: mount | grep ' /var '"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Undo system changes (remount without nosuid)"
+      shell: |
+        {% raw %}
+        if mount | grep -q ' /var '; then
+          # Get the original mount options without nosuid from backup if it exists
+          if [ -f "{{ state_guard_dir }}/fstab.bak" ]; then
+            var_line=$(grep -E '^[^#].*[[:space:]]+/var[[:space:]]+' "{{ state_guard_dir }}/fstab.bak")
+            if [ -n "$var_line" ]; then
+              # Extract device and mount options (4th field) without nosuid
+              device=$(echo "$var_line" | awk '{print $1}')
+              fstype=$(echo "$var_line" | awk '{print $3}')
+              options=$(echo "$var_line" | awk '{print $4}' | sed 's/,nosuid//g')
+              mount -o remount,$options "$device" /var 2>/dev/null || true
+            fi
+          fi
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        status_1: "SKIPPED"
+        data_1: ""
+        rationale_1: "Not executed"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        status_2: "SKIPPED"
+        data_2: ""
+        rationale_2: "Not executed"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_3: "SKIPPED"
+        data_3: ""
+        rationale_3: "Not executed"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        status_4: "SKIPPED"
+        data_4: ""
+        rationale_4: "Not executed"
+
+    # Requirement 1: Check if a separate partition for /var exists by examining /etc/fstab
+    - name: "Req 1 - Check if /var is a separate partition and capture /etc/fstab"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/fstab
+        echo ""
+        echo "=== Checking for /var partition ==="
+        grep -E '^[^#].*[[:space:]]+/var[[:space:]]+' /etc/fstab || echo "No separate /var partition found in /etc/fstab"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if /var is a separate partition"
+        task_1_cmd: "grep -E '^[^#].*[[:space:]]+/var[[:space:]]+' /etc/fstab"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and '/var' in output and output is not search('No separate /var partition found') %}
+            APPLIED
+          {% elif output != '' and output is search('No separate /var partition found') %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and '/var' in output and output is not search('No separate /var partition found') %}
+            APPLIED: /var partition found in /etc/fstab
+          {% elif output != '' and output is search('No separate /var partition found') %}
+            SKIPPED: No separate /var partition found, remediation not applicable
+          {% else %}
+            FAILED: Could not check for /var partition
+          {% endif %}
+
+    # Requirement 2: Edit /etc/fstab file and add nosuid to the fourth field for the /var partition
+    - name: "Req 2 - Add nosuid option to /var mount options in /etc/fstab"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/fstab
+        echo ""
+        echo "=== APPLYING CHANGE ==="
+        # Check if /var partition exists
+        if grep -qE '^[^#].*[[:space:]]+/var[[:space:]]+' /etc/fstab; then
+          # Extract the /var line
+          var_line=$(grep -E '^[^#].*[[:space:]]+/var[[:space:]]+' /etc/fstab)
+          # Check if the line has at least 4 fields (device, mountpoint, fstype, options)
+          field_count=$(echo "$var_line" | awk '{print NF}')
+          if [ "$field_count" -ge 4 ]; then
+            # Extract the 4th field (mount options)
+            device=$(echo "$var_line" | awk '{print $1}')
+            mountpoint=$(echo "$var_line" | awk '{print $2}')
+            fstype=$(echo "$var_line" | awk '{print $3}')
+            options=$(echo "$var_line" | awk '{print $4}')
+            dump=$(echo "$var_line" | awk '{print $5}')
+            pass=$(echo "$var_line" | awk '{print $6}')
+            
+            # Check if nosuid is already present
+            if echo "$options" | grep -q nosuid; then
+              echo "nosuid option already present in /var mount options"
+              updated=false
+            else
+              # Add nosuid to the options
+              new_options="$options,nosuid"
+              # Reconstruct the line
+              new_line="$device $mountpoint $fstype $new_options $dump $pass"
+              # Escape special characters for sed
+              escaped_var_line=$(echo "$var_line" | sed 's/[\/&]/\\&/g')
+              escaped_new_line=$(echo "$new_line" | sed 's/[\/&]/\\&/g')
+              # Replace the line in /etc/fstab
+              sed -i "s|$escaped_var_line|$escaped_new_line|" /etc/fstab
+              echo "Updated /etc/fstab: added nosuid option to /var mount"
+              updated=true
+            fi
+          else
+            echo "ERROR: /etc/fstab /var entry has invalid format (less than 4 fields)"
+            exit 1
+          fi
+        else
+          echo "No /var partition found to update"
+          exit 0
+        fi
+        echo ""
+        echo "=== AFTER ==="
+        cat /etc/fstab
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Edit /etc/fstab to add nosuid option to /var partition"
+        task_2_cmd: "sed command to add nosuid option to /var line in /etc/fstab"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set rc = result_2.rc | default(-1) %}
+          {% if rc == 0 and (output is search('Updated /etc/fstab') or output is search('nosuid option already present')) %}
+            APPLIED
+          {% elif rc == 0 and output is search('No /var partition found to update') %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set rc = result_2.rc | default(-1) %}
+          {% if rc == 0 and output is search('Updated /etc/fstab') %}
+            APPLIED: nosuid option added to /var mount options
+          {% elif rc == 0 and output is search('nosuid option already present') %}
+            APPLIED: nosuid option already present in /var mount options
+          {% elif rc == 0 and output is search('No /var partition found to update') %}
+            SKIPPED: No /var partition to update
+          {% else %}
+            FAILED: Could not update /etc/fstab with nosuid option
+          {% endif %}
+      when: "status_1 | trim == 'APPLIED'"
+
+    # Requirement 3: Remount the /var partition with the updated options
+    - name: "Req 3 - Remount /var partition with updated options"
+      shell: |
+        echo "=== Remounting /var ==="
+        mount -o remount /var
+        exit_code=$?
+        echo "Exit code: $exit_code"
+        echo "Current mount status:"
+        mount | grep ' /var ' || echo "/var not currently mounted"
+        exit $exit_code
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED' and (status_2 | trim == 'APPLIED' or status_2 | trim == 'SKIPPED')"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remount /var partition with updated options"
+        task_3_cmd: "mount -o remount /var"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set rc = result_3.rc | default(-1) %}
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if rc == 0 %}
+            APPLIED
+          {% elif output is search('/var not currently mounted') %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set rc = result_3.rc | default(-1) %}
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if rc == 0 %}
+            APPLIED: /var partition remounted successfully
+          {% elif output is search('/var not currently mounted') %}
+            SKIPPED: /var partition not currently mounted
+          {% else %}
+            FAILED: Could not remount /var partition (exit code: {{ rc }})
+          {% endif %}
+      when: "status_1 | trim == 'APPLIED' and (status_2 | trim == 'APPLIED' or status_2 | trim == 'SKIPPED')"
+
+    # Requirement 4: Confirm the nosuid option is set on the /var mount
+    - name: "Req 4 - Verify nosuid option is set on /var mount"
+      shell: |
+        echo "=== Verifying /var mount options ==="
+        mount | grep ' /var ' || echo "/var not currently mounted"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify nosuid option is set on /var mount"
+        task_4_cmd: "mount | grep ' /var '"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output != '' and 'nosuid' in output %}
+            APPLIED
+          {% elif output != '' and 'nosuid' not in output %}
+            FAILED
+          {% elif output == '' %}
+            SKIPPED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output != '' and 'nosuid' in output %}
+            APPLIED: nosuid option is active on /var mount
+          {% elif output != '' and 'nosuid' not in output %}
+            FAILED: nosuid option is not active on /var mount
+          {% elif output == '' %}
+            SKIPPED: /var not currently mounted or no output
+          {% else %}
+            UNKNOWN: Could not determine mount status
+          {% endif %}
+      when: "status_1 | trim == 'APPLIED'"
+
+    # Calculate overall remediation result based on feedback
+    - name: Calculate overall remediation result
+      set_fact:
+        overall_result: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and (status_3 | trim == 'APPLIED' or status_3 | trim == 'SKIPPED') and status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+
+    - name: Calculate overall remediation details
+      set_fact:
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            No separate /var partition found, remediation not applicable
+          {% elif overall_result | trim == 'APPLIED' %}
+            nosuid option successfully applied and active on /var partition
+          {% else %}
+            Failed to fully apply nosuid option to /var partition
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.4.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.4.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_result | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

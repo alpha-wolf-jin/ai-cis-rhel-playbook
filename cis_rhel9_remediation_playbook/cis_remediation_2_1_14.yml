@@ -1,0 +1,256 @@
+---
+- name: Remediation for CIS checkpoint 2.1.14 - Ensure snmp services are not in use
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_14"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.14"
+    
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if net-snmp package is installed"
+    req_2: "Stop snmpd service"
+    req_3: "Remove net-snmp package"
+    req_4: "Mask snmpd service (if package required for dependencies)"
+    req_5: "Verify snmp services are not in use"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if net-snmp package is installed
+    - name: Req 1 - Check if net-snmp package is installed
+      shell: rpm -q net-snmp
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if net-snmp is installed"
+        task_1_cmd: "rpm -q net-snmp"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc | default(-1) != 0 else 'APPLIED') | trim }}"
+        rationale_1: "{{ ('APPLIED: Package is installed' if result_1.rc | default(-1) == 0 else 'SKIPPED: Remediation not applicable - net-snmp is not installed on this server') | trim }}"
+        net_snmp_installed: "{{ result_1.rc | default(-1) == 0 }}"
+
+    # Set SKIPPED status for requirements 2-4 when package not installed
+    - name: Set requirement 2 as SKIPPED if package not installed
+      set_fact:
+        task_2_name: "Stop snmpd service"
+        task_2_cmd: "systemctl stop snmpd.service"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: Remediation not applicable - net-snmp is not installed on this server"
+      when: not (net_snmp_installed | default(false))
+
+    - name: Set requirement 3 as SKIPPED if package not installed
+      set_fact:
+        task_3_name: "Remove net-snmp package"
+        task_3_cmd: "dnf remove -y net-snmp"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: Remediation not applicable - net-snmp is not installed on this server"
+      when: not (net_snmp_installed | default(false))
+
+    - name: Set requirement 4 as SKIPPED if package not installed
+      set_fact:
+        task_4_name: "Mask snmpd service"
+        task_4_cmd: "systemctl mask snmpd.service"
+        task_4_rc: -1
+        data_4: ""
+        status_4: "SKIPPED"
+        rationale_4: "SKIPPED: Remediation not applicable - net-snmp is not installed on this server"
+      when: not (net_snmp_installed | default(false))
+
+    # Requirement 2: Stop snmpd service (only if package is installed)
+    - name: Req 2 - Stop snmpd service
+      shell: systemctl stop snmpd.service
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: net_snmp_installed | default(false)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Stop snmpd service"
+        task_2_cmd: "systemctl stop snmpd.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: Service stopped successfully' if result_2.rc | default(-1) == 0 else 'FAILED: Could not stop service') | trim }}"
+      when: net_snmp_installed | default(false)
+
+    # Requirement 3: Remove net-snmp package (only if package is installed)
+    - name: Req 3 - Remove net-snmp package
+      shell: dnf remove -y net-snmp
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: net_snmp_installed | default(false)
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remove net-snmp package"
+        task_3_cmd: "dnf remove -y net-snmp"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('APPLIED' if result_3.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_3: "{{ ('APPLIED: Package removed successfully' if result_3.rc | default(-1) == 0 else 'FAILED: Could not remove package (may have dependencies)') | trim }}"
+        package_removed: "{{ result_3.rc | default(-1) == 0 }}"
+      when: net_snmp_installed | default(false)
+
+    # Requirement 4: Mask snmpd service (if package required for dependencies)
+    - name: Req 4 - Mask snmpd service (if package removal failed)
+      shell: systemctl mask snmpd.service
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: net_snmp_installed | default(false) and not (package_removed | default(true))
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Mask snmpd service"
+        task_4_cmd: "systemctl mask snmpd.service"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('APPLIED' if result_4.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_4: "{{ ('APPLIED: Service masked successfully' if result_4.rc | default(-1) == 0 else 'FAILED: Could not mask service') | trim }}"
+      when: net_snmp_installed | default(false) and not (package_removed | default(true))
+
+    # Requirement 5: Verify snmp services are not in use
+    - name: Req 5 - Verify snmp services are not in use
+      shell: systemctl is-active snmpd.service 2>/dev/null || echo 'Service not found or inactive'
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify snmp services not in use"
+        task_5_cmd: "systemctl is-active snmpd.service 2>/dev/null || echo 'Service not found or inactive'"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if 'inactive' in output or 'failed' in output or 'Service not found or inactive' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if 'inactive' in output or 'failed' in output or 'Service not found or inactive' in output %}
+            APPLIED: Service is {{ output.split()[0] if output != '' else 'not active' }} as expected
+          {% else %}
+            FAILED: Service is active or in unexpected state: {{ output }}
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.14"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Not executed') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Not executed') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Not executed') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Not executed') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Not executed') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ ('SKIPPED' if status_1 | default('') | trim == 'SKIPPED' else ('APPLIED' if status_5 | default('') | trim == 'APPLIED' else 'PARTIALLY APPLIED')) | trim }}"
+          - "  Details: {{ ('Remediation not applicable - net-snmp is not installed' if status_1 | default('') | trim == 'SKIPPED' else ('SNMP services remediated successfully' if status_5 | default('') | trim == 'APPLIED' else 'SNMP services may still be active or in use')) | trim }}"
+          - "========================================================"

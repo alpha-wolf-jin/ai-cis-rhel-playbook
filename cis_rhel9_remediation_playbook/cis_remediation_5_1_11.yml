@@ -1,0 +1,353 @@
+---
+- name: Remediation for CIS 5.1.11 - Ensure sshd GSSAPIAuthentication is disabled
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_11"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.11"
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if openssh-server is installed"
+    req_2: "Apply configuration change to disable GSSAPIAuthentication in /etc/ssh/sshd_config"
+    req_3: "Restart sshd service to apply configuration changes"
+    req_4: "Verify audit check for GSSAPIAuthentication"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/ssh/sshd_config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restart sshd to apply restored configuration"
+      shell: systemctl restart sshd
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if sshd_config exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/ssh/sshd_config exists"
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    # Backup existing sshd_config with .present suffix
+    - name: "State Guard - Backup /etc/ssh/sshd_config (present)"
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if openssh-server is installed
+    - name: "Req 1 - Check if openssh-server is installed"
+      shell: |
+        echo "=== CHECKING IF OPENSSH-SERVER IS INSTALLED ==="
+        rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check openssh-server installation"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('openssh-server') and 'not installed' not in output %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('openssh-server') and 'not installed' not in output %}
+            APPLIED: openssh-server is installed on this server
+          {% else %}
+            SKIPPED: Remediation not applicable - openssh-server is not installed on this server
+          {% endif %}
+
+    # Requirement 2: Apply configuration change to disable GSSAPIAuthentication in /etc/ssh/sshd_config
+    # Enhanced based on feedback: Place the line before any Include or Match entries
+    - name: "Req 2 - Apply config change to /etc/ssh/sshd_config"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/ssh/sshd_config
+        echo "=== APPLYING CHANGE ==="
+        # Remove any existing GSSAPIAuthentication lines
+        sed -i '/^GSSAPIAuthentication[[:space:]]/d' /etc/ssh/sshd_config
+        
+        # Find the first line that contains "Include" or "Match" to insert before it
+        first_include_match_line=$(grep -n -e '^Include' -e '^Match' /etc/ssh/sshd_config | head -1 | cut -d: -f1)
+        
+        if [ -n "$first_include_match_line" ]; then
+          # Insert GSSAPIAuthentication no before the first Include/Match line
+          sed -i "${first_include_match_line}iGSSAPIAuthentication no" /etc/ssh/sshd_config
+        else
+          # If no Include/Match lines found, add at the end of the file
+          echo 'GSSAPIAuthentication no' >> /etc/ssh/sshd_config
+        fi
+        
+        echo "=== AFTER ==="
+        cat /etc/ssh/sshd_config
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | default('SKIPPED') | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Disable GSSAPIAuthentication in sshd_config"
+        task_2_cmd: |
+          sed -i '/^GSSAPIAuthentication[[:space:]]/d' /etc/ssh/sshd_config
+          first_include_match_line=$(grep -n -e '^Include' -e '^Match' /etc/ssh/sshd_config | head -1 | cut -d: -f1)
+          if [ -n "$first_include_match_line" ]; then
+            sed -i "${first_include_match_line}iGSSAPIAuthentication no" /etc/ssh/sshd_config
+          else
+            echo 'GSSAPIAuthentication no' >> /etc/ssh/sshd_config
+          fi
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | default('SKIPPED') | trim != 'APPLIED' %}
+            SKIPPED
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if result_2.rc | default(-1) == 0 and 'GSSAPIAuthentication no' in output %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | default('SKIPPED') | trim != 'APPLIED' %}
+            SKIPPED: openssh-server not installed
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if result_2.rc | default(-1) == 0 and 'GSSAPIAuthentication no' in output %}
+              APPLIED: Successfully added 'GSSAPIAuthentication no' to /etc/ssh/sshd_config before any Include/Match entries
+            {% else %}
+              FAILED: Could not add 'GSSAPIAuthentication no' to /etc/ssh/sshd_config
+            {% endif %}
+          {% endif %}
+
+    # Requirement 3: Restart sshd service to apply configuration changes
+    - name: "Req 3 - Restart sshd service to apply configuration changes"
+      shell: |
+        echo "=== RESTARTING SSHD SERVICE ==="
+        systemctl restart sshd
+        echo "=== CHECKING SSHD SERVICE STATUS ==="
+        systemctl status sshd --no-pager
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_2 | default('SKIPPED') | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Restart sshd service"
+        task_3_cmd: "systemctl restart sshd"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_2 | default('SKIPPED') | trim != 'APPLIED' %}
+            SKIPPED
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if status_2 | default('SKIPPED') | trim != 'APPLIED' %}
+            SKIPPED: Configuration change not applied
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED: Successfully restarted sshd service to apply configuration changes
+            {% else %}
+              FAILED: Could not restart sshd service
+            {% endif %}
+          {% endif %}
+
+    # Requirement 4: Verify audit check for GSSAPIAuthentication
+    - name: "Req 4 - Verify audit check for GSSAPIAuthentication"
+      shell: |
+        {% raw %}
+        sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | grep -i 'gssapiauthentication'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "status_2 | default('SKIPPED') | trim == 'APPLIED' and status_3 | default('SKIPPED') | trim != 'SKIPPED'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify GSSAPIAuthentication is disabled"
+        task_4_cmd: |
+          sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | grep -i 'gssapiauthentication'
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_2 | default('SKIPPED') | trim != 'APPLIED' or status_3 | default('SKIPPED') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% set output = result_4.stdout | default('') | trim %}
+            {% if output == 'gssapiauthentication no' %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_4: >-
+          {% if status_2 | default('SKIPPED') | trim != 'APPLIED' or status_3 | default('SKIPPED') | trim == 'SKIPPED' %}
+            SKIPPED: Configuration change not applied or sshd not restarted
+          {% else %}
+            {% set output = result_4.stdout | default('') | trim %}
+            {% if output == 'gssapiauthentication no' %}
+              APPLIED: Verified sshd configuration shows 'gssapiauthentication no'
+            {% else %}
+              FAILED: Expected 'gssapiauthentication no', got '{{ output }}'
+            {% endif %}
+          {% endif %}
+
+    # Determine overall status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('SKIPPED') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif (status_2 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_3 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_4 | default('FAILED') | trim) == 'APPLIED' %}
+            APPLIED
+          {% elif (status_2 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_3 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_4 | default('FAILED') | trim) != 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | default('SKIPPED') | trim == 'SKIPPED' %}
+            Remediation not applicable: openssh-server is not installed on this server
+          {% elif (status_2 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_3 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_4 | default('FAILED') | trim) == 'APPLIED' %}
+            Successfully disabled GSSAPIAuthentication in sshd configuration
+          {% elif (status_2 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_3 | default('FAILED') | trim) == 'APPLIED' and 
+                  (status_4 | default('FAILED') | trim) != 'APPLIED' %}
+            Configuration changed and sshd restarted but verification failed. Check for include files in /etc/ssh/sshd_config.d/ that might override the main configuration.
+          {% elif (status_2 | default('FAILED') | trim) != 'APPLIED' %}
+            Failed to apply configuration change
+          {% elif (status_3 | default('FAILED') | trim) != 'APPLIED' %}
+            Configuration changed but failed to restart sshd service
+          {% else %}
+            Failed to apply remediation for GSSAPIAuthentication
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.11"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('') | trim }}"
+          - "========================================================"

@@ -2,124 +2,158 @@
 - name: Data Collection for CIS 5.1.22
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.22"
-    req_1: "Verify the effective SSH daemon configuration for PermitRootLogin using the primary audit script"
-    req_2: "If Match blocks are used in the SSH configuration, verify the effective PermitRootLogin setting for each applicable user/connection context using the extended test mode"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.22"
+    req_1: "Run the provided CIS audit script to verify Ensure sshd PermitRootLogin is disabled"
+    req_2: "If match blocks exist, run the audit script with connection parameters for root user"
     req_3: "OVERALL Verify: Ensure sshd PermitRootLogin is disabled"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Primary audit
-    - name: Req 1 - Check PermitRootLogin via primary audit script
-      shell: |
-        #!/usr/bin/env bash
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i permitrootlogin || true
+    # Requirement 1: Run the provided CIS audit script to verify Ensure sshd PermitRootLogin is disabled
+    - name: Req 1 - Execute CIS audit script for sshd PermitRootLogin
+      copy:
+        dest: "/tmp/cis_audit_5.1.22.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T  $OPTIONS $CRYPTO_POLICY | grep -i permitrootlogin
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.22.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.22.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check PermitRootLogin via primary audit script"
-        task_1_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-          source /etc/sysconfig/sshd 2>/dev/null || true
-          sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i permitrootlogin || true
+        task_1_name: "Execute CIS audit script for sshd PermitRootLogin"
+        task_1_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY | grep -i permitrootlogin"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'permitrootlogin no') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the output is exactly 'permitrootlogin no', FAIL otherwise"
+        rationale_1: '{{ ("PASS when output is exactly permitrootlogin no, FAIL otherwise" if (result_1.stdout | default("") | trim == "permitrootlogin no") else "FAIL: Expected permitrootlogin no, got " + (result_1.stdout | default("") | trim)) | trim }}'
 
-    # Requirement 2: Check for Match blocks and test with example user
-    - name: Req 2 - Check if Match blocks exist in sshd_config
+    # Requirement 2: Check for match blocks and run conditional audit if they exist
+    - name: Req 2 - Check if sshd config has Match blocks
       shell: |
-        grep -q '^Match' /etc/ssh/sshd_config 2>/dev/null && echo "Match blocks found" || echo "No Match blocks found"
+        {% raw %}
+        if [ -f /etc/ssh/sshd_config ]; then
+          grep -q '^Match' /etc/ssh/sshd_config && echo "true" || echo "false"
+        else
+          echo "false"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
-      register: match_check
+      register: check_match_blocks
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Req 2 - Test PermitRootLogin with example user if Match blocks exist
-      shell: |
-        #!/usr/bin/env bash
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser 2>/dev/null | grep -i permitrootlogin || true
+    - name: Req 2 - Execute conditional audit for match blocks
+      copy:
+        dest: "/tmp/cis_audit_5.1.22_match.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T  $OPTIONS $CRYPTO_POLICY -C user=root | grep -i permitrootlogin
+          {% endraw %}
+      when: check_match_blocks.stdout | default('false') | trim == 'true'
+      register: script_create_2
+      ignore_errors: true
+
+    - name: Req 2 - Execute the match block audit script
+      shell: "/tmp/cis_audit_5.1.22_match.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: match_check.stdout | default('') | trim == "Match blocks found"
+      when: check_match_blocks.stdout | default('false') | trim == 'true'
 
-    - name: Store requirement 2 details and determine status
-      set_fact:
-        task_2_name: "Test PermitRootLogin with example user sshuser"
-        task_2_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-          source /etc/sysconfig/sshd 2>/dev/null || true
-          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser 2>/dev/null | grep -i permitrootlogin || true
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{
-            (
-              'NA' if (match_check.stdout | default('') | trim != 'Match blocks found') else
-              ('PASS' if (result_2.stdout | default('') | trim == 'permitrootlogin no') else 'FAIL')
-            ) | trim
-          }}
-        rationale_2: "PASS when the output for each tested context is exactly 'permitrootlogin no', FAIL if any context returns a different value or if the setting is incorrectly overridden in a Match block"
+    - name: Req 2 - Remove temporary match block audit script
+      file:
+        path: "/tmp/cis_audit_5.1.22_match.sh"
+        state: absent
+      when: check_match_blocks.stdout | default('false') | trim == 'true'
+      ignore_errors: true
 
-    # Requirement 3: Overall verification
-    - name: Store requirement 3 details and determine overall status
+    - name: Req 2 - Store requirement 2 details
       set_fact:
-        task_3_name: "Overall verification of PermitRootLogin setting"
-        task_3_cmd: "N/A - Overall assessment based on req_1 and req_2"
+        task_2_name: "Execute conditional audit for match blocks"
+        task_2_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY -C user=root | grep -i permitrootlogin"
+        task_2_rc: "{{ result_2.rc | default(0) }}"
+        data_2: "{{ result_2.stdout | default('N/A - No match blocks found') | trim }}"
+        status_2: >-
+          {% if check_match_blocks.stdout | default('false') | trim == 'true' %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == 'permitrootlogin no') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if check_match_blocks.stdout | default('false') | trim == 'true' %}
+            {{ ("PASS when output is exactly permitrootlogin no, FAIL otherwise" if (result_2.stdout | default("") | trim == "permitrootlogin no") else "FAIL: Expected permitrootlogin no, got " + (result_2.stdout | default("") | trim)) | trim }}
+          {% else %}
+            No match blocks found in sshd config
+          {% endif %}
+
+    # Requirement 3: OVERALL Verify: Ensure sshd PermitRootLogin is disabled
+    - name: Req 3 - Set overall compliance status
+      set_fact:
+        task_3_name: "Overall compliance verification"
+        task_3_cmd: "N/A - based on requirement 1 and 2"
         task_3_rc: 0
-        data_3: "Primary check: {{ data_1 }}, Match block check: {{ data_2 }}"
-        status_3: >
-          {{
-            (
-              'PASS' if (
-                status_1 | trim == 'PASS' and
-                (status_2 | trim == 'PASS' or status_2 | trim == 'NA')
-              ) else 'FAIL'
-            ) | trim
-          }}
-        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+        data_3: "N/A"
+        status_3: >-
+          {% if check_match_blocks.stdout | default('false') | trim == 'true' %}
+            {{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}
+          {% else %}
+            {{ status_1 | default('UNKNOWN') | trim }}
+          {% endif %}
+        rationale_3: >-
+          {% if check_match_blocks.stdout | default('false') | trim == 'true' %}
+            PASS when both basic check (req_1) and match block check (req_2) pass, FAIL otherwise
+          {% else %}
+            PASS when req_1=PASS (no match blocks to check), FAIL otherwise
+          {% endif %}
 
-    # Final compliance report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.22"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -134,7 +168,7 @@
           - "  Task: {{ task_2_name | default('Task not recorded') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Data: {{ data_2 | default('N/A') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
@@ -142,7 +176,7 @@
           - "  Task: {{ task_3_name | default('Task not recorded') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Data: {{ data_3 | default('N/A') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""

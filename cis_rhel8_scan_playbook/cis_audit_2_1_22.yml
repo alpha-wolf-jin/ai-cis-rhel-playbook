@@ -2,62 +2,57 @@
 - name: Data Collection for CIS 2.1.22
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.22"
-    req_1: "Verify the xorg-x11-server-common package is NOT installed"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.22"
+    req_1: "Check if X Windows Server package is installed"
     req_2: "OVERALL Verify: Ensure X window server services are not in use"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify the xorg-x11-server-common package is NOT installed
-    - name: "Req 1 - Check if xorg-x11-server-common package is installed"
-      shell: >
-        rpm -q xorg-x11-server-common
+    # Requirement 1: Check if X Windows Server package is installed
+    - name: Req 1 - Check if X Windows Server package is installed
+      shell: rpm -q xorg-x11-server-common
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if xorg-x11-server-common package is installed"
+        task_1_name: "Req 1 - Check if X Windows Server package is installed"
         task_1_cmd: "rpm -q xorg-x11-server-common"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package xorg-x11-server-common is not installed') else 'FAIL') | trim }}"
         rationale_1: "PASS when output is 'package xorg-x11-server-common is not installed', FAIL otherwise"
 
-    # Requirement 2: OVERALL Verify: Ensure X window server services are not in use
-    - name: "Req 2 - Determine overall compliance"
+    # Requirement 2: OVERALL Verify
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 | trim }}"
+        task_2_name: "Req 2 - OVERALL Verify"
+        task_2_cmd: "Derived from requirement 1 result"
+        task_2_rc: "{{ task_1_rc }}"
+        data_2: "{{ data_1 }}"
         status_2: "{{ status_1 | trim }}"
         rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.1.22"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

@@ -1,0 +1,271 @@
+---
+- name: Remediation for CIS 2.3.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_3_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.2"
+    req_1: "Check if chrony package is installed"
+    req_2: "Apply NTP server configuration by adding or editing server/pool lines"
+    req_3: "Verify chrony is configured with a remote server"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: State Guard - Restore /etc/chrony.d/cis-ntp.conf from backup (if existed)
+      copy:
+        src: "{{ state_guard_dir }}/cis-ntp.conf.present"
+        dest: "/etc/chrony.d/cis-ntp.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Delete /etc/chrony.d/cis-ntp.conf (if created by remediation)
+      file:
+        path: "/etc/chrony.d/cis-ntp.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/chrony.d/cis-ntp.conf exists
+      stat:
+        path: "/etc/chrony.d/cis-ntp.conf"
+      register: _sg_cis_ntp_conf_stat
+
+    - name: State Guard - Backup /etc/chrony.d/cis-ntp.conf (present)
+      copy:
+        src: "/etc/chrony.d/cis-ntp.conf"
+        dest: "{{ state_guard_dir }}/cis-ntp.conf.present"
+        remote_src: true
+      when: _sg_cis_ntp_conf_stat.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Mark /etc/chrony.d/cis-ntp.conf as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/cis-ntp.conf.absent"
+      when: not _sg_cis_ntp_conf_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        # Initialize status variables with defaults
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+
+    # Requirement 1: Check if chrony package is installed
+    - name: Req 1 - Check if chrony is installed
+      shell: rpm -q chrony
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check chrony installation"
+        task_1_cmd: "rpm -q chrony"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc | default(-1) != 0 else 'APPLIED') | trim }}"
+        rationale_1: "{{ ('SKIPPED - Remediation not applicable - chrony is not installed on this server' if result_1.rc | default(-1) != 0 else 'APPLIED: chrony package is installed') | trim }}"
+        chrony_installed: "{{ result_1.rc | default(-1) == 0 }}"
+
+    # Requirement 2: Apply NTP server configuration (only if chrony is installed)
+    - name: Req 2 - Apply NTP server configuration
+      shell: |
+        echo "=== BEFORE ==="
+        ls -la /etc/chrony.d/ 2>/dev/null || echo "No /etc/chrony.d directory"
+        cat /etc/chrony.d/cis-ntp.conf 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        mkdir -p /etc/chrony.d
+        echo 'server <remote-server>' >> /etc/chrony.d/cis-ntp.conf
+        echo "=== AFTER ==="
+        cat /etc/chrony.d/cis-ntp.conf 2>/dev/null || echo "File creation failed"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: chrony_installed | default(false)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Configure chrony NTP server"
+        task_2_cmd: "echo 'server <remote-server>' >> /etc/chrony.d/cis-ntp.conf"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('SKIPPED' if not (chrony_installed | default(false)) else ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_2: "{{ ('SKIPPED - chrony not installed' if not (chrony_installed | default(false)) else ('APPLIED: NTP server configuration added to /etc/chrony.d/cis-ntp.conf' if result_2.rc | default(-1) == 0 else 'FAILED: Could not write to /etc/chrony.d/cis-ntp.conf')) | trim }}"
+      when: chrony_installed | default(false) is defined
+
+    - name: Set requirement 2 as skipped when chrony not installed
+      set_fact:
+        task_2_name: "Configure chrony NTP server"
+        task_2_cmd: "echo 'server <remote-server>' >> /etc/chrony.d/cis-ntp.conf"
+        task_2_rc: -1
+        data_2: "SKIPPED - chrony not installed"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED - Remediation not applicable - chrony is not installed on this server"
+      when: not (chrony_installed | default(false))
+
+    # Requirement 3: Verify chrony is configured with a remote server (only if chrony is installed)
+    - name: Req 3 - Verify chrony configuration
+      shell: grep -E '^(server|pool)' /etc/chrony.conf /etc/chrony.d/*.conf 2>/dev/null || echo "No server or pool directives found"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: chrony_installed | default(false)
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify chrony configuration"
+        task_3_cmd: "grep -E '^(server|pool)' /etc/chrony.conf /etc/chrony.d/*.conf"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if not (chrony_installed | default(false)) %}
+            SKIPPED
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'server <remote-server>' in output or output != 'No server or pool directives found' %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if not (chrony_installed | default(false)) %}
+            SKIPPED - chrony not installed
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'server <remote-server>' in output or output != 'No server or pool directives found' %}
+              APPLIED: Chrony is configured with at least one server or pool directive
+            {% else %}
+              FAILED: No active server or pool directives found in chrony configuration
+            {% endif %}
+          {% endif %}
+      when: chrony_installed | default(false) is defined
+
+    - name: Set requirement 3 as skipped when chrony not installed
+      set_fact:
+        task_3_name: "Verify chrony configuration"
+        task_3_cmd: "grep -E '^(server|pool)' /etc/chrony.conf /etc/chrony.d/*.conf"
+        task_3_rc: -1
+        data_3: "SKIPPED - chrony not installed"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED - Remediation not applicable - chrony is not installed on this server"
+      when: not (chrony_installed | default(false))
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_2 | trim == 'SKIPPED' and status_3 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED - chrony is not installed on this server, remediation not applicable
+          {% elif status_2 | trim == 'SKIPPED' and status_3 | trim == 'SKIPPED' %}
+            SKIPPED - chrony is not installed on this server, remediation not applicable
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED - chrony is installed and configured with NTP server
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'FAILED' %}
+            PARTIALLY APPLIED - chrony configuration file was modified but verification failed
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' %}
+            FAILED - Could not apply chrony NTP server configuration
+          {% else %}
+            UNKNOWN - Unable to determine remediation status
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.3.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

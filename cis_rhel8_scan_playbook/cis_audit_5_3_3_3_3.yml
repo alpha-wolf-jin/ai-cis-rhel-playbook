@@ -1,135 +1,116 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.3.3.3
-- name: Data Collection for CIS 5.3.3.3.3
+- name: Data Collection for CIS checkpoint 5.3.3.3.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.3.3.3"
-    req_1: "Verify the pam_pwhistory.so module is configured with the 'use_authtok' argument in the password section of /etc/pam.d/password-auth"
-    req_2: "Verify the pam_pwhistory.so module is configured with the 'use_authtok' argument in the password section of /etc/pam.d/system-auth"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.3.3"
+    req_1: "Check that the pam_pwhistory.so module line in /etc/pam.d/password-auth includes the 'use_authtok' option"
+    req_2: "Check that the pam_pwhistory.so module line in /etc/pam.d/system-auth includes the 'use_authtok' option"
     req_3: "OVERALL Verify: Ensure pam_pwhistory includes use_authtok"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify the pam_pwhistory.so module is configured with the 'use_authtok' argument in the password section of /etc/pam.d/password-auth
+    # Requirement 1: Check password-auth
     - name: Req 1 - Check use_authtok in password-auth
-      shell: >
+      shell: |
+        {% raw %}
         grep -P -- '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' /etc/pam.d/password-auth
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
         task_1_name: "Check use_authtok in password-auth"
         task_1_cmd: |
           grep -P -- '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' /etc/pam.d/password-auth
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | length > 0) else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns a line matching the pattern (e.g., 'password   required   pam_pwhistory.so use_authtok'), FAIL otherwise"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_1: "PASS when the command returns a line containing 'pam_pwhistory.so' and 'use_authtok', FAIL otherwise"
 
-    # Requirement 2: Verify the pam_pwhistory.so module is configured with the 'use_authtok' argument in the password section of /etc/pam.d/system-auth
+    # Requirement 2: Check system-auth
     - name: Req 2 - Check use_authtok in system-auth
-      shell: >
+      shell: |
+        {% raw %}
         grep -P -- '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' /etc/pam.d/system-auth
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check use_authtok in system-auth"
         task_2_cmd: |
           grep -P -- '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' /etc/pam.d/system-auth
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | length > 0) else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns a line matching the pattern (e.g., 'password   required   pam_pwhistory.so use_authtok'), FAIL otherwise"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '') else 'FAIL') | trim }}"
+        rationale_2: "PASS when the command returns a line containing 'pam_pwhistory.so' and 'use_authtok', FAIL otherwise"
 
-    # Requirement 3: OVERALL Verify: Ensure pam_pwhistory includes use_authtok
-    - name: Req 3 - Overall verification
-      shell: >
-        grep -P -- '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' /etc/pam.d/{password,system}-auth
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Store requirement 3 details and determine overall status
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
         task_3_name: "Overall verification"
-        task_3_cmd: |
-          grep -P -- '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' /etc/pam.d/{password,system}-auth
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
+        task_3_cmd: "N/A - Combined result of req_1 and req_2"
+        task_3_rc: 0
+        data_3: "Password-auth: {{ data_1 | default('') }}, System-auth: {{ data_2 | default('') }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
         rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
 
     - name: Generate compliance report
       debug:
-        msg: |
-          ========================================================
-                  COMPLIANCE REPORT - CIS 5.3.3.3.3
-          ========================================================
-          Reference: {{ cis_reference }}
-          ========================================================
-
-          REQUIREMENT 1 - {{ req_1 }}:
-            Task: {{ task_1_name | default('Task not recorded') }}
-            Command: {{ task_1_cmd | default('N/A') }}
-            Exit code: {{ task_1_rc | default(-1) }}
-            Data: {{ data_1 | default('') | trim }}
-            Status: {{ status_1 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 2 - {{ req_2 }}:
-            Task: {{ task_2_name | default('Task not recorded') }}
-            Command: {{ task_2_cmd | default('N/A') }}
-            Exit code: {{ task_2_rc | default(-1) }}
-            Data: {{ data_2 | default('') | trim }}
-            Status: {{ status_2 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 3 - {{ req_3 }}:
-            Task: {{ task_3_name | default('Task not recorded') }}
-            Command: {{ task_3_cmd | default('N/A') }}
-            Exit code: {{ task_3_rc | default(-1) }}
-            Data: {{ data_3 | default('') | trim }}
-            Status: {{ status_3 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
-
-          ========================================================
-          OVERALL COMPLIANCE:
-            Result: {{ status_3 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
-          ========================================================
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.3.3.3.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.3.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
+          - "========================================================"

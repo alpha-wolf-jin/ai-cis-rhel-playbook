@@ -2,12 +2,13 @@
 - name: Data Collection for CIS 5.3.2.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.4"
-    req_1: "Check for pam_pwhistory.so module in password-auth file"
-    req_2: "Check for pam_pwhistory.so module in system-auth file"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.4"
+    req_1: "Check for pam_pwhistory.so in /etc/pam.d/password-auth"
+    req_2: "Check for pam_pwhistory.so in /etc/pam.d/system-auth"
     req_3: "OVERALL Verify: Ensure pam_pwhistory module is enabled"
+    expected_string: "password   required   pam_pwhistory.so use_authtok"
 
   tasks:
     - name: Initialize data variables
@@ -22,8 +23,8 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Check for pam_pwhistory.so module in password-auth file
-    - name: "Req 1 - Check password-auth for pam_pwhistory"
+    # Requirement 1: Check for pam_pwhistory.so in /etc/pam.d/password-auth
+    - name: Req 1 - Check pam_pwhistory in password-auth
       shell: |
         grep -P -- '\bpam_pwhistory\.so\b' /etc/pam.d/password-auth
       args:
@@ -34,17 +35,17 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check password-auth for pam_pwhistory"
+        task_1_name: "Check pam_pwhistory in password-auth"
         task_1_cmd: |
-          grep -P -- '\\bpam_pwhistory\\.so\\b' /etc/pam.d/password-auth
+          grep -P -- '\bpam_pwhistory\.so\b' /etc/pam.d/password-auth
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'password   required   pam_pwhistory.so use_authtok') else 'FAIL') | trim }}"
+        status_1: "{{ ('PASS' if (expected_string in result_1.stdout) else 'FAIL') | trim }}"
         rationale_1: |
-          {{ ('PASS when output contains the exact line \'password   required   pam_pwhistory.so use_authtok\', FAIL otherwise') | trim }}
+          {{ (('PASS when output contains the exact string \"' + expected_string + '\"') if (expected_string in result_1.stdout) else 'FAIL: Output does not contain required string') | trim }}
 
-    # Requirement 2: Check for pam_pwhistory.so module in system-auth file
-    - name: "Req 2 - Check system-auth for pam_pwhistory"
+    # Requirement 2: Check for pam_pwhistory.so in /etc/pam.d/system-auth
+    - name: Req 2 - Check pam_pwhistory in system-auth
       shell: |
         grep -P -- '\bpam_pwhistory\.so\b' /etc/pam.d/system-auth
       args:
@@ -55,24 +56,24 @@
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check system-auth for pam_pwhistory"
+        task_2_name: "Check pam_pwhistory in system-auth"
         task_2_cmd: |
-          grep -P -- '\\bpam_pwhistory\\.so\\b' /etc/pam.d/system-auth
+          grep -P -- '\bpam_pwhistory\.so\b' /etc/pam.d/system-auth
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == 'password   required   pam_pwhistory.so use_authtok') else 'FAIL') | trim }}"
+        status_2: "{{ ('PASS' if (expected_string in result_2.stdout) else 'FAIL') | trim }}"
         rationale_2: |
-          {{ ('PASS when output contains the exact line \'password   required   pam_pwhistory.so use_authtok\', FAIL otherwise') | trim }}
+          {{ (('PASS when output contains the exact string \"' + expected_string + '\"') if (expected_string in result_2.stdout) else 'FAIL: Output does not contain required string') | trim }}
 
     # Requirement 3: OVERALL Verify
-    - name: "Req 3 - Overall verification"
+    - name: Store requirement 3 details
       set_fact:
         task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
+        task_3_cmd: "N/A (derived from req_1 and req_2)"
         task_3_rc: 0
-        data_3: "Combined result of requirements 1 and 2"
-        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS, FAIL otherwise') | trim }}"
+        data_3: "N/A"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS AND req_2=PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: Not all requirements are met') | trim }}"
 
     - name: Generate compliance report
       debug:

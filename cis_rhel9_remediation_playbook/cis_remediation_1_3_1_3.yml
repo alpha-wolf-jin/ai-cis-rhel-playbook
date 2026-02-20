@@ -1,0 +1,140 @@
+---
+- name: Remediation for CIS 1.3.1.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_3_1_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.3.1.3"
+    req_1: "Apply SELinux policy configuration by editing /etc/selinux/config"
+    req_2: "VERIFY: Confirm SELinux policy is configured"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/selinux/config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/selinux_config.bak"
+        dest: "/etc/selinux/config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/selinux/config"
+      copy:
+        src: "/etc/selinux/config"
+        dest: "{{ state_guard_dir }}/selinux_config.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        status_1: "FAILED"
+        rationale_1: "Task not executed"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: ""
+        status_2: "FAILED"
+        rationale_2: "Task not executed"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    - name: "Req 1 - Apply SELinux policy configuration"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/selinux/config
+        echo "=== APPLYING CHANGE ==="
+        sed -i 's/^SELINUXTYPE=.*$/SELINUXTYPE=targeted/' /etc/selinux/config
+        echo "=== AFTER ==="
+        cat /etc/selinux/config
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Apply SELinux policy configuration"
+        task_1_cmd: "sed -i 's/^SELINUXTYPE=.*$/SELINUXTYPE=targeted/' /etc/selinux/config"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: SELINUXTYPE set to targeted' if result_1.rc | default(-1) == 0 else 'FAILED: Could not modify /etc/selinux/config') | trim }}"
+
+    - name: "Req 2 - Verify SELinux policy configuration"
+      shell: grep -E '^SELINUXTYPE=targeted$' /etc/selinux/config
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify SELinux policy configuration"
+        task_2_cmd: "grep -E '^SELINUXTYPE=targeted$' /etc/selinux/config"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 and result_2.stdout | default('') | trim == 'SELINUXTYPE=targeted' else 'FAILED') | trim }}"
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 and result_2.stdout | default('') | trim == 'SELINUXTYPE=targeted' %}
+            APPLIED: SELINUXTYPE=targeted found in configuration
+          {% else %}
+            FAILED: SELINUXTYPE=targeted not found in configuration
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.3.1.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.3.1.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Details: {{ ('Remediation completed successfully' if status_2 | trim == 'APPLIED' else 'Remediation failed or partially applied') | trim }}"
+          - "========================================================"

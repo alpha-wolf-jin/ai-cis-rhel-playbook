@@ -1,0 +1,320 @@
+---
+- name: Remediation for CIS 5.3.1.1 - Ensure latest version of pam is installed
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_1_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.1.1"
+    
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if pam package is installed"
+    req_2: "Apply update to the latest version of pam"
+    req_3: "Verify the installed version of pam"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    # This remediation only modifies package state (no config files), so minimal State Guard
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE (no files to backup for this remediation) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        overall_status: "UNKNOWN"
+        overall_rationale: "Not evaluated"
+
+    # Requirement 1: Check if pam package is installed
+    - name: "Req 1 - Check if pam package is installed"
+      shell: |
+        rpm -q pam
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if pam package is installed"
+        task_1_cmd: "rpm -q pam"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        # Determine status based on exit code
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: pam package is installed on this server
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED: Remediation not applicable - pam is not installed on this server
+          {% else %}
+            FAILED: Could not check if pam package is installed
+          {% endif %}
+
+    # Requirement 2: Apply update to the latest version of pam
+    # Following EXACT remediation procedure: IF version < pam-1.5.1-19 THEN dnf upgrade pam
+    - name: "Req 2 - Apply update to the latest version of pam"
+      shell: |
+        # Check if version is less than pam-1.5.1-19
+        # Get current version
+        current_version=$(rpm -q pam 2>/dev/null || echo "not-installed")
+        
+        # If pam is not installed, exit (should be caught by requirement 1, but just in case)
+        if [ "$current_version" = "not-installed" ]; then
+          echo "pam is not installed"
+          exit 0
+        fi
+        
+        # Parse version components for comparison
+        if [[ "$current_version" =~ pam-([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+) ]]; then
+          major="${BASH_REMATCH[1]}"
+          minor="${BASH_REMATCH[2]}"
+          patch="${BASH_REMATCH[3]}"
+          release="${BASH_REMATCH[4]}"
+          
+          # Compare with target version pam-1.5.1-19
+          # If version is less than pam-1.5.1-19, run dnf upgrade pam
+          if [[ $major -lt 1 ]] || \
+             [[ $major -eq 1 && $minor -lt 5 ]] || \
+             [[ $major -eq 1 && $minor -eq 5 && $patch -lt 1 ]] || \
+             [[ $major -eq 1 && $minor -eq 5 && $patch -eq 1 && $release -lt 19 ]]; then
+            echo "Current version: $current_version is less than pam-1.5.1-19"
+            echo "Running: dnf upgrade pam"
+            dnf upgrade pam
+            exit $?
+          else
+            echo "Current version: $current_version is already at least pam-1.5.1-19"
+            echo "No upgrade needed"
+            exit 0
+          fi
+        else
+          echo "Could not parse version format: $current_version"
+          echo "Attempting upgrade to be safe"
+          dnf upgrade pam
+          exit $?
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply update to the latest version of pam"
+        task_2_cmd: "dnf upgrade pam (with version check logic per CIS remediation procedure)"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        # Determine status - if task was skipped (when condition false), then SKIPPED
+        status_2: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED: Previous requirement not met (pam not installed)
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: pam package upgraded to latest version (or already at required version)
+          {% else %}
+            FAILED: Could not upgrade pam package
+          {% endif %}
+      when: result_2 is defined
+
+    # Requirement 3: Verify the installed version of pam
+    - name: "Req 3 - Verify the installed version of pam"
+      shell: |
+        rpm -q pam
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify the installed version of pam"
+        task_3_cmd: "rpm -q pam"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        # Determine status - check if version is pam-1.5.1-19 or later
+        status_3: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output is search('pam-[0-9]') %}
+              {% set version_match = output | regex_search('pam-([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)') %}
+              {% if version_match %}
+                {% set version_parts = version_match.split('-')[1] %}
+                {% set major = version_parts.split('.')[0] | int %}
+                {% set minor = version_parts.split('.')[1] | int %}
+                {% set patch = version_parts.split('.')[2] | int %}
+                {% set release = version_match.split('-')[2] | int %}
+                {# Compare with target version pam-1.5.1-19 #}
+                {% if (major > 1) or
+                      (major == 1 and minor > 5) or
+                      (major == 1 and minor == 5 and patch > 1) or
+                      (major == 1 and minor == 5 and patch == 1 and release >= 19) %}
+                  APPLIED
+                {% else %}
+                  FAILED
+                {% endif %}
+              {% else %}
+                FAILED
+              {% endif %}
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED: Previous requirement not met (pam not installed)
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output is search('pam-[0-9]') %}
+              {% set version_match = output | regex_search('pam-([0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)') %}
+              {% if version_match %}
+                {% set version_parts = version_match.split('-')[1] %}
+                {% set major = version_parts.split('.')[0] | int %}
+                {% set minor = version_parts.split('.')[1] | int %}
+                {% set patch = version_parts.split('.')[2] | int %}
+                {% set release = version_match.split('-')[2] | int %}
+                {# Compare with target version pam-1.5.1-19 #}
+                {% if (major > 1) or
+                      (major == 1 and minor > 5) or
+                      (major == 1 and minor == 5 and patch > 1) or
+                      (major == 1 and minor == 5 and patch == 1 and release >= 19) %}
+                  APPLIED: pam package version is {{ output }} (>= pam-1.5.1-19)
+                {% else %}
+                  FAILED: pam package version is {{ output }} (< pam-1.5.1-19)
+                {% endif %}
+              {% else %}
+                FAILED: Could not parse version from output: {{ output }}
+              {% endif %}
+            {% else %}
+              FAILED: Could not get pam version: {{ output }}
+            {% endif %}
+          {% endif %}
+      when: result_3 is defined
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | trim == 'FAILED' or status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: pam package is not installed on this server - remediation not applicable
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED: pam package is installed and at version pam-1.5.1-19 or later
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'FAILED' %}
+            PARTIALLY APPLIED: pam package was upgraded but verification failed
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED: Could not check if pam package is installed
+          {% elif status_2 | trim == 'FAILED' %}
+            FAILED: Could not upgrade pam package
+          {% elif status_3 | trim == 'FAILED' %}
+            FAILED: pam package is not at version pam-1.5.1-19 or later
+          {% else %}
+            UNKNOWN: Could not determine remediation status
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.1.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,44 +1,38 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.2.3
-# Ensure dccp kernel module is not available
-- name: Data Collection for CIS checkpoint 3.2.3
+- name: Data Collection for CIS 3.2.3 - Ensure dccp kernel module is not available
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.2.3"
-    req_1: "Run the following script to verify the dccp kernel module does NOT exist in the filesystem"
-    req_2: "Verify the dccp kernel module is NOT loaded using command: lsmod | grep 'dccp'"
-    req_3: |
-      Verify the dccp kernel module is blacklisted and configured to not load using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+dccp\b'
-    req_4: "OVERALL Verify: Ensure dccp kernel module is not available"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.2.3"
+    req_1: "Run the provided CIS audit script to determine if the dccp kernel module is available on the system"
+    req_2: "Verify the dccp kernel module is not loaded and not loadable"
+    req_3: "OVERALL Verify: Ensure dccp kernel module is not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
         data_1: ""
+        data_2: ""
+        data_3: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        data_2: ""
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "UNKNOWN"
-        rationale_2: "Not evaluated"
-        data_3: ""
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "UNKNOWN"
-        rationale_3: "Not evaluated"
-        status_4: "UNKNOWN"
-        rationale_4: "Not evaluated"
 
-    # Requirement 1: Run the following script to verify the dccp kernel module does NOT exist in the filesystem
-    - name: Req 1 - Create temporary audit script for dccp module check
+    # Requirement 1: Run the CIS audit script
+    - name: Req 1 - Execute CIS audit script for dccp module availability check
       copy:
         dest: "/tmp/cis_audit_3.2.3_req1.sh"
         mode: '0700'
@@ -56,15 +50,15 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
+      ignore_errors: true
 
-    - name: Req 1 - Execute audit script for dccp module check
+    - name: Req 1 - Execute the audit script
       shell: "/tmp/cis_audit_3.2.3_req1.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Req 1 - Remove temporary audit script
@@ -73,87 +67,103 @@
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute audit script for dccp module check"
+        task_1_name: "Req 1 - Execute CIS audit script for dccp module availability check"
         task_1_cmd: "/tmp/cis_audit_3.2.3_req1.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script returns NO output (module not found) OR if the module is built into the kernel (also a passing state), FAIL when the script returns output indicating the module exists as a loadable module"
+        rationale_1: "{{ ('PASS when script returns nothing (dccp module not available), FAIL when script returns any output (dccp module exists)') | trim }}"
 
-    # Requirement 2: Verify the dccp kernel module is NOT loaded using command: lsmod | grep 'dccp'
+    # Requirement 2: Verify dccp not loaded and not loadable (only if req1 found module)
     - name: Req 2 - Check if dccp module is loaded
       shell: |
+        {% raw %}
         lsmod | grep 'dccp'
+        {% endraw %}
       args:
         executable: /bin/bash
-      register: result_2
+      register: result_2_loaded
       ignore_errors: true
-      failed_when: false
       changed_when: false
       when: data_1 | trim != ''
 
-    - name: Store requirement 2 details and determine status
-      set_fact:
-        task_2_name: "Check if dccp module is loaded"
-        task_2_cmd: "lsmod | grep 'dccp'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns NO output (module not loaded), FAIL when output is returned"
-      when: data_1 | trim != ''
-
-    # Requirement 3: Verify the dccp kernel module is blacklisted and configured to not load using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+dccp\b'
-    - name: Req 3 - Check if dccp module is blacklisted
+    - name: Req 2 - Check if dccp module is loadable
       shell: |
+        {% raw %}
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+dccp\b'
+        {% endraw %}
       args:
         executable: /bin/bash
-      register: result_3
+      register: result_2_loadable
       ignore_errors: true
-      failed_when: false
       changed_when: false
       when: data_1 | trim != ''
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_3_name: "Check if dccp module is blacklisted"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+dccp\b'
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if (
-              result_3.stdout | default('') | trim | length > 0 and
-              'blacklist dccp' in result_3.stdout and
-              ('install dccp /bin/false' in result_3.stdout or 'install dccp /bin/true' in result_3.stdout)
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when the output contains 'blacklist dccp' AND ('install dccp /bin/false' OR 'install dccp /bin/true'), FAIL otherwise"
-      when: data_1 | trim != ''
+        task_2_name: "Req 2 - Verify dccp kernel module is not loaded and not loadable"
+        task_2_cmd: |
+          lsmod | grep 'dccp'; modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+dccp\b'
+        task_2_rc: "{{ result_2_loaded.rc | default(-1) }}"
+        data_2: "Loaded check: {{ result_2_loaded.stdout | default('') | trim }}; Loadable check: {{ result_2_loadable.stdout | default('') | trim }}"
+        status_2: >-
+          {% if data_1 | trim == '' %}
+            NA
+          {% else %}
+            {% set loaded_output = result_2_loaded.stdout | default('') | trim %}
+            {% set loadable_output = result_2_loadable.stdout | default('') | trim %}
+            {% if loaded_output == '' and (('blacklist dccp' in loadable_output) and (('install dccp /bin/false' in loadable_output) or ('install dccp /bin/true' in loadable_output))) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if data_1 | trim == '' %}
+            Requirement 2 not applicable - dccp module not found
+          {% else %}
+            {% set loaded_output = result_2_loaded.stdout | default('') | trim %}
+            {% set loadable_output = result_2_loadable.stdout | default('') | trim %}
+            {% if loaded_output == '' and (('blacklist dccp' in loadable_output) and (('install dccp /bin/false' in loadable_output) or ('install dccp /bin/true' in loadable_output))) %}
+              PASS: dccp not loaded AND properly blacklisted with install command
+            {% else %}
+              FAIL: dccp is loaded or not properly blacklisted/disabled
+            {% endif %}
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify: Ensure dccp kernel module is not available
-    - name: Store requirement 4 details and determine overall status
+    # Requirement 3: Overall compliance
+    - name: Store requirement 3 details
       set_fact:
-        status_4: >
-          {{ (
-            'PASS' if
-            (data_1 | trim == '') or
-            (data_1 | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        task_3_name: "Req 3 - Overall verification"
+        task_3_cmd: "N/A - Calculated status"
+        task_3_rc: 0
+        data_3: "Req1 status: {{ status_1 }}; Req2 status: {{ status_2 }}"
+        status_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS: dccp kernel module is not available on the system
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' %}
+            PASS: dccp kernel module exists but is disabled (not loaded and not loadable)
+          {% else %}
+            FAIL: dccp kernel module is available and not properly disabled
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.2.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.2.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -182,6 +192,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Rationale: {{ rationale_3 | trim }}"
           - "========================================================"

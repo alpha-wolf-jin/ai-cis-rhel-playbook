@@ -1,0 +1,462 @@
+---
+- name: Remediation for CIS 1.3.1.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_3_1_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.3.1.2"
+    # REQUIREMENT TEXTS (quoted strings)
+    req_1: "Apply removal of selinux=0 and enforcing=0 kernel arguments"
+    req_2: "Run remediation script for legacy grub configuration"
+    req_3: "VERIFY: Run audit check to confirm SELinux is not disabled in bootloader configuration"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, restore from backup
+    - name: "State Guard - Restore bootloader configuration from backup"
+      shell: |
+        # Restore any backed up bootloader configs
+        {% raw %}
+        if [ -f "{{ state_guard_dir }}/grubenv.bak" ]; then
+          cp "{{ state_guard_dir }}/grubenv.bak" /boot/grub2/grubenv 2>/dev/null || true
+        fi
+        if [ -f "{{ state_guard_dir }}/grub.cfg.bak" ]; then
+          cp "{{ state_guard_dir }}/grub.cfg.bak" /boot/grub2/grub.cfg 2>/dev/null || true
+        fi
+        if [ -f "{{ state_guard_dir }}/bls_backup.tar.gz" ]; then
+          tar -xzf "{{ state_guard_dir }}/bls_backup.tar.gz" -C /boot/loader/entries/ 2>/dev/null || true
+        fi
+        # Regenerate grub config if needed
+        command -v grub2-mkconfig >/dev/null 2>&1 && grub2-mkconfig -o /boot/grub2/grub.cfg 2>/dev/null || true
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup bootloader configuration files"
+      shell: |
+        {% raw %}
+        # Backup grubenv
+        [ -f /boot/grub2/grubenv ] && cp /boot/grub2/grubenv "{{ state_guard_dir }}/grubenv.bak" 2>/dev/null || true
+        # Backup grub.cfg
+        [ -f /boot/grub2/grub.cfg ] && cp /boot/grub2/grub.cfg "{{ state_guard_dir }}/grub.cfg.bak" 2>/dev/null || true
+        # Backup BLS entries if they exist
+        if [ -d /boot/loader/entries ] && [ "$(ls -A /boot/loader/entries 2>/dev/null)" ]; then
+          tar -czf "{{ state_guard_dir }}/bls_backup.tar.gz" -C /boot/loader/entries . 2>/dev/null || true
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        req_1: "{{ req_1 }}"
+        req_2: "{{ req_2 }}"
+        req_3: "{{ req_3 }}"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Apply removal of selinux=0 and enforcing=0 kernel arguments
+    - name: "Req 1 - Check if grubby is available"
+      shell: |
+        echo "=== CHECKING FOR REQUIRED TOOLS ==="
+        if command -v grubby >/dev/null 2>&1; then
+          echo "grubby is available"
+          exit 0
+        else
+          echo "grubby is not available"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: check_grubby
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Req 1 - Remove SELinux disabling parameters from bootloader"
+      shell: |
+        echo "=== BEFORE ==="
+        echo "Current kernel arguments:"
+        grubby --info=ALL 2>/dev/null | grep -E "^(index|args)" || echo "No kernel entries found"
+        echo ""
+        echo "=== APPLYING CHANGE ==="
+        # Check if parameters exist before removal
+        if grubby --info=ALL 2>/dev/null | grep -q "selinux=0\|enforcing=0"; then
+          echo "Found SELinux disabling parameters, removing them..."
+          grubby --update-kernel ALL --remove-args "selinux=0 enforcing=0"
+          echo "Parameters removed"
+        else
+          echo "No SELinux disabling parameters found, nothing to remove"
+        fi
+        echo "=== AFTER ==="
+        echo "Updated kernel arguments:"
+        grubby --info=ALL 2>/dev/null | grep -E "^(index|args)" || echo "No kernel entries found"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when: check_grubby.rc == 0
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Remove SELinux disabling parameters using grubby"
+        task_1_cmd: "grubby --update-kernel ALL --remove-args 'selinux=0 enforcing=0'"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if check_grubby.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if check_grubby.rc | default(-1) != 0 %}
+            SKIPPED: grubby command is not available on this system
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: SELinux disabling parameters removed from bootloader configuration
+          {% else %}
+            FAILED: Could not remove SELinux disabling parameters from bootloader configuration
+          {% endif %}
+
+    # Requirement 2: Run remediation script for legacy grub configuration
+    - name: "Req 2 - Check if grub2-mkconfig is available"
+      shell: |
+        echo "=== CHECKING FOR REQUIRED TOOLS ==="
+        if command -v grub2-mkconfig >/dev/null 2>&1; then
+          echo "grub2-mkconfig is available"
+          exit 0
+        else
+          echo "grub2-mkconfig is not available"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: check_grub2_mkconfig
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | default('UNKNOWN') | trim != 'SKIPPED'
+
+    - name: "Req 2 - Execute CIS remediation script for legacy grub configuration"
+      copy:
+        dest: "/var/tmp/cis_remediation_1_3_1_2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          echo "=== CHECKING FOR LEGACY GRUB CONFIGURATION ==="
+          echo "Searching for SELinux disabling parameters in /boot/grub2 and /boot/efi..."
+          if grep -Prsq -- '\h*([^#\n\r]+\h+)?kernelopts=([^#\n\r]+\h+)?(selinux|enforcing)=0\b' /boot/grub2 /boot/efi; then
+            echo "Found SELinux disabling parameters in legacy grub configuration"
+            target_file="$(grep -Prl -- '\h*([^#\n\r]+\h+)?kernelopts=([^#\n\r]+\h+)?(selinux|enforcing)=0\b' /boot/grub2 /boot/efi 2>/dev/null | head -1)"
+            if [ -n "$target_file" ]; then
+              echo "Regenerating grub configuration: $target_file"
+              grub2-mkconfig -o "$target_file"
+              echo "Legacy grub configuration regenerated"
+            else
+              echo "Could not determine target file for regeneration"
+            fi
+          else
+            echo "No SELinux disabling parameters found in legacy grub configuration"
+          fi
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: >
+        status_1 | default('UNKNOWN') | trim != 'SKIPPED' and
+        check_grub2_mkconfig.rc == 0
+
+    - name: "Req 2 - Execute the remediation script"
+      shell: "bash /var/tmp/cis_remediation_1_3_1_2.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: >
+        status_1 | default('UNKNOWN') | trim != 'SKIPPED' and
+        check_grub2_mkconfig.rc == 0 and
+        script_create_2.changed | default(false)
+
+    - name: "Req 2 - Remove temporary remediation script"
+      file:
+        path: "/var/tmp/cis_remediation_1_3_1_2.sh"
+        state: absent
+      ignore_errors: true
+      when: >
+        status_1 | default('UNKNOWN') | trim != 'SKIPPED' and
+        check_grub2_mkconfig.rc == 0
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Execute CIS remediation script for legacy grub configuration"
+        task_2_cmd: "bash /var/tmp/cis_remediation_1_3_1_2.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif check_grub2_mkconfig.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED: Previous requirement was skipped, skipping this requirement
+          {% elif check_grub2_mkconfig.rc | default(-1) != 0 %}
+            SKIPPED: grub2-mkconfig command is not available on this system
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Legacy grub configuration checked and regenerated if needed
+          {% else %}
+            FAILED: Could not regenerate legacy grub configuration
+          {% endif %}
+
+    # Requirement 3: VERIFY audit check
+    - name: "Req 3 - Verify SELinux is not disabled in bootloader configuration"
+      shell: |
+        echo "=== COMPREHENSIVE AUDIT CHECK ==="
+        echo "Checking for SELinux disabling parameters in ALL bootloader configuration files..."
+        
+        # Initialize counters
+        total_matches=0
+        files_checked=0
+        
+        # Function to check a file for SELinux disabling parameters
+        check_file() {
+          local file="$1"
+          if [ -f "$file" ]; then
+            echo "Checking $file..."
+            local count=$(grep -Pc '^\h*([^#\n\r]+\h+)?(kernelopts|kernel)\h*=\h*([^#\n\r]+\h+)?\b(selinux|enforcing)=0\b' "$file" 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ]; then
+              echo "  WARNING: Found $count SELinux disabling parameter(s) in $file"
+              grep -P '^\h*([^#\n\r]+\h+)?(kernelopts|kernel)\h*=\h*([^#\n\r]+\h+)?\b(selinux|enforcing)=0\b' "$file" 2>/dev/null
+            else
+              echo "  OK: No SELinux disabling parameters found"
+            fi
+            total_matches=$((total_matches + count))
+            files_checked=$((files_checked + 1))
+          fi
+        }
+        
+        # Check standard grub2 files
+        check_file "/boot/grub2/grubenv"
+        check_file "/boot/grub2/grub.cfg"
+        check_file "/boot/grub/grub.cfg"
+        
+        # Check BLS entries if they exist
+        if [ -d /boot/loader/entries ]; then
+          echo "Checking BLS entries in /boot/loader/entries..."
+          for entry in /boot/loader/entries/*.conf; do
+            check_file "$entry"
+          done
+        fi
+        
+        # Check EFI directories if they exist
+        if [ -d /boot/efi ]; then
+          echo "Checking EFI configuration files..."
+          find /boot/efi -type f \( -name "grubenv" -o -name "grub.cfg" -o -name "*.conf" \) 2>/dev/null | while read -r file; do
+            check_file "$file"
+          done
+        fi
+        
+        # Check for any kernel command line parameters
+        echo ""
+        echo "=== CHECKING CURRENT KERNEL COMMAND LINE ==="
+        if [ -f /proc/cmdline ]; then
+          echo "Current kernel command line from /proc/cmdline:"
+          cat /proc/cmdline
+          cmdline_matches=$(grep -c '\b(selinux|enforcing)=0\b' /proc/cmdline 2>/dev/null || echo 0)
+          if [ "$cmdline_matches" -gt 0 ]; then
+            echo "  WARNING: Found SELinux disabling parameters in current kernel command line!"
+            total_matches=$((total_matches + cmdline_matches))
+          else
+            echo "  OK: No SELinux disabling parameters in current kernel command line"
+          fi
+        fi
+        
+        # Check grubby configuration
+        echo ""
+        echo "=== CHECKING GRUBBY CONFIGURATION ==="
+        if command -v grubby >/dev/null 2>&1; then
+          echo "Checking grubby configuration for all kernels..."
+          grubby_output=$(grubby --info=ALL 2>/dev/null || echo "grubby command failed")
+          if echo "$grubby_output" | grep -q "selinux=0\|enforcing=0"; then
+            echo "  WARNING: Found SELinux disabling parameters in grubby configuration!"
+            echo "$grubby_output" | grep -B1 -A1 "selinux=0\|enforcing=0"
+            grubby_matches=$(echo "$grubby_output" | grep -c "selinux=0\|enforcing=0")
+            total_matches=$((total_matches + grubby_matches))
+          else
+            echo "  OK: No SELinux disabling parameters in grubby configuration"
+          fi
+        else
+          echo "  grubby command not available"
+        fi
+        
+        echo ""
+        echo "=== SUMMARY ==="
+        echo "Files checked: $files_checked"
+        echo "Total SELinux disabling parameter matches found: $total_matches"
+        
+        if [ "$total_matches" -eq 0 ]; then
+          echo "COMPLIANT: No SELinux disabling parameters found in bootloader configuration"
+          exit 0
+        else
+          echo "NON-COMPLIANT: Found $total_matches instances of SELinux disabling parameters in bootloader configuration"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: status_1 | default('UNKNOWN') | trim != 'SKIPPED'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify SELinux is not disabled in bootloader configuration"
+        task_3_cmd: "Comprehensive audit of all bootloader configuration files"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_3.rc | default(-1) == 1 %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED: Previous requirement was skipped, skipping verification
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: System is compliant - no SELinux disabling parameters found in bootloader configuration
+          {% elif result_3.rc | default(-1) == 1 %}
+            FAILED: System is non-compliant - SELinux disabling parameters still present in bootloader configuration
+          {% else %}
+            FAILED: Could not complete audit check
+          {% endif %}
+
+    - name: Determine overall remediation status
+      set_fact:
+        # Determine overall remediation status
+        overall_status: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s3 == 'APPLIED' %}
+            APPLIED
+          {% elif s3 == 'FAILED' %}
+            FAILED
+          {% elif s1 == 'FAILED' or s2 == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif s2 == 'SKIPPED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set r1 = rationale_1 | default('') | trim %}
+          {% set r2 = rationale_2 | default('') | trim %}
+          {% set r3 = rationale_3 | default('') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED: Required tool 'grubby' is not installed on this system
+          {% elif s3 == 'APPLIED' %}
+            System is compliant - SELinux is not disabled in bootloader configuration
+          {% elif s3 == 'FAILED' %}
+            FAILED: Remediation applied but system is still non-compliant - manual review may be needed
+          {% elif s3 == 'SKIPPED' %}
+            SKIPPED: Verification skipped due to previous requirements being skipped
+          {% elif s1 == 'FAILED' %}
+            PARTIALLY APPLIED: First remediation step failed
+          {% elif s2 == 'SKIPPED' %}
+            PARTIALLY APPLIED: Legacy grub remediation was skipped (grub2-mkconfig not available)
+          {% elif s2 == 'FAILED' %}
+            PARTIALLY APPLIED: Legacy grub remediation failed
+          {% else %}
+            Remediation status could not be determined - manual review needed
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.3.1.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

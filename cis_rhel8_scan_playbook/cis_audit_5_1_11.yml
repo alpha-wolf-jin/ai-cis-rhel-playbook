@@ -2,16 +2,13 @@
 - name: Data Collection for CIS 5.1.11
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.11"
-    req_1: "Check sshd GSSAPIAuthentication in global configuration"
-    req_2: "If Match blocks are used, check sshd GSSAPIAuthentication for each applicable user/connection parameter combination"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.11"
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Run the provided CIS audit script to verify Ensure sshd GSSAPIAuthentication is disabled"
+    req_2: "IF - Match set statements are used in your environment, specify the connection parameters to use for the -T extended test mode and run the audit to verify the setting is not incorrectly configured in a match block"
     req_3: "OVERALL Verify: Ensure sshd GSSAPIAuthentication is disabled"
-    # Configurable list of users to check for Match blocks
-    match_block_users: []
-    # Variable to track if Match blocks exist
-    match_blocks_exist: false
 
   tasks:
     - name: Initialize data variables
@@ -25,171 +22,131 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        data_2: "Match block check not configured"
-        status_2: "NA"
-        rationale_2: "NA - No Match blocks detected or users configured"
 
-    # Check if Match blocks exist in sshd configuration
-    - name: Detect Match blocks in sshd configuration
+    # Check for Match blocks in sshd configuration
+    - name: Check for Match blocks in sshd configuration
       shell: |
-        if [ -f /etc/ssh/sshd_config ]; then
-          grep -i "^Match" /etc/ssh/sshd_config
+        # Check if sshd_config contains Match blocks
+        if grep -q -E '^\s*Match\s+' /etc/ssh/sshd_config; then
+          echo "true"
+        else
+          echo "false"
         fi
+      args:
+        executable: /bin/bash
       register: match_blocks_check
       ignore_errors: true
       changed_when: false
 
-    - name: Set match_blocks_exist fact
-      set_fact:
-        match_blocks_exist: "{{ match_blocks_check.stdout | trim | length > 0 }}"
-      when: match_blocks_check is defined
+    # Requirement 1: Run the provided CIS audit script (basic check)
+    - name: Req 1 - Execute CIS audit script for GSSAPIAuthentication
+      copy:
+        dest: "/tmp/cis_audit_5.1.11_basic.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -i gssapiauthentication
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
 
-    # Requirement 1: Check sshd GSSAPIAuthentication in global configuration
-    - name: "Req 1 - Check global sshd GSSAPIAuthentication"
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY | grep -i gssapiauthentication
+    - name: Req 1 - Execute the basic audit script
+      shell: "/tmp/cis_audit_5.1.11_basic.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary basic audit script
+      file:
+        path: "/tmp/cis_audit_5.1.11_basic.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global sshd GSSAPIAuthentication"
-        task_1_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config
-          source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -i gssapiauthentication
+        task_1_name: "Execute CIS audit script for GSSAPIAuthentication"
+        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i gssapiauthentication"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output | lower == 'gssapiauthentication no' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output | lower == 'gssapiauthentication no' %}
-            PASS when the output is exactly 'gssapiauthentication no', FAIL otherwise
-          {% else %}
-            FAIL: Expected 'gssapiauthentication no', got '{{ output }}'
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | lower == 'gssapiauthentication no') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when script output shows gssapiauthentication no' if (result_1.stdout | default('') | trim | lower == 'gssapiauthentication no') else 'FAIL: Expected gssapiauthentication no, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: Check Match blocks if they exist and users are configured
-    - name: "Req 2 - Check sshd GSSAPIAuthentication for Match blocks"
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ item }} | grep -i gssapiauthentication
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      loop: "{{ match_block_users }}"
-      when: match_blocks_exist and match_block_users | length > 0
+    # Requirement 2: Conditional audit for match blocks
+    - name: Req 2 - Execute match block audit script if match blocks exist
+      block:
+        - name: Req 2 - Create match block audit script
+          copy:
+            dest: "/tmp/cis_audit_5.1.11_match.sh"
+            mode: '0700'
+            content: |
+              {% raw %}
+              #!/usr/bin/env bash
+              source /etc/crypto-policies/back-ends/opensshserver.config
+              source /etc/sysconfig/sshd
+              # Test with common connection parameters as specified in audit procedure
+              # Using root user as a common case for match block testing
+              sshd -T $OPTIONS $CRYPTO_POLICY -C user=root | grep -i gssapiauthentication
+              {% endraw %}
+          register: script_create_2
+          ignore_errors: true
 
-    - name: Store requirement 2 details when executed
+        - name: Req 2 - Execute the match block audit script
+          shell: "/tmp/cis_audit_5.1.11_match.sh"
+          args:
+            executable: /bin/bash
+          register: result_2
+          ignore_errors: true
+          changed_when: false
+
+        - name: Req 2 - Remove temporary match block audit script
+          file:
+            path: "/tmp/cis_audit_5.1.11_match.sh"
+            state: absent
+          ignore_errors: true
+
+        - name: Store requirement 2 details (when match blocks exist)
+          set_fact:
+            task_2_name: "Execute match block audit for GSSAPIAuthentication"
+            task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=root | grep -i gssapiauthentication"
+            task_2_rc: "{{ result_2.rc | default(-1) }}"
+            data_2: "{{ result_2.stdout | default('') | trim }}"
+            status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | lower == 'gssapiauthentication no') else 'FAIL') | trim }}"
+            rationale_2: "{{ ('PASS when match block audit output shows gssapiauthentication no' if (result_2.stdout | default('') | trim | lower == 'gssapiauthentication no') else 'FAIL: Expected gssapiauthentication no in match block, got ' + (result_2.stdout | default('') | trim)) | trim }}"
+      when: match_blocks_check.stdout | default('') | trim == 'true'
+
+    - name: Store requirement 2 details (when no match blocks)
       set_fact:
-        task_2_name: "Check sshd GSSAPIAuthentication for Match blocks"
-        task_2_cmd: |
-          {% if match_block_users | length > 0 %}
-          Checked users: {{ match_block_users | join(', ') }}
-          {% for user in match_block_users %}
-          Command for user {{ user }}: source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ user }} | grep -i gssapiauthentication
-          {% endfor %}
-          {% else %}
-          No users configured for Match block checking
-          {% endif %}
-        task_2_rc: "{{ result_2.results | map(attribute='rc') | list if result_2 is defined else -1 }}"
-        data_2: >-
-          {% if result_2 is defined and result_2.results %}
-          {% for item in result_2.results %}
-          User '{{ item.item }}': {{ item.stdout | default('') | trim }}
-          {% endfor %}
-          {% else %}
-          Match block check not executed
-          {% endif %}
-        status_2: >-
-          {% if not match_blocks_exist or match_block_users | length == 0 %}
-            NA
-          {% elif result_2 is defined and result_2.results %}
-            {% set all_pass = true %}
-            {% for item in result_2.results %}
-              {% if item.stdout | default('') | trim | lower != 'gssapiauthentication no' %}
-                {% set all_pass = false %}
-              {% endif %}
-            {% endfor %}
-            {% if all_pass %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_2: >-
-          {% if not match_blocks_exist or match_block_users | length == 0 %}
-            NA - No Match blocks detected or users configured
-          {% elif result_2 is defined and result_2.results %}
-            {% set all_pass = true %}
-            {% set failed_users = [] %}
-            {% for item in result_2.results %}
-              {% if item.stdout | default('') | trim | lower != 'gssapiauthentication no' %}
-                {% set all_pass = false %}
-                {% set _ = failed_users.append(item.item) %}
-              {% endif %}
-            {% endfor %}
-            {% if all_pass %}
-              PASS when the output for each tested combination is exactly 'gssapiauthentication no', FAIL otherwise
-            {% else %}
-              FAIL: Users with incorrect GSSAPIAuthentication setting: {{ failed_users | join(', ') }}
-            {% endif %}
-          {% else %}
-            UNKNOWN - Match block check execution failed
-          {% endif %}
-      when: match_blocks_exist and match_block_users | length > 0
+        task_2_name: "Match block audit not required"
+        task_2_cmd: "N/A - No match blocks found in sshd configuration"
+        task_2_rc: 0
+        data_2: "No match blocks found in sshd configuration"
+        status_2: "PASS"
+        rationale_2: "PASS: No match blocks found in sshd configuration, so additional match block audit is not required"
+      when: match_blocks_check.stdout | default('') | trim != 'true'
 
-    # Requirement 3: Overall verification
+    # Requirement 3: OVERALL Verify
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - calculated from req_1 and req_2 results"
+        task_3_name: "OVERALL Verify: Ensure sshd GSSAPIAuthentication is disabled"
+        task_3_cmd: "N/A - Overall verification based on requirements 1 and 2"
         task_3_rc: 0
-        data_3: "Global check: {{ data_1 | trim }}; Match block check status: {{ status_2 | trim }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            {% if status_2 | trim == 'NA' or status_2 | trim == 'PASS' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            {% if status_2 | trim == 'NA' or status_2 | trim == 'PASS' %}
-              PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS)
-            {% else %}
-              FAIL: Global check passed but Match block check failed
-            {% endif %}
-          {% else %}
-            FAIL: Global check failed
-          {% endif %}
+        data_3: "Requirement 1 status: {{ status_1 | default('UNKNOWN') }}, Requirement 2 status: {{ status_2 | default('UNKNOWN') }}"
+        status_3: "{{ ('PASS' if (status_1 | default('UNKNOWN') | trim == 'PASS' and status_2 | default('UNKNOWN') | trim == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when both requirement 1 and requirement 2 are PASS' if (status_1 | default('UNKNOWN') | trim == 'PASS' and status_2 | default('UNKNOWN') | trim == 'PASS') else 'FAIL: One or both requirements are not PASS. Req1: ' + (status_1 | default('UNKNOWN')) + ', Req2: ' + (status_2 | default('UNKNOWN'))) | trim }}"
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.11"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -218,6 +175,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

@@ -1,0 +1,336 @@
+---
+- name: Remediation for CIS 5.1.17 - Ensure sshd MaxStartups is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_17"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.17"
+    
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Check if sshd is installed using command: rpm -q openssh-server"
+    req_2: "Apply configuration MaxStartups 10:30:60 to /etc/ssh/sshd_config"
+    req_3: "Apply removal of any duplicate MaxStartups directives in /etc/ssh/sshd_config"
+    req_4: "VERIFY: Confirm MaxStartups is set to 10:30:60"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/ssh/sshd_config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if sshd_config exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/ssh/sshd_config exists"
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    # Backup existing sshd_config with .present suffix
+    - name: "State Guard - Backup /etc/ssh/sshd_config (present)"
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if sshd is installed using command: rpm -q openssh-server
+    - name: "Req 1 - Check if openssh-server is installed"
+      shell: |
+        echo "=== CHECKING OPENSSH-SERVER INSTALLATION ==="
+        rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if openssh-server is installed"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif "package openssh-server is not installed" in result_1.stdout | default('') %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: openssh-server is installed on this server
+          {% elif "package openssh-server is not installed" in result_1.stdout | default('') %}
+            SKIPPED: Remediation not applicable - openssh-server is not installed on this server
+          {% else %}
+            FAILED: Could not determine openssh-server installation status
+          {% endif %}
+        openssh_installed: "{{ result_1.rc | default(-1) == 0 }}"
+
+    # Requirement 2: Apply configuration MaxStartups 10:30:60 to /etc/ssh/sshd_config
+    - name: "Req 2 - Apply MaxStartups configuration to sshd_config"
+      shell: |
+        echo "=== BEFORE MODIFICATION ==="
+        cat /etc/ssh/sshd_config
+        echo "=== APPLYING CHANGE ==="
+        echo 'MaxStartups 10:30:60' >> /etc/ssh/sshd_config
+        echo "=== AFTER MODIFICATION ==="
+        cat /etc/ssh/sshd_config
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: openssh_installed | default(false)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply MaxStartups 10:30:60 to sshd_config"
+        task_2_cmd: "echo 'MaxStartups 10:30:60' >> /etc/ssh/sshd_config"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: Line 'MaxStartups 10:30:60' was appended to /etc/ssh/sshd_config
+          {% else %}
+            FAILED: Could not append MaxStartups configuration to /etc/ssh/sshd_config
+          {% endif %}
+      when: openssh_installed | default(false)
+
+    # Requirement 3: Apply removal of any duplicate MaxStartups directives
+    # FIXED: Enhanced deduplication to handle commented vs uncommented lines
+    - name: "Req 3 - Remove duplicate MaxStartups directives"
+      shell: |
+        echo "=== BEFORE DEDUPLICATION ==="
+        cat /etc/ssh/sshd_config
+        echo "=== APPLYING DEDUPLICATION ==="
+        # Remove all MaxStartups lines (commented and uncommented)
+        grep -v "MaxStartups" /etc/ssh/sshd_config > /tmp/sshd_config.tmp
+        # Add back our configured line (ensuring only one instance)
+        echo 'MaxStartups 10:30:60' >> /tmp/sshd_config.tmp
+        mv /tmp/sshd_config.tmp /etc/ssh/sshd_config
+        echo "=== AFTER DEDUPLICATION ==="
+        cat /etc/ssh/sshd_config
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: openssh_installed | default(false)
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remove duplicate MaxStartups directives"
+        task_3_cmd: "grep -v 'MaxStartups' /etc/ssh/sshd_config > /tmp/sshd_config.tmp && echo 'MaxStartups 10:30:60' >> /tmp/sshd_config.tmp && mv /tmp/sshd_config.tmp /etc/ssh/sshd_config"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED: Removed all duplicate MaxStartups directives (including commented ones), keeping only one configured instance
+          {% else %}
+            FAILED: Could not remove duplicate MaxStartups directives from /etc/ssh/sshd_config
+          {% endif %}
+      when: openssh_installed | default(false)
+
+    # Requirement 4: VERIFY: Confirm MaxStartups is set to 10:30:60
+    - name: "Req 4 - Verify MaxStartups configuration"
+      shell: |
+        {% raw %}
+        sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | grep -i maxstartups
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: openssh_installed | default(false)
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify MaxStartups configuration"
+        task_4_cmd: |
+          sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '\''{print $1}'\'')" | grep -i maxstartups
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim | lower %}
+          {% if 'maxstartups 10:30:60' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim | lower %}
+          {% if 'maxstartups 10:30:60' in output %}
+            APPLIED: MaxStartups is correctly set to 10:30:60
+          {% else %}
+            FAILED: Expected 'maxstartups 10:30:60' in output, got '{{ result_4.stdout | default('') | trim }}'
+          {% endif %}
+      when: openssh_installed | default(false)
+
+    # Set defaults for skipped tasks
+    - name: Set default values for skipped requirements
+      set_fact:
+        task_2_name: "Apply MaxStartups 10:30:60 to sshd_config"
+        task_2_cmd: "N/A - Requirement skipped"
+        task_2_rc: -1
+        data_2: "SKIPPED - openssh-server not installed"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: openssh-server not installed - remediation not applicable"
+        task_3_name: "Remove duplicate MaxStartups directives"
+        task_3_cmd: "N/A - Requirement skipped"
+        task_3_rc: -1
+        data_3: "SKIPPED - openssh-server not installed"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: openssh-server not installed - remediation not applicable"
+        task_4_name: "Verify MaxStartups configuration"
+        task_4_cmd: "N/A - Requirement skipped"
+        task_4_rc: -1
+        data_4: "SKIPPED - openssh-server not installed"
+        status_4: "SKIPPED"
+        rationale_4: "SKIPPED: openssh-server not installed - remediation not applicable"
+      when: not (openssh_installed | default(false))
+
+    # Determine overall remediation status
+    # FIXED: Corrected overall status logic to properly handle Requirement 3 failure
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED
+          {% elif status_4 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | default('UNKNOWN') | trim == 'APPLIED' or status_3 | default('UNKNOWN') | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | default('UNKNOWN') | trim == 'FAILED' or status_2 | default('UNKNOWN') | trim == 'FAILED' or status_3 | default('UNKNOWN') | trim == 'FAILED' or status_4 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            openssh-server is not installed on this server - remediation not applicable
+          {% elif status_3 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED: Could not properly remove duplicate MaxStartups directives
+          {% elif status_4 | default('UNKNOWN') | trim == 'APPLIED' %}
+            Successfully configured MaxStartups to 10:30:60 and verified the setting
+          {% elif status_2 | default('UNKNOWN') | trim == 'APPLIED' or status_3 | default('UNKNOWN') | trim == 'APPLIED' %}
+            Applied MaxStartups configuration but verification failed
+          {% elif status_1 | default('UNKNOWN') | trim == 'FAILED' %}
+            Could not determine if openssh-server is installed
+          {% elif status_2 | default('UNKNOWN') | trim == 'FAILED' %}
+            Failed to apply MaxStartups configuration to /etc/ssh/sshd_config
+          {% elif status_3 | default('UNKNOWN') | trim == 'FAILED' %}
+            Failed to remove duplicate MaxStartups directives
+          {% elif status_4 | default('UNKNOWN') | trim == 'FAILED' %}
+            MaxStartups verification failed - may need to restart sshd service
+          {% else %}
+            Could not determine remediation status
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.17"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('') | trim }}"
+          - "========================================================"

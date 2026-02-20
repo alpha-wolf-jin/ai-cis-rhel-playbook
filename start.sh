@@ -1,5 +1,6 @@
 
 
+export ANSIBLE_BECOME_PASS="P@ssw0rd"
 
 #source /ai/demojam/incident/.venv/bin/activate
 #/ai/demojam/incident/aap/playbook/deepseek_generate_playbook.py 

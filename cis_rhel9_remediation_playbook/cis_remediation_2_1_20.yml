@@ -1,0 +1,215 @@
+---
+- name: Remediation for CIS 2.1.20
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_20"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.20"
+    req_1: "Check if xorg-x11-server-common package is installed"
+    req_2: "Apply removal of X Windows Server packages"
+    req_3: "VERIFY: Confirm xorg-x11-server-common is not installed"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    - name: "Req 1 - Check if xorg-x11-server-common is installed"
+      shell: rpm -q xorg-x11-server-common
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if xorg-x11-server-common is installed"
+        task_1_cmd: "rpm -q xorg-x11-server-common"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: package is installed, remediation applicable
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED: package is not installed, remediation not applicable
+          {% else %}
+            FAILED: command failed to execute
+          {% endif %}
+
+    - name: "Req 2 - Remove xorg-x11-server-common package"
+      shell: dnf remove -y xorg-x11-server-common
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Remove xorg-x11-server-common package"
+        task_2_cmd: "dnf remove -y xorg-x11-server-common"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'APPLIED' %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'APPLIED' %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: package removed successfully
+            {% else %}
+              FAILED: package removal failed
+            {% endif %}
+          {% else %}
+            SKIPPED: remediation not applicable
+          {% endif %}
+      when: status_1 is defined
+
+    - name: "Req 3 - Verify xorg-x11-server-common is not installed"
+      shell: rpm -q xorg-x11-server-common
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify xorg-x11-server-common is not installed"
+        task_3_cmd: "rpm -q xorg-x11-server-common"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim == 'APPLIED' %}
+            {% if result_3.rc | default(-1) == 1 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'APPLIED' %}
+            {% if result_3.rc | default(-1) == 1 %}
+              APPLIED: package is not installed, verification passed
+            {% else %}
+              FAILED: package is still installed, verification failed
+            {% endif %}
+          {% else %}
+            SKIPPED: remediation not applicable
+          {% endif %}
+      when: status_1 is defined
+
+    - name: "Set overall remediation status"
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'SKIPPED' and status_3 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            Package xorg-x11-server-common was not installed, remediation not applicable
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' %}
+            Package xorg-x11-server-common was successfully removed and verified
+          {% elif status_2 | trim == 'SKIPPED' and status_3 | trim == 'SKIPPED' %}
+            Remediation was not applicable
+          {% else %}
+            Remediation failed or verification failed
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.20"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('No overall details') | trim }}"
+          - "========================================================"

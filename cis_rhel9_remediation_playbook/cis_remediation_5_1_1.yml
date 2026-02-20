@@ -1,0 +1,297 @@
+---
+- name: Remediation for CIS 5.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.1"
+    req_1: "Run the provided CIS remediation script to fix Ensure permissions on /etc/ssh/sshd_config are configured. Run the following script to set ownership and permissions on /etc/ssh/sshd_config and files ending in .conf in the /etc/ssh/sshd_config.d directory: Execute the COMPLETE script as-is"
+    req_2: "VERIFY: Run the CIS audit procedure to confirm Ensure permissions on /etc/ssh/sshd_config are configured is now properly configured"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_1: ""
+        data_2: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+
+    - name: Req 1 - Capture file contents before remediation
+      shell: |
+        echo "=== BEFORE REMEDIATION ==="
+        echo "=== /etc/ssh/sshd_config ==="
+        stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/ssh/sshd_config 2>/dev/null || true
+        echo "=== Files in /etc/ssh/sshd_config.d/ ==="
+        find /etc/ssh/sshd_config.d -type f -print0 2>/dev/null | while IFS= read -r -d $'\0' l_file; do
+          if [ -e "$l_file" ]; then
+            echo "File: $l_file"
+            stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' "$l_file" 2>/dev/null || true
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: file_contents_before
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Execute CIS remediation script for 5.1.1
+      copy:
+        dest: "/tmp/cis_remediation_{{ checkpoint_id }}.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             chmod u-x,og-rwx /etc/ssh/sshd_config
+             chown root:root /etc/ssh/sshd_config
+             while IFS= read -r -d $'\0' l_file; do
+                if [ -e "$l_file" ]; then
+                   chmod u-x,og-rwx "$l_file"
+                   chown root:root "$l_file"
+                fi
+             done < <(find /etc/ssh/sshd_config.d -type f -print0 2>/dev/null)
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the remediation script
+      shell: "/tmp/cis_remediation_{{ checkpoint_id }}.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Req 1 - Capture file contents after remediation
+      shell: |
+        echo "=== AFTER REMEDIATION ==="
+        echo "=== /etc/ssh/sshd_config ==="
+        stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/ssh/sshd_config 2>/dev/null || true
+        echo "=== Files in /etc/ssh/sshd_config.d/ ==="
+        find /etc/ssh/sshd_config.d -type f -print0 2>/dev/null | while IFS= read -r -d $'\0' l_file; do
+          if [ -e "$l_file" ]; then
+            echo "File: $l_file"
+            stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' "$l_file" 2>/dev/null || true
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: file_contents_after
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary remediation script
+      file:
+        path: "/tmp/cis_remediation_{{ checkpoint_id }}.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script"
+        task_1_cmd: "bash /tmp/cis_remediation_{{ checkpoint_id }}.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: |
+          BEFORE:\n{{ file_contents_before.stdout | default('') | trim }}\n\nAFTER:\n{{ file_contents_after.stdout | default('') | trim }}
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: Script executed successfully to set permissions and ownership
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    - name: Req 2 - Verify permissions on sshd_config files
+      shell: |
+        {% raw %}
+        echo "=== Checking /etc/ssh/sshd_config ==="
+        stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/ssh/sshd_config 2>/dev/null
+        
+        echo "=== Checking files in /etc/ssh/sshd_config.d/ ==="
+        find /etc/ssh/sshd_config.d -type f -print0 2>/dev/null | while IFS= read -r -d $'\0' l_file; do
+          if [ -e "$l_file" ]; then
+            echo "File: $l_file"
+            stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' "$l_file" 2>/dev/null
+          fi
+        done
+        
+        echo "=== Verification Summary ==="
+        l_fail=0
+        l_output=""
+        
+        # Check main config file
+        l_mode_str=$(stat -Lc '%a' /etc/ssh/sshd_config 2>/dev/null)
+        l_uid=$(stat -Lc '%u' /etc/ssh/sshd_config 2>/dev/null)
+        l_gid=$(stat -Lc '%g' /etc/ssh/sshd_config 2>/dev/null)
+        
+        # Check if mode is 600 or more restrictive (octal 600 = decimal 384)
+        # AND owned by root:root (uid=0, gid=0)
+        if [ -n "$l_mode_str" ] && [ -n "$l_uid" ] && [ -n "$l_gid" ]; then
+          # Convert octal string to decimal for comparison
+          l_mode_decimal=$((8#$l_mode_str))
+          if [ "$l_mode_decimal" -le 384 ] && [ "$l_uid" -eq 0 ] && [ "$l_gid" -eq 0 ]; then
+            l_output="$l_output\n- /etc/ssh/sshd_config: OK (mode: $l_mode_str octal, $l_mode_decimal decimal, uid: $l_uid, gid: $l_gid)"
+          else
+            l_output="$l_output\n- /etc/ssh/sshd_config: FAIL (mode: $l_mode_str octal, $l_mode_decimal decimal, uid: $l_uid, gid: $l_gid)"
+            l_fail=1
+          fi
+        else
+          l_output="$l_output\n- /etc/ssh/sshd_config: FAIL (cannot stat file)"
+          l_fail=1
+        fi
+        
+        # Check files in sshd_config.d
+        while IFS= read -r -d $'\0' l_file; do
+          if [ -e "$l_file" ]; then
+            l_mode_str=$(stat -Lc '%a' "$l_file" 2>/dev/null)
+            l_uid=$(stat -Lc '%u' "$l_file" 2>/dev/null)
+            l_gid=$(stat -Lc '%g' "$l_file" 2>/dev/null)
+            
+            if [ -n "$l_mode_str" ] && [ -n "$l_uid" ] && [ -n "$l_gid" ]; then
+              # Convert octal string to decimal for comparison
+              l_mode_decimal=$((8#$l_mode_str))
+              if [ "$l_mode_decimal" -le 384 ] && [ "$l_uid" -eq 0 ] && [ "$l_gid" -eq 0 ]; then
+                l_output="$l_output\n- $l_file: OK (mode: $l_mode_str octal, $l_mode_decimal decimal, uid: $l_uid, gid: $l_gid)"
+              else
+                l_output="$l_output\n- $l_file: FAIL (mode: $l_mode_str octal, $l_mode_decimal decimal, uid: $l_uid, gid: $l_gid)"
+                l_fail=1
+              fi
+            else
+              l_output="$l_output\n- $l_file: FAIL (cannot stat file)"
+              l_fail=1
+            fi
+          fi
+        done < <(find /etc/ssh/sshd_config.d -type f -print0 2>/dev/null)
+        
+        if [ "$l_fail" -eq 0 ]; then
+          echo -e "VERIFICATION PASSED: All files have correct permissions and ownership"
+          echo -e "$l_output"
+          exit 0
+        else
+          echo -e "VERIFICATION FAILED: Some files have incorrect permissions or ownership"
+          echo -e "$l_output"
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify permissions on sshd_config files"
+        task_2_cmd: "Audit script for 5.1.1"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 and 'VERIFICATION PASSED' in output %}
+            APPLIED
+          {% elif result_2.rc | default(-1) == 1 and 'VERIFICATION FAILED' in output %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 and 'VERIFICATION PASSED' in output %}
+            APPLIED: System is compliant with CIS 5.1.1 requirements
+          {% elif result_2.rc | default(-1) == 1 and 'VERIFICATION FAILED' in output %}
+            FAILED: System is not compliant with CIS 5.1.1 requirements
+          {% else %}
+            UNKNOWN: Verification script execution error or unexpected output
+          {% endif %}
+
+    - name: Set overall remediation status
+      set_fact:
+        status_overall: >-
+          {% if status_2 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_overall: >-
+          {% if status_2 | trim == 'APPLIED' %}
+            Remediation successfully applied and verified
+          {% elif status_1 | trim == 'FAILED' %}
+            Remediation script failed to execute
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+            Remediation script executed but verification failed
+          {% else %}
+            Status could not be determined
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Details: {{ rationale_1 | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Details: {{ rationale_2 | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_overall | trim }}"
+          - "  Details: {{ rationale_overall | trim }}"
+          - "========================================================"

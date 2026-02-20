@@ -1,0 +1,261 @@
+---
+- name: Remediation for CIS 5.1.16
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_16"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.16"
+    
+    # Exact requirement text from requirements
+    req_1: "Check if sshd is installed using command: rpm -q openssh-server. Expected result: Package openssh-server is installed. If not, SKIP all subsequent steps with status 'SKIPPED' and message 'Remediation not applicable - openssh-server is not installed on this server'."
+    req_2: "Apply MaxAuthTries configuration to /etc/ssh/sshd_config using command: grep -q '^MaxAuthTries' /etc/ssh/sshd_config && sed -i 's/^MaxAuthTries.*/MaxAuthTries 4/' /etc/ssh/sshd_config || echo 'MaxAuthTries 4' >> /etc/ssh/sshd_config. Expected result: /etc/ssh/sshd_config contains the line 'MaxAuthTries 4'."
+    req_3: |
+      VERIFY: Confirm MaxAuthTries is set to 4 or less using command: sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | grep -i maxauthtries. Expected result: Output shows 'maxauthtries 4' (or a lower number).
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/ssh/sshd_config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restart sshd to undo previous changes"
+      shell: systemctl restart sshd
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if /etc/ssh/sshd_config exists"
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    - name: "State Guard - Backup /etc/ssh/sshd_config (present)"
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/ssh/sshd_config as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/sshd_config.absent"
+      when: not _sg_sshd_config_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if openssh-server is installed
+    - name: "Req 1 - Check if openssh-server is installed"
+      shell: |
+        echo "=== Checking openssh-server installation ==="
+        rpm -q openssh-server
+        exit_code=$?
+        if [ $exit_code -eq 0 ]; then
+          echo "Package openssh-server is installed"
+        else
+          echo "Package openssh-server is NOT installed"
+        fi
+        exit $exit_code
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check openssh-server installation"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc | default(-1) != 0 else 'APPLIED') | trim }}"
+        rationale_1: "{{ ('SKIPPED: Remediation not applicable - openssh-server is not installed on this server' if result_1.rc | default(-1) != 0 else 'APPLIED: openssh-server is installed, proceeding with remediation') | trim }}"
+
+    # Requirement 2: Apply MaxAuthTries configuration (only if Requirement 1 passed)
+    - name: "Req 2 - Apply MaxAuthTries configuration"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/ssh/sshd_config
+        echo "=== APPLYING CHANGE ==="
+        grep -q '^MaxAuthTries' /etc/ssh/sshd_config && sed -i 's/^MaxAuthTries.*/MaxAuthTries 4/' /etc/ssh/sshd_config || echo 'MaxAuthTries 4' >> /etc/ssh/sshd_config
+        echo "=== AFTER ==="
+        cat /etc/ssh/sshd_config
+        echo "=== Restarting sshd to apply changes ==="
+        systemctl restart sshd
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply MaxAuthTries configuration"
+        task_2_cmd: "grep -q '^MaxAuthTries' /etc/ssh/sshd_config && sed -i 's/^MaxAuthTries.*/MaxAuthTries 4/' /etc/ssh/sshd_config || echo 'MaxAuthTries 4' >> /etc/ssh/sshd_config; systemctl restart sshd"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('SKIPPED' if status_1 | trim != 'APPLIED' else ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_2: "{{ ('SKIPPED: openssh-server not installed' if status_1 | trim != 'APPLIED' else ('APPLIED: MaxAuthTries configured to 4 in /etc/ssh/sshd_config' if result_2.rc | default(-1) == 0 else 'FAILED: Could not apply MaxAuthTries configuration')) | trim }}"
+
+    # Requirement 3: Verify MaxAuthTries is set correctly (only if Requirement 1 passed)
+    - name: "Req 3 - Verify MaxAuthTries configuration"
+      shell: |
+        {% raw %}
+        sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | grep -i maxauthtries
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify MaxAuthTries setting"
+        task_3_cmd: |
+          sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | grep -i maxauthtries
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output == '' %}
+              FAILED
+            {% else %}
+              {% set parts = output.split() %}
+              {% if parts|length >= 2 and parts[0] | lower == 'maxauthtries' and parts[1] | int <= 4 %}
+                APPLIED
+              {% else %}
+                FAILED
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED: openssh-server not installed
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output == '' %}
+              FAILED: Could not retrieve MaxAuthTries value from sshd configuration
+            {% else %}
+              {% set parts = output.split() %}
+              {% if parts|length >= 2 and parts[0] | lower == 'maxauthtries' and parts[1] | int <= 4 %}
+                APPLIED: MaxAuthTries is set to {{ parts[1] }} (4 or less as required)
+              {% else %}
+                FAILED: MaxAuthTries is set to {{ parts[1] if parts|length >=2 else 'unknown value' }} (should be 4 or less)
+              {% endif %}
+            {% endif %}
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            Remediation not applicable: openssh-server is not installed on this server
+          {% elif status_3 | trim == 'APPLIED' %}
+            MaxAuthTries successfully configured to 4 or less
+          {% elif status_2 | trim == 'APPLIED' %}
+            Configuration applied but verification failed: {{ rationale_3 | default('Unknown verification error') }}
+          {% elif status_2 | trim == 'SKIPPED' %}
+            Remediation skipped: openssh-server not installed
+          {% else %}
+            Remediation failed at step 2: {{ rationale_2 | default('Unknown error') }}
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.16"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.16"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | trim }}"
+          - "  Details: {{ overall_details | trim }}"
+          - "========================================================"

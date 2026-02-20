@@ -1,21 +1,18 @@
 ---
-- name: Data Collection for CIS 2.1.13
+- name: Data Collection for CIS checkpoint 2.1.13
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.13"
-    req_1: "Verify the rsync-daemon package is not installed"
-    req_2: "If the rsync-daemon package is installed, verify rsyncd.socket and rsyncd.service are not enabled"
-    req_3: "If the rsync-daemon package is installed, verify rsyncd.socket and rsyncd.service are not active"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.13"
+    req_1: "Verify rsync-daemon package is not installed"
+    req_2: "If rsync-daemon package is installed, verify rsyncd.socket and rsyncd.service are not enabled"
+    req_3: "If rsync-daemon package is installed, verify rsyncd.socket and rsyncd.service are not active"
     req_4: "OVERALL Verify: Ensure rsync services are not in use"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
-        data_2: "Not collected yet"
-        data_3: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -26,75 +23,88 @@
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify the rsync-daemon package is not installed
+    # Requirement 1: Verify rsync-daemon package is not installed
     - name: Req 1 - Check if rsync-daemon package is installed
-      shell: >
+      shell: |
         rpm -q rsync-daemon
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
         task_1_name: "Check if rsync-daemon package is installed"
         task_1_cmd: "rpm -q rsync-daemon"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package rsync-daemon is not installed') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'package rsync-daemon is not installed', FAIL otherwise"
+        rationale_1: "{{ ('PASS when output is exactly package rsync-daemon is not installed, FAIL when the package is installed' if (result_1.stdout | default('') | trim == 'package rsync-daemon is not installed') else 'FAIL: Package rsync-daemon is installed') | trim }}"
+        rsync_installed: "{{ not (result_1.stdout | default('') | trim == 'package rsync-daemon is not installed') }}"
 
-    # Requirement 2: If package installed, check if services are enabled
-    - name: Req 2 - Check if rsync services are enabled
-      shell: >
+    # Requirement 2: If rsync-daemon package is installed, verify rsyncd.socket and rsyncd.service are not enabled
+    - name: Req 2 - Check if rsyncd services are enabled (if installed)
+      shell: |
         systemctl is-enabled rsyncd.socket rsyncd.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: rsync_installed|bool
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if rsync services are enabled"
+        task_2_name: "Check if rsyncd services are enabled (if installed)"
         task_2_cmd: "systemctl is-enabled rsyncd.socket rsyncd.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when no output is returned, FAIL otherwise"
-      when: status_1 | trim == 'FAIL'
+        rationale_2: "{{ ('PASS when no output is returned (i.e., neither unit is enabled), FAIL when any output is returned' if (result_2.stdout | default('') | trim == '') else 'FAIL: rsyncd.socket or rsyncd.service is enabled') | trim }}"
+      when: rsync_installed|bool
 
-    # Requirement 3: If package installed, check if services are active
-    - name: Req 3 - Check if rsync services are active
-      shell: >
+    # Requirement 3: If rsync-daemon package is installed, verify rsyncd.socket and rsyncd.service are not active
+    - name: Req 3 - Check if rsyncd services are active (if installed)
+      shell: |
         systemctl is-active rsyncd.socket rsyncd.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: rsync_installed|bool
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if rsync services are active"
+        task_3_name: "Check if rsyncd services are active (if installed)"
         task_3_cmd: "systemctl is-active rsyncd.socket rsyncd.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when no output is returned, FAIL otherwise"
-      when: status_1 | trim == 'FAIL'
+        rationale_3: "{{ ('PASS when no output is returned (i.e., neither unit is active), FAIL when any output is returned' if (result_3.stdout | default('') | trim == '') else 'FAIL: rsyncd.socket or rsyncd.service is active') | trim }}"
+      when: rsync_installed|bool
 
     # Requirement 4: Overall compliance
-    - name: Determine overall compliance status
+    - name: Determine overall compliance
       set_fact:
-        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        data_4: "Package installed: {{ rsync_installed|bool }}, Status1: {{ status_1|default('UNKNOWN') }}, Status2: {{ status_2|default('NA') }}, Status3: {{ status_3|default('NA') }}"
+        status_4: >-
+          {% if status_1|default('UNKNOWN')|trim == 'PASS' %}
+            PASS
+          {% elif rsync_installed|bool and status_2|default('NA')|trim == 'PASS' and status_3|default('NA')|trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: >-
+          {% if status_1|default('UNKNOWN')|trim == 'PASS' %}
+            PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)
+          {% elif rsync_installed|bool and status_2|default('NA')|trim == 'PASS' and status_3|default('NA')|trim == 'PASS' %}
+            PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)
+          {% else %}
+            FAIL: Does not meet either condition - rsync-daemon is installed and either enabled or active
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -103,7 +113,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.1.13"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -115,26 +125,26 @@
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not executed (conditional)') }}"
+          - "  Task: {{ task_2_name | default('Task not executed') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Data: {{ data_2 | default('Not applicable - package not installed') | trim }}"
           - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Task not executed - rsync-daemon not installed') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not applicable - package not installed') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not executed (conditional)') }}"
+          - "  Task: {{ task_3_name | default('Task not executed') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Data: {{ data_3 | default('Not applicable - package not installed') | trim }}"
           - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Task not executed - rsync-daemon not installed') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not applicable - package not installed') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: Determine overall compliance status"
-          - "  Command: N/A (calculated)"
+          - "  Task: Overall compliance evaluation"
+          - "  Command: N/A"
           - "  Exit code: N/A"
-          - "  Data: N/A"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

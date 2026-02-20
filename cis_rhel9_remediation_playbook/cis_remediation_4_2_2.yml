@@ -1,0 +1,383 @@
+---
+- name: Remediation for CIS 4.2.2 - Ensure firewalld loopback traffic is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_4_2_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.2.2"
+    req_1: "Run provided CIS remediation script for firewalld loopback traffic configuration"
+    req_2: "Verify the remediation by running the audit check for Ensure firewalld loopback traffic is configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE (only if checkpoint exists from previous failed run) ---
+    # Note: This remediation uses firewall-cmd commands which modify runtime state and persistent configuration
+    # in /etc/firewalld/. We backup the entire firewalld configuration directory.
+    
+    - name: "State Guard - Restore firewalld configuration from backup"
+      shell: |
+        tar -xzf "{{ state_guard_dir }}/firewalld_config.tar.gz" -C /etc
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Reload firewalld after restore"
+      shell: firewall-cmd --reload
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup current firewalld configuration"
+      shell: |
+        tar -czf "{{ state_guard_dir }}/firewalld_config.tar.gz" -C /etc firewalld
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run provided CIS remediation script for firewalld loopback traffic configuration
+    - name: "Req 1 - Execute CIS remediation script for firewalld loopback traffic"
+      copy:
+        dest: "/tmp/cis_remediation_4.2.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {  l_hbfw=""
+             if systemctl is-enabled firewalld.service | grep -q 'enabled'; then
+                echo -e "\n - FirewallD is in use on the system" && l_hbfw="fwd"
+             elif systemctl is-enabled nftables.service 2>/dev/null | grep -q 'enabled'; then
+                echo -e "\n - nftables is in use on the system \n - Recommendation is NA \n - Remediation Complete" && l_hbfw="nft"
+             fi
+             if [ "$l_hbfw" = "fwd" ]; then
+                l_ipsaddr="$(nft list ruleset | awk '/filter_IN_public_deny|hook\s+input\s+/,/\}\s*(#.*)?$/' | grep -P -- 'ip\h+saddr')"
+                if ! nft list ruleset | awk '/hook\s+input\s+/,/\}\s*(#.*)?$/' | grep -Pq -- '\H+\h+"lo"\h+accept'; then
+                   echo -e "\n - Enabling input to accept for loopback address"
+                   firewall-cmd --permanent --zone=trusted --add-interface=lo
+                   firewall-cmd --reload
+                else
+                   echo -e "\n - firewalld input correctly set to accept for loopback address"
+                   if ! grep -Pq -- 'ip\h+saddr\h+127\.0\.0\.0\/8\h+(counter\h+packets\h+\d+\h+bytes\h+\d+\h+)?drop' <<< "$l_ipsaddr" && ! grep -Pq -- 'ip\h+daddr\h+\!\=\h+127\.0\.0\.1\h+ip\h+saddr\h+127\.0\.0\.1\h+drop' <<< "$l_ipsaddr"; then
+                      echo -e "\n - Setting IPv4 network traffic from loopback address to drop"
+                      firewall-cmd --permanent --add-rich-rule='rule family=ipv4 source address="127.0.0.1" destination not address="127.0.0.1" drop'
+                      firewall-cmd --permanent --zone=trusted --add-rich-rule='rule family=ipv4 source address="127.0.0.1" destination not address="127.0.0.1" drop'
+                      firewall-cmd --reload
+                   else
+                      echo -e "\n - firewalld correctly set IPv4 network traffic from loopback address to drop"
+                   fi
+                   if grep -Pq -- '^\h*0\h*$' /sys/module/ipv6/parameters/disable; then
+                      l_ip6saddr="$(nft list ruleset | awk '/filter_IN_public_deny|hook input/,/}/' | grep 'ip6 saddr')"
+                      if ! grep -Pq 'ip6\h+saddr\h+::1\h+(counter\h+packets\h+\d+\h+bytes\h+\d+\h+)?drop' <<< "$l_ip6saddr" && ! grep -Pq -- 'ip6\h+daddr\h+\!=\h+::1\h+ip6\h+saddr\h+::1\h+drop' <<< "$l_ip6saddr"; then
+                         echo -e "\n - Setting IPv6 network traffic from loopback address to drop"
+                         firewall-cmd --permanent --add-rich-rule='rule family=ipv6 source address="::1" destination not address="::1" drop'
+                         firewall-cmd --permanent --zone=trusted --add-rich-rule='rule family=ipv6 source address="::1" destination not address="::1" drop'
+                         firewall-cmd --reload
+                      else
+                         echo -e "\n - firewalld correctly set IPv6 network traffic from loopback address to drop"
+                      fi
+                   fi
+                fi
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Execute the remediation script"
+      shell: "/tmp/cis_remediation_4.2.2.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_4.2.2.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: "Store requirement 1 details"
+      set_fact:
+        task_1_name: "Execute CIS remediation script for firewalld loopback traffic"
+        task_1_cmd: "bash /tmp/cis_remediation_4.2.2.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if 'nftables is in use' in output %}
+              SKIPPED
+            {% elif 'FirewallD is in use' in output %}
+              {% set changes_made = [] %}
+              {% if 'Enabling input' in output %}
+                {% set changes_made = changes_made + ['lo_interface_added'] %}
+              {% endif %}
+              {% if 'Setting IPv4' in output %}
+                {% set changes_made = changes_made + ['ipv4_rule_added'] %}
+              {% endif %}
+              {% if 'Setting IPv6' in output %}
+                {% set changes_made = changes_made + ['ipv6_rule_added'] %}
+              {% endif %}
+              {% if 'Remediation Complete' in output or changes_made|length > 0 or ('firewalld input correctly set' in output and ('firewalld correctly set IPv4' in output or 'Setting IPv4' in output)) %}
+                APPLIED
+              {% else %}
+                FAILED
+              {% endif %}
+            {% else %}
+              APPLIED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if 'nftables is in use' in output %}
+              SKIPPED: nftables in use, recommendation is NA
+            {% elif 'FirewallD is in use' in output %}
+              {% set details = [] %}
+              {% if 'Enabling input' in output %}
+                {% set details = details + ['Lo interface added to trusted zone'] %}
+              {% elif 'firewalld input correctly set' in output %}
+                {% set details = details + ['Lo interface already in trusted zone'] %}
+              {% endif %}
+              {% if 'Setting IPv4' in output %}
+                {% set details = details + ['IPv4 drop rule configured'] %}
+              {% elif 'firewalld correctly set IPv4' in output %}
+                {% set details = details + ['IPv4 drop rule already configured'] %}
+              {% endif %}
+              {% if 'Setting IPv6' in output %}
+                {% set details = details + ['IPv6 drop rule configured'] %}
+              {% elif 'firewalld correctly set IPv6' in output %}
+                {% set details = details + ['IPv6 drop rule already configured'] %}
+              {% endif %}
+              {{ details | join(', ') | default('Script executed successfully') }}
+            {% else %}
+              Script executed successfully
+            {% endif %}
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default('unknown') }}
+          {% endif %}
+
+    # Requirement 2: Verify the remediation by running the audit check for Ensure firewalld loopback traffic is configured
+    # FIXED: Updated verification script to check nftables rules instead of firewall-cmd zone membership
+    # This aligns with the CIS remediation procedure which checks nftables rules for accepting "lo"
+    - name: "Req 2 - Verify firewalld loopback traffic configuration (CIS audit alignment)"
+      shell: |
+        {% raw %}
+        # CIS 4.2.2 verification script - aligned with remediation procedure
+        echo "=== CIS 4.2.2 Verification ==="
+        
+        # Check if firewalld is enabled
+        if systemctl is-enabled firewalld.service 2>/dev/null | grep -q 'enabled'; then
+           echo "FirewallD is enabled"
+           
+           # Get nftables ruleset for analysis
+           nft_ruleset=$(nft list ruleset 2>/dev/null)
+           
+           # Check 1: Verify lo interface is accepted (from nft ruleset)
+           if echo "$nft_ruleset" | awk '/hook\s+input\s+/,/\}\s*(#.*)?$/' | grep -Pq -- '\H+\h+"lo"\h+accept'; then
+              echo "PASS: nftables input hook correctly accepts loopback interface"
+           else
+              echo "FAIL: nftables input hook does not accept loopback interface"
+              exit 1
+           fi
+           
+           # Check 2: Get IPv4 saddr rules for analysis
+           l_ipsaddr=$(echo "$nft_ruleset" | awk '/filter_IN_public_deny|hook\s+input\s+/,/\}\s*(#.*)?$/' | grep -P -- 'ip\h+saddr')
+           
+           # Check 3: Verify IPv4 drop rule for loopback traffic
+           if echo "$l_ipsaddr" | grep -Pq -- 'ip\h+saddr\h+127\.0\.0\.0\/8\h+(counter\h+packets\h+\d+\h+bytes\h+\d+\h+)?drop' || \
+              echo "$l_ipsaddr" | grep -Pq -- 'ip\h+daddr\h+\!\=\h+127\.0\.0\.1\h+ip\h+saddr\h+127\.0\.0\.1\h+drop'; then
+              echo "PASS: IPv4 loopback drop rule is configured in nftables"
+           else
+              echo "FAIL: IPv4 loopback drop rule is NOT configured in nftables"
+              exit 1
+           fi
+           
+           # Check 4: Verify IPv6 if enabled
+           if grep -Pq -- '^\h*0\h*$' /sys/module/ipv6/parameters/disable 2>/dev/null; then
+              echo "IPv6 is enabled"
+              l_ip6saddr=$(echo "$nft_ruleset" | awk '/filter_IN_public_deny|hook input/,/}/' | grep 'ip6 saddr')
+              
+              if echo "$l_ip6saddr" | grep -Pq 'ip6\h+saddr\h+::1\h+(counter\h+packets\h+\d+\h+bytes\h+\d+\h+)?drop' || \
+                 echo "$l_ip6saddr" | grep -Pq -- 'ip6\h+daddr\h+\!=\h+::1\h+ip6\h+saddr\h+::1\h+drop'; then
+                 echo "PASS: IPv6 loopback drop rule is configured in nftables"
+              else
+                 echo "FAIL: IPv6 loopback drop rule is NOT configured in nftables"
+                 exit 1
+              fi
+           else
+              echo "IPv6 is disabled - skipping IPv6 verification"
+           fi
+           
+           echo "=== All checks passed ==="
+           exit 0
+           
+        # Check if nftables is enabled (should have been skipped in remediation)
+        elif systemctl is-enabled nftables.service 2>/dev/null | grep -q 'enabled'; then
+           echo "nftables is enabled - recommendation is NA"
+           echo "Verification not applicable for nftables systems"
+           exit 0
+           
+        else
+           echo "Neither firewalld nor nftables is enabled - verification not applicable"
+           exit 0
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | default('') | trim != 'SKIPPED'"
+
+    - name: "Store requirement 2 details"
+      set_fact:
+        task_2_name: "Verify firewalld loopback traffic configuration (CIS audit alignment)"
+        task_2_cmd: "bash verification script (aligned with CIS audit procedure)"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif not result_2 is defined %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' %}
+            SKIPPED: Requirement 1 was skipped (nftables in use)
+          {% elif not result_2 is defined %}
+            SKIPPED: Verification not executed (Requirement 1 status unknown)
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Verification passed - system is compliant with CIS 4.2.2
+          {% else %}
+            FAILED: Verification failed - system is not compliant with CIS 4.2.2
+          {% endif %}
+
+    # Determine overall remediation status
+    # FIXED: Updated logic to better reflect actual compliance state
+    - name: "Determine overall remediation status"
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set output = data_1 | default('') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s1 == 'FAILED' %}
+            FAILED
+          {% elif s2 == 'FAILED' %}
+            {# Check if remediation script actually made changes #}
+            {% if 'FirewallD is in use' in output and ('Enabling input' in output or 'Setting IPv4' in output or 'Setting IPv6' in output) %}
+              PARTIALLY APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% elif s1 == 'APPLIED' and s2 == 'APPLIED' %}
+            APPLIED
+          {% elif s1 == 'APPLIED' and s2 == 'SKIPPED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+
+    - name: "Set overall remediation details"
+      set_fact:
+        overall_details: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set output = data_1 | default('') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED: nftables in use, recommendation is NA
+          {% elif s1 == 'FAILED' %}
+            FAILED: Remediation script execution failed
+          {% elif s2 == 'FAILED' %}
+            {% if 'FirewallD is in use' in output %}
+              {% if 'Enabling input' in output or 'Setting IPv4' in output or 'Setting IPv6' in output %}
+                PARTIALLY APPLIED: Remediation script made configuration changes but verification failed. System may require manual intervention or firewall reload.
+              {% else %}
+                FAILED: Verification failed - system is not compliant with CIS 4.2.2 requirements
+              {% endif %}
+            {% else %}
+              FAILED: Verification failed - system is not compliant with CIS 4.2.2 requirements
+            {% endif %}
+          {% elif s1 == 'APPLIED' and s2 == 'APPLIED' %}
+            APPLIED: All remediation steps completed successfully - system is compliant with CIS 4.2.2
+          {% elif s1 == 'APPLIED' and s2 == 'SKIPPED' %}
+            PARTIALLY APPLIED: Remediation script executed but verification could not be performed
+          {% else %}
+            Could not determine remediation status
+          {% endif %}
+
+    # Final report
+    - name: "Generate remediation report"
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 4.2.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.2.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('') | trim }}"
+          - "========================================================"

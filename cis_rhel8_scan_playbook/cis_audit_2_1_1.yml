@@ -123,30 +123,8 @@
         task_3_cmd: "systemctl is-active autofs.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            NA
-          {% elif status_1 | trim == 'FAIL' %}
-            {% if result_3.stdout is defined and result_3.stdout | trim == '' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            Not applicable: autofs package is not installed
-          {% elif status_1 | trim == 'FAIL' %}
-            {% if result_3.stdout is defined and result_3.stdout | trim == '' %}
-              PASS: command returned no output (empty)
-            {% else %}
-              FAIL: 'active' was found in output
-            {% endif %}
-          {% else %}
-            Cannot determine status
-          {% endif %}
+        status_3: "{{ ('NA' if (status_1|trim) == 'PASS' else ('PASS' if (status_1|trim) == 'FAIL' and (result_3.stdout|default('')|trim) == '' else ('FAIL' if (status_1|trim) == 'FAIL' else 'UNKNOWN'))) | trim }}"
+        rationale_3: "{{ ('Not applicable: autofs package not installed' if (status_1|trim) == 'PASS' else ('PASS: command returned no output (empty)' if (status_1|trim) == 'FAIL' and (result_3.stdout|default('')|trim) == '' else ('FAIL: active was found in output' if (status_1|trim) == 'FAIL' else 'Cannot determine status'))) | trim }}"
       when: status_1 is defined
 
     - name: Set requirement 3 to NA if autofs not installed
@@ -166,28 +144,8 @@
         task_4_cmd: "N/A - calculated from previous requirements"
         task_4_rc: 0
         data_4: "req_1: {{ status_1 }}, req_2: {{ status_2 }}, req_3: {{ status_3 }}"
-        status_4: >-
-          {% set s1 = status_1 | default('FAIL') | trim %}
-          {% set s2 = status_2 | default('NA') | trim %}
-          {% set s3 = status_3 | default('NA') | trim %}
-          {% if s1 == 'PASS' %}
-            PASS
-          {% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_4: >-
-          {% set s1 = status_1 | default('FAIL') | trim %}
-          {% set s2 = status_2 | default('NA') | trim %}
-          {% set s3 = status_3 | default('NA') | trim %}
-          {% if s1 == 'PASS' %}
-            PASS: autofs package is not installed.
-          {% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}
-            PASS: autofs package is installed but service is not enabled and not active.
-          {% else %}
-            FAIL: autofs package is installed and service is either enabled or active.
-          {% endif %}
+        status_4: "{{ ((status_1|default('FAIL')|trim) == 'PASS') | ternary('PASS', ((status_1|default('FAIL')|trim) == 'FAIL' and (status_2|default('NA')|trim) == 'PASS' and (status_3|default('NA')|trim) == 'PASS') | ternary('PASS', 'FAIL')) | trim }}"
+        rationale_4: "{{ ((status_1|default('FAIL')|trim) == 'PASS') | ternary('PASS: autofs package is not installed.', ((status_1|default('FAIL')|trim) == 'FAIL' and (status_2|default('NA')|trim) == 'PASS' and (status_3|default('NA')|trim) == 'PASS') | ternary('PASS: autofs package is installed but service is not enabled and not active.', 'FAIL: autofs package is installed and service is either enabled or active.')) | trim }}"
 
     - name: Generate compliance report
       debug:
@@ -203,35 +161,35 @@
           - "  Command: {{ task_1_cmd }}"
           - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 }}"
-          - "  Status: {{ status_1 }}"
-          - "  Rationale: {{ rationale_1 }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
           - "  Task: {{ task_2_name }}"
           - "  Command: {{ task_2_cmd }}"
           - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 }}"
-          - "  Status: {{ status_2 }}"
-          - "  Rationale: {{ rationale_2 }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
           - "  Task: {{ task_3_name }}"
           - "  Command: {{ task_3_cmd }}"
           - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 }}"
-          - "  Status: {{ status_3 }}"
-          - "  Rationale: {{ rationale_3 }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
           - "  Task: {{ task_4_name }}"
           - "  Command: {{ task_4_cmd }}"
           - "  Exit code: {{ task_4_rc }}"
           - "  Data: {{ data_4 }}"
-          - "  Status: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 }}"
-          - "  Rationale: {{ rationale_4 }}"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - "========================================================"

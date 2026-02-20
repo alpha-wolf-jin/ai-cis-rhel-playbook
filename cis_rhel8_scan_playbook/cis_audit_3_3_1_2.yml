@@ -1,47 +1,15 @@
 ---
-- name: Data Collection for CIS 3.3.1.2
+- name: Data Collection for CIS checkpoint 3.3.1.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.2"
-    req_1: "Verify net.ipv4.conf.all.forwarding is set to 0 in the running configuration using command: `sysctl net.ipv4.conf.all.forwarding`. Rationale: PASS when output is exactly 'net.ipv4.conf.all.forwarding = 0', FAIL otherwise"
-    req_2: |
-      {% raw %}
-      #!/usr/bin/env bash
-      {
-         l_parameter_name="net.ipv4.conf.all.forwarding"  
-         l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
-         l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
-         || readlink -e /usr/lib/systemd/systemd-sysctl)"
-         l_ufw_file="$([ -f /etc/default/ufw ] && \
-         awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
-         [ -f "$(readlink -e "$l_ufw_file")" ] && \
-         a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
-         while IFS= read -r l_fname; do
-            l_file="$(readlink -e "${l_fname//# /}")"
-            [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
-            <<< "${a_files[*]}" && a_files+=("$l_file")
-         done < <("$l_systemdsysctl" --cat-config | tac | \
-         grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
-         for l_file in "${a_files[@]}"; do
-            l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n
-      1)"
-            l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
-            [ -n "$l_option_value" ] && \
-            a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
-            "    \"$l_file\"")
-         done
-         [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
-      }
-      {% endraw %}
-    req_3: "OVERALL Verify: Ensure net.ipv4.conf.all.forwarding is configured. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.1.2"
+    req_1: "Run sysctl command to verify net.ipv4.conf.all.forwarding is set to 0 in running configuration"
+    req_2: "Run CIS audit script to verify net.ipv4.conf.all.forwarding = 0 is set in configuration files used by systemd sysctl"
+    req_3: "OVERALL Verify: Ensure net.ipv4.conf.all.forwarding is configured"
 
   tasks:
-    - name: Check OS compatibility
-      set_fact:
-        os_compatible: "{{ ansible_distribution == 'RedHat' and ansible_distribution_major_version == '8' }}"
-
     - name: Initialize data variables
       set_fact:
         task_1_name: "Not executed"
@@ -53,19 +21,11 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        data_1: "N/A"
-        data_2: "N/A"
-        data_3: "N/A"
-        status_1: "UNKNOWN"
-        status_2: "UNKNOWN"
-        status_3: "UNKNOWN"
-        rationale_1: "Cannot determine compliance on non-RHEL 8 system"
-        rationale_2: "Cannot determine compliance on non-RHEL 8 system"
-        rationale_3: "Cannot determine compliance on non-RHEL 8 system"
 
-    # Requirement 1: Verify net.ipv4.conf.all.forwarding is set to 0 in the running configuration using command: `sysctl net.ipv4.conf.all.forwarding`. Rationale: PASS when output is exactly 'net.ipv4.conf.all.forwarding = 0', FAIL otherwise
-    - name: "Req 1 - Check running sysctl configuration"
-      shell: sysctl net.ipv4.conf.all.forwarding
+    # Requirement 1: Run sysctl command to check running configuration
+    - name: "Req 1 - Check running configuration for net.ipv4.conf.all.forwarding"
+      shell: |
+        sysctl net.ipv4.conf.all.forwarding
       args:
         executable: /bin/bash
       register: result_1
@@ -74,43 +34,23 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl configuration"
+        task_1_name: "Check running configuration for net.ipv4.conf.all.forwarding"
         task_1_cmd: "sysctl net.ipv4.conf.all.forwarding"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% if not os_compatible %}
-            UNKNOWN
-          {% else %}
-            {% set output = result_1.stdout | default('') | trim %}
-            {% if output == 'net.ipv4.conf.all.forwarding = 0' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% endif %}
-        rationale_1: >-
-          {% if not os_compatible %}
-            Cannot determine compliance on non-RHEL 8 system
-          {% else %}
-            {% set output = result_1.stdout | default('') | trim %}
-            {% if output == 'net.ipv4.conf.all.forwarding = 0' %}
-              PASS when output is exactly 'net.ipv4.conf.all.forwarding = 0'
-            {% else %}
-              FAIL when output is not exactly 'net.ipv4.conf.all.forwarding = 0'
-            {% endif %}
-          {% endif %}
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv4.conf.all.forwarding = 0') else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output is exactly net.ipv4.conf.all.forwarding = 0, FAIL otherwise' if (result_1.stdout | default('') | trim == 'net.ipv4.conf.all.forwarding = 0') else 'FAIL: Expected net.ipv4.conf.all.forwarding = 0, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: Run the following script
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Execute CIS audit script
+    - name: "Req 2 - Execute CIS audit script for configuration files check"
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_3.3.1.2.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           {
-             l_parameter_name="net.ipv4.conf.all.forwarding"  
+             l_parameter_name="net.ipv4.conf.all.forwarding"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
              l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
              || readlink -e /usr/lib/systemd/systemd-sysctl)"
@@ -125,8 +65,7 @@
              done < <("$l_systemdsysctl" --cat-config | tac | \
              grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
              for l_file in "${a_files[@]}"; do
-                l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n
-          1)"
+                l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n 1)"
                 l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
                 [ -n "$l_option_value" ] && \
                 a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
@@ -135,9 +74,11 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
+      register: script_create_2
+      ignore_errors: true
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: "Req 2 - Run the CIS audit script"
+      shell: "/tmp/cis_audit_3.3.1.2.sh"
       args:
         executable: /bin/bash
       register: result_2
@@ -146,72 +87,76 @@
 
     - name: "Req 2 - Remove temporary audit script"
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_3.3.1.2.sh"
         state: absent
+      ignore_errors: true
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Execute audit script for configuration files"
-        task_2_cmd: "/tmp/cis_audit_script_2.sh"
+        task_2_name: "Execute CIS audit script for configuration files check"
+        task_2_cmd: "CIS audit script to check configuration files used by systemd sysctl"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
+        # Check if script output contains a line with "= 0" in the configuration
         status_2: >-
-          {% if not os_compatible %}
-            UNKNOWN
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lines = output.split('\n') %}
+            {% set found_correct = false %}
+            {% for line in lines %}
+              {% if 'net.ipv4.conf.all.forwarding = 0' in line %}
+                {% set found_correct = true %}
+              {% endif %}
+            {% endfor %}
+            {{ 'PASS' if found_correct else 'FAIL' }}
           {% else %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output is search('net.ipv4.conf.all.forwarding = 0') %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+            FAIL
           {% endif %}
         rationale_2: >-
-          {% if not os_compatible %}
-            Cannot determine compliance on non-RHEL 8 system
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lines = output.split('\n') %}
+            {% set found_correct = false %}
+            {% for line in lines %}
+              {% if 'net.ipv4.conf.all.forwarding = 0' in line %}
+                {% set found_correct = true %}
+              {% endif %}
+            {% endfor %}
+            {{ 'PASS when script output shows net.ipv4.conf.all.forwarding = 0 in configuration files, FAIL otherwise' if found_correct else 'FAIL: Script output does not show net.ipv4.conf.all.forwarding = 0 in any configuration file' }}
           {% else %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output is search('net.ipv4.conf.all.forwarding = 0') %}
-              PASS when script output shows at least one line containing 'net.ipv4.conf.all.forwarding = 0' is set in a configuration file
-            {% else %}
-              FAIL when no such line is found or the value is not '0'
-            {% endif %}
+            FAIL: Script produced no output
           {% endif %}
 
-    # Requirement 3: OVERALL Verify: Ensure net.ipv4.conf.all.forwarding is configured. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise
-    - name: "Req 3 - Overall verification"
+    # Requirement 3: Overall verification - FIXED based on feedback
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A (calculated from req_1 and req_2)"
+        task_3_name: "Overall verification of net.ipv4.conf.all.forwarding configuration"
+        task_3_cmd: "Combined check of running configuration and configuration files"
         task_3_rc: 0
-        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
+        data_3: "Running config status: {{ status_1 }}, Config files status: {{ status_2 }}"
+        # FIX: BOTH requirements must pass for overall compliance (not just req_1)
         status_3: >-
-          {% if not os_compatible %}
-            UNKNOWN
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
+        # FIX: Update rationale to reflect correct logic
         rationale_3: >-
-          {% if not os_compatible %}
-            Cannot determine compliance on non-RHEL 8 system
+          {% if status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS' %}
+            PASS when req_1=PASS AND req_2=PASS, FAIL otherwise
           {% else %}
-            {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-              PASS when req_1=PASS AND req_2=PASS
-            {% else %}
-              FAIL when req_1=FAIL OR req_2=FAIL
-            {% endif %}
+            FAIL: Requirement 1 or 2 failed
           {% endif %}
 
-    # Final report - MUST include Status and Rationale for each requirement
+    # Final compliance report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.1.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -222,7 +167,7 @@
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 2 - {{ req_2 | regex_replace('\n.*', '...') }}:"
+          - "REQUIREMENT 2 - {{ req_2 }}:"
           - "  Task: {{ task_2_name | default('Task not recorded') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
@@ -240,6 +185,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_3 | default('FAIL') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

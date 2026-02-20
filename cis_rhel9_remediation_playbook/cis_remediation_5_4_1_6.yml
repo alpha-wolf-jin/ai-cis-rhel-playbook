@@ -1,0 +1,671 @@
+---
+- name: Remediation for CIS 5.4.1.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_4_1_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.1.6"
+    req_0: "Check for sufficient sudo privileges"
+    req_1: "Check if shadow-utils package is installed"
+    req_2: "Identify users with a future password change date"
+    req_3: "Lock accounts for non-compliant users"
+    req_4: "Expire passwords for non-compliant users"
+    req_5: "Reset passwords for non-compliant users"
+    req_6: "Verify all users last password change date is in the past"
+    # Variable to choose remediation action: "lock", "expire", or "reset"
+    remediation_action: "expire"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      ignore_errors: true
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore original shadow file
+    - name: "State Guard - Restore /etc/shadow from backup"
+      copy:
+        src: "{{ state_guard_dir }}/shadow.present"
+        dest: "/etc/shadow"
+        remote_src: true
+      when: _sg_flag.stat.exists | default(false)
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists | default(false)
+      ignore_errors: true
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      ignore_errors: true
+
+    - name: "State Guard - Check if /etc/shadow exists"
+      stat:
+        path: "/etc/shadow"
+      register: _sg_shadow_stat
+      ignore_errors: true
+
+    - name: "State Guard - Backup /etc/shadow (present)"
+      copy:
+        src: "/etc/shadow"
+        dest: "{{ state_guard_dir }}/shadow.present"
+        remote_src: true
+      when: _sg_shadow_stat.stat.exists | default(false)
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      ignore_errors: true
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_0_name: "Not executed"
+        task_0_cmd: "N/A"
+        task_0_rc: -1
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        data_0: ""
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        data_6: ""
+        status_0: "UNKNOWN"
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        status_4: "UNKNOWN"
+        status_5: "UNKNOWN"
+        status_6: "UNKNOWN"
+        rationale_0: "Not evaluated"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        rationale_4: "Not evaluated"
+        rationale_5: "Not evaluated"
+        rationale_6: "Not evaluated"
+        sudo_privileges_ok: false
+        package_installed: false
+        pkg_check_error: false
+        non_compliant_users: []
+        shadow_before: ""
+        shadow_after: ""
+        password_reset_attempted: false
+
+    - name: "Capture /etc/shadow contents before remediation"
+      shell: |
+        echo "=== /etc/shadow CONTENTS BEFORE REMEDIATION ==="
+        cat /etc/shadow
+      args:
+        executable: /bin/bash
+      register: shadow_before_result
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store shadow before contents
+      set_fact:
+        shadow_before: "{{ shadow_before_result.stdout | default('') | trim }}"
+
+    - name: "Req 0 - Check sudo privileges"
+      shell: |
+        # Check if we can read /etc/shadow (requires root)
+        if sudo -n cat /etc/shadow >/dev/null 2>&1; then
+          echo "SUDO_PRIVILEGES_OK: yes"
+        else
+          echo "SUDO_PRIVILEGES_OK: no"
+          echo "ERROR: Insufficient sudo privileges to read /etc/shadow"
+          echo "Run the playbook with --ask-become-pass or configure passwordless sudo"
+          exit 2
+        fi
+      args:
+        executable: /bin/bash
+      register: result_0
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 0 details
+      set_fact:
+        task_0_name: "Check for sufficient sudo privileges"
+        task_0_cmd: "sudo -n cat /etc/shadow >/dev/null 2>&1"
+        task_0_rc: "{{ result_0.rc | default(-1) }}"
+        data_0: "{{ result_0.stdout | default('') | trim }}"
+        sudo_privileges_ok: >-
+          {% if result_0.rc | default(-1) == 0 %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        status_0: >-
+          {% if result_0.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_0.rc | default(-1) == 2 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_0: >-
+          {% if result_0.rc | default(-1) == 0 %}
+            APPLIED: sufficient sudo privileges confirmed
+          {% elif result_0.rc | default(-1) == 2 %}
+            FAILED: insufficient sudo privileges to read /etc/shadow. Run the playbook with --ask-become-pass or configure passwordless sudo.
+          {% else %}
+            FAILED: could not verify sudo privileges, exit code {{ result_0.rc | default(-1) }}
+          {% endif %}
+
+    - name: "Req 1 - Check shadow-utils package"
+      command: rpm -q shadow-utils
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+      when: "sudo_privileges_ok"
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if shadow-utils package is installed"
+        task_1_cmd: "rpm -q shadow-utils"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        package_installed: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        pkg_check_error: >-
+          {% if result_1.rc | default(-1) not in [0, 1] %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        status_1: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED: insufficient sudo privileges to check package
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: shadow-utils package is installed
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED: shadow-utils package not installed, subsequent steps will be skipped
+          {% else %}
+            FAILED: command error, exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    - name: "Req 2 - Identify users with future password change date"
+      shell: |
+        # Calculate current date in days since epoch
+        current_days=$(( $(date +%s) / 86400 ))
+        awk -F: -v current="$current_days" '{if ($3 > current) print $1}' /etc/shadow
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: >
+        sudo_privileges_ok and
+        package_installed and
+        not pkg_check_error
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Identify users with future password change date"
+        task_2_cmd: |
+          current_days=$(( $(date +%s) / 86400 )); awk -F: -v current=\"$current_days\" '{if ($3 > current) print $1}' /etc/shadow
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        non_compliant_users: >-
+          {% if result_2.stdout | default('') | trim != '' %}
+            {{ result_2.stdout | default('') | trim | split('\n') | list }}
+          {% else %}
+            []
+          {% endif %}
+        status_2: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED
+          {% elif pkg_check_error %}
+            SKIPPED
+          {% elif not package_installed %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED: insufficient sudo privileges
+          {% elif pkg_check_error %}
+            SKIPPED: Package check failed, cannot determine if shadow-utils is installed
+          {% elif not package_installed %}
+            SKIPPED: shadow-utils package not installed
+          {% elif result_2.rc | default(-1) == 0 %}
+            {% if data_2 | trim != '' %}
+              APPLIED: command executed successfully, found {{ non_compliant_users | length }} non-compliant user(s)
+            {% else %}
+              APPLIED: command executed successfully, no non-compliant users found
+            {% endif %}
+          {% else %}
+            FAILED: command failed to execute
+          {% endif %}
+
+    - name: "Req 3 - Lock accounts for non-compliant users"
+      shell: |
+        {% for user in non_compliant_users %}
+        usermod -L {{ user }}
+        {% endfor %}
+        echo "Locked accounts for users: {{ non_compliant_users | join(' ') }}"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: "non_compliant_users | length > 0"
+      when: >
+        sudo_privileges_ok and
+        package_installed and 
+        not pkg_check_error and
+        non_compliant_users | length > 0 and
+        remediation_action == 'lock'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Lock accounts for non-compliant users"
+        task_3_cmd: >-
+          {% if non_compliant_users | length > 0 and remediation_action == 'lock' %}
+            {% for user in non_compliant_users %}
+            usermod -L {{ user }}
+            {% endfor %}
+          {% else %}
+            N/A (no users to process or action is not 'lock')
+          {% endif %}
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED
+          {% elif pkg_check_error %}
+            SKIPPED
+          {% elif not package_installed %}
+            SKIPPED
+          {% elif non_compliant_users | length == 0 %}
+            SKIPPED
+          {% elif remediation_action != 'lock' %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED: insufficient sudo privileges
+          {% elif pkg_check_error %}
+            SKIPPED: Package check failed, cannot determine if shadow-utils is installed
+          {% elif not package_installed %}
+            SKIPPED: shadow-utils package not installed
+          {% elif non_compliant_users | length == 0 %}
+            SKIPPED: no users with future password change dates found
+          {% elif remediation_action != 'lock' %}
+            SKIPPED: remediation action is '{{ remediation_action }}', not 'lock'
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: locked accounts for {{ non_compliant_users | length }} user(s)
+          {% else %}
+            FAILED: command failed to execute
+          {% endif %}
+
+    - name: "Req 4 - Expire passwords for non-compliant users"
+      shell: |
+        {% for user in non_compliant_users %}
+        current_days=$(( $(date +%s) / 86400 ))
+        chage -d $((current_days - 1)) {{ user }}
+        {% endfor %}
+        echo "Expired passwords for users: {{ non_compliant_users | join(' ') }}"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: "non_compliant_users | length > 0"
+      when: >
+        sudo_privileges_ok and
+        package_installed and 
+        not pkg_check_error and
+        non_compliant_users | length > 0 and
+        remediation_action == 'expire'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Expire passwords for non-compliant users"
+        task_4_cmd: >-
+          {% if non_compliant_users | length > 0 and remediation_action == 'expire' %}
+            {% for user in non_compliant_users %}
+            current_days=$(( $(date +%s) / 86400 )); chage -d $((current_days - 1)) {{ user }}
+            {% endfor %}
+          {% else %}
+            N/A (no users to process or action is not 'expire')
+          {% endif %}
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED
+          {% elif pkg_check_error %}
+            SKIPPED
+          {% elif not package_installed %}
+            SKIPPED
+          {% elif non_compliant_users | length == 0 %}
+            SKIPPED
+          {% elif remediation_action != 'expire' %}
+            SKIPPED
+          {% elif result_4.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED: insufficient sudo privileges
+          {% elif pkg_check_error %}
+            SKIPPED: Package check failed, cannot determine if shadow-utils is installed
+          {% elif not package_installed %}
+            SKIPPED: shadow-utils package not installed
+          {% elif non_compliant_users | length == 0 %}
+            SKIPPED: no users with future password change dates found
+          {% elif remediation_action != 'expire' %}
+            SKIPPED: remediation action is '{{ remediation_action }}', not 'expire'
+          {% elif result_4.rc | default(-1) == 0 %}
+            APPLIED: passwords expired for {{ non_compliant_users | length }} user(s)
+          {% else %}
+            FAILED: command failed to execute
+          {% endif %}
+
+    - name: "Req 5 - Reset passwords for non-compliant users"
+      shell: |
+        {% for user in non_compliant_users %}
+        echo "Attempting to reset password for user: {{ user }}"
+        echo "Note: This requires interactive input. If running non-interactively, password reset will fail."
+        passwd {{ user }}
+        {% endfor %}
+        echo "Password reset attempted for users: {{ non_compliant_users | join(' ') }}"
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      changed_when: false
+      when: >
+        sudo_privileges_ok and
+        package_installed and 
+        not pkg_check_error and
+        non_compliant_users | length > 0 and
+        remediation_action == 'reset'
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Reset passwords for non-compliant users"
+        task_5_cmd: >-
+          {% if non_compliant_users | length > 0 and remediation_action == 'reset' %}
+            {% for user in non_compliant_users %}
+            passwd {{ user }}
+            {% endfor %}
+          {% else %}
+            N/A (no users to process or action is not 'reset')
+          {% endif %}
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        password_reset_attempted: >-
+          {% if non_compliant_users | length > 0 and remediation_action == 'reset' %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        status_5: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED
+          {% elif pkg_check_error %}
+            SKIPPED
+          {% elif not package_installed %}
+            SKIPPED
+          {% elif non_compliant_users | length == 0 %}
+            SKIPPED
+          {% elif remediation_action != 'reset' %}
+            SKIPPED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED: insufficient sudo privileges
+          {% elif pkg_check_error %}
+            SKIPPED: Package check failed, cannot determine if shadow-utils is installed
+          {% elif not package_installed %}
+            SKIPPED: shadow-utils package not installed
+          {% elif non_compliant_users | length == 0 %}
+            SKIPPED: no users with future password change dates found
+          {% elif remediation_action != 'reset' %}
+            SKIPPED: remediation action is '{{ remediation_action }}', not 'reset'
+          {% else %}
+            SKIPPED: password reset requires interactive input. The passwd command was executed but may have failed in non-interactive mode. Manual intervention required for password reset.
+          {% endif %}
+
+    - name: "Capture /etc/shadow contents after remediation"
+      shell: |
+        echo "=== /etc/shadow CONTENTS AFTER REMEDIATION ==="
+        cat /etc/shadow
+      args:
+        executable: /bin/bash
+      register: shadow_after_result
+      ignore_errors: true
+      changed_when: false
+      when: "sudo_privileges_ok and package_installed and not pkg_check_error"
+
+    - name: Store shadow after contents
+      set_fact:
+        shadow_after: "{{ shadow_after_result.stdout | default('') | trim }}"
+
+    - name: "Req 6 - Verify remediation"
+      shell: |
+        # Calculate current date in days since epoch
+        current_days=$(( $(date +%s) / 86400 ))
+        awk -F: -v current="$current_days" '{if ($3 > current) print "User " $1 " has a future password change date: " $3}' /etc/shadow
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      changed_when: false
+      when: "sudo_privileges_ok and package_installed and not pkg_check_error"
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Verify all users last password change date is in the past"
+        task_6_cmd: |
+          current_days=$(( $(date +%s) / 86400 )); awk -F: -v current=\"$current_days\" '{if ($3 > current) print \"User \" $1 \" has a future password change date: \" $3}' /etc/shadow
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED
+          {% elif pkg_check_error %}
+            SKIPPED
+          {% elif not package_installed %}
+            SKIPPED
+          {% elif result_6.rc | default(-1) == 0 and result_6.stdout | default('') | trim == '' %}
+            APPLIED
+          {% elif result_6.rc | default(-1) == 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_6: >-
+          {% if not sudo_privileges_ok %}
+            SKIPPED: insufficient sudo privileges
+          {% elif pkg_check_error %}
+            SKIPPED: Package check failed, cannot determine if shadow-utils is installed
+          {% elif not package_installed %}
+            SKIPPED: shadow-utils package not installed
+          {% elif result_6.rc | default(-1) == 0 and result_6.stdout | default('') | trim == '' %}
+            APPLIED: no users with future password change dates found
+          {% elif result_6.rc | default(-1) == 0 %}
+            FAILED: found users with future password change dates: {{ result_6.stdout | default('') | trim }}
+          {% else %}
+            FAILED: command failed to execute
+          {% endif %}
+
+    - name: "Determine overall remediation status"
+      set_fact:
+        overall_status: >-
+          {% if status_0 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_6 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_3 | trim == 'APPLIED' or status_4 | trim == 'APPLIED' %}
+            {% if status_6 | trim == 'FAILED' %}
+              PARTIALLY APPLIED
+            {% else %}
+              APPLIED
+            {% endif %}
+          {% elif password_reset_attempted %}
+            SKIPPED
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' or status_4 | trim == 'FAILED' or status_6 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        overall_details: >-
+          {% if status_0 | trim == 'FAILED' %}
+            FAILED: insufficient sudo privileges. Run the playbook with --ask-become-pass or configure passwordless sudo.
+          {% elif status_1 | trim == 'SKIPPED' %}
+            SKIPPED: shadow-utils package not installed, remediation not applicable
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED: could not check if shadow-utils is installed
+          {% elif status_6 | trim == 'APPLIED' %}
+            APPLIED: all users have password change dates in the past
+          {% elif status_3 | trim == 'APPLIED' or status_4 | trim == 'APPLIED' %}
+            {% if status_6 | trim == 'FAILED' %}
+              PARTIALLY APPLIED: {{ remediation_action }} action applied to non-compliant users, but verification shows some issues remain. Manual investigation may be required.
+            {% else %}
+              APPLIED: {{ remediation_action }} action applied to non-compliant users successfully
+            {% endif %}
+          {% elif password_reset_attempted %}
+            SKIPPED: password reset requires manual intervention for security reasons
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' or status_4 | trim == 'FAILED' or status_6 | trim == 'FAILED' %}
+            FAILED: one or more remediation steps failed
+          {% else %}
+            SKIPPED: no remediation actions were taken (no non-compliant users found)
+          {% endif %}
+
+    - name: "Generate remediation report"
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.4.1.6"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 0 - {{ req_0 }}:"
+          - "  Task: {{ task_0_name }}"
+          - "  Command: {{ task_0_cmd }}"
+          - "  Exit code: {{ task_0_rc }}"
+          - "  Data: {{ data_0 }}"
+          - "  Status: {{ status_0 | trim }}"
+          - "  Details: {{ rationale_0 | trim }}"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | trim }}"
+          - "  Details: {{ rationale_1 | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | trim }}"
+          - "  Details: {{ rationale_2 | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 | trim }}"
+          - "  Details: {{ rationale_3 | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 }}"
+          - "  Status: {{ status_4 | trim }}"
+          - "  Details: {{ rationale_4 | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name }}"
+          - "  Command: {{ task_5_cmd }}"
+          - "  Exit code: {{ task_5_rc }}"
+          - "  Data: {{ data_5 }}"
+          - "  Status: {{ status_5 | trim }}"
+          - "  Details: {{ rationale_5 | trim }}"
+          - ""
+          - "FILE CONTENTS BEFORE REMEDIATION (/etc/shadow):"
+          - "{{ shadow_before }}"
+          - ""
+          - "FILE CONTENTS AFTER REMEDIATION (/etc/shadow):"
+          - "{{ shadow_after }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name }}"
+          - "  Command: {{ task_6_cmd }}"
+          - "  Exit code: {{ task_6_rc }}"
+          - "  Data: {{ data_6 }}"
+          - "  Status: {{ status_6 | trim }}"
+          - "  Details: {{ rationale_6 | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,287 @@
+---
+- name: Remediation for CIS 5.2.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_2_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.6"
+    # Requirement texts - MUST be quoted strings
+    req_1: "Check if sudo is installed using command: rpm -q sudo"
+    req_2: "Apply configuration to set sudo authentication timeout to 15 minutes or less using command: visudo -f /etc/sudoers.d/timeout"
+    req_3: "VERIFY: Run audit check to confirm Ensure sudo authentication timeout is configured correctly is properly configured using command: sudo grep -r 'timestamp_timeout' /etc/sudoers* 2>/dev/null | grep -v '^#'"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Delete the config file created by previous remediation
+    - name: "State Guard - Delete /etc/sudoers.d/timeout (created by remediation)"
+      file:
+        path: "/etc/sudoers.d/timeout"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if sudoers.d/timeout exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/sudoers.d/timeout exists"
+      stat:
+        path: "/etc/sudoers.d/timeout"
+      register: _sg_timeout_stat
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/sudoers.d/timeout as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/timeout.absent"
+      when: not _sg_timeout_stat.stat.exists
+
+    # If the file happens to exist, back it up with .present
+    - name: "State Guard - Backup /etc/sudoers.d/timeout (present)"
+      copy:
+        src: "/etc/sudoers.d/timeout"
+        dest: "{{ state_guard_dir }}/timeout.present"
+        remote_src: true
+      when: _sg_timeout_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if sudo is installed using command: rpm -q sudo
+    - name: "Req 1 - Check if sudo is installed"
+      shell: |
+        rpm -q sudo
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if sudo package is installed"
+        task_1_cmd: "rpm -q sudo"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: sudo package is installed
+          {% else %}
+            SKIPPED: sudo package is not installed - skipping subsequent steps
+          {% endif %}
+
+    # Requirement 2: Apply configuration to set sudo authentication timeout to 15 minutes or less
+    # Fix: Use lineinfile to ensure the setting is created properly, then validate with visudo
+    - name: "Req 2 - Apply sudo timeout configuration"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/sudoers 2>/dev/null || echo "/etc/sudoers not found"
+        ls -la /etc/sudoers.d/ 2>/dev/null || echo "/etc/sudoers.d/ not found"
+        echo "=== APPLYING CHANGE ==="
+        # Create the file with the correct content
+        echo 'Defaults timestamp_timeout=15' > /etc/sudoers.d/timeout.tmp
+        # Validate the file with visudo and install if valid
+        if visudo -c -f /etc/sudoers.d/timeout.tmp 2>/dev/null; then
+          cp /etc/sudoers.d/timeout.tmp /etc/sudoers.d/timeout
+          echo "File created successfully"
+        else
+          echo "ERROR: Invalid sudoers file content"
+          exit 1
+        fi
+        echo "=== AFTER ==="
+        cat /etc/sudoers.d/timeout 2>/dev/null || echo "/etc/sudoers.d/timeout not created"
+        # Clean up temporary file
+        rm -f /etc/sudoers.d/timeout.tmp
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Set sudo authentication timeout to 15 minutes"
+        task_2_cmd: "echo 'Defaults timestamp_timeout=15' > /etc/sudoers.d/timeout.tmp && visudo -c -f /etc/sudoers.d/timeout.tmp && cp /etc/sudoers.d/timeout.tmp /etc/sudoers.d/timeout"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: sudo authentication timeout configured to 15 minutes
+          {% else %}
+            FAILED: Could not configure sudo authentication timeout
+          {% endif %}
+      when: "result_1.rc | default(-1) == 0"
+
+    # Requirement 3: Verify the configuration
+    - name: "Req 3 - Verify sudo timeout configuration"
+      shell: |
+        sudo grep -r 'timestamp_timeout' /etc/sudoers* 2>/dev/null | grep -v '^#'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify sudo timeout is configured correctly"
+        task_3_cmd: "sudo grep -r 'timestamp_timeout' /etc/sudoers* 2>/dev/null | grep -v '^#'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set matches = output | regex_findall('timestamp_timeout=([0-9]+)') %}
+            {% if matches %}
+              {% set all_valid = true %}
+              {% for match in matches %}
+                {% if match | int > 15 %}
+                  {% set all_valid = false %}
+                {% endif %}
+              {% endfor %}
+              {% if all_valid %}
+                APPLIED
+              {% else %}
+                FAILED
+              {% endif %}
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set matches = output | regex_findall('timestamp_timeout=([0-9]+)') %}
+            {% if matches %}
+              {% set all_valid = true %}
+              {% set invalid_values = [] %}
+              {% for match in matches %}
+                {% if match | int > 15 %}
+                  {% set all_valid = false %}
+                  {% set _ = invalid_values.append(match) %}
+                {% endif %}
+              {% endfor %}
+              {% if all_valid %}
+                APPLIED: All timestamp_timeout values ({{ matches | join(', ') }}) are ≤15 minutes
+              {% else %}
+                FAILED: Found timestamp_timeout values >15 minutes: {{ invalid_values | join(', ') }}
+              {% endif %}
+            {% else %}
+              FAILED: No timestamp_timeout setting found
+            {% endif %}
+          {% else %}
+            FAILED: No timestamp_timeout setting found
+          {% endif %}
+      when: "result_1.rc | default(-1) == 0"
+
+    # Determine overall remediation status - FIXED: Use correct logic based on all requirements
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('SKIPPED') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | default('SKIPPED') | trim == 'SKIPPED' %}
+            sudo package is not installed - remediation not applicable
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' %}
+            sudo authentication timeout successfully configured to ≤15 minutes
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+            Failed to verify sudo authentication timeout configuration
+          {% else %}
+            Failed to apply or verify sudo authentication timeout configuration
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.2.6"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

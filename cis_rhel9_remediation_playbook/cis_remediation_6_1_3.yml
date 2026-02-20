@@ -1,0 +1,346 @@
+---
+- name: Remediation for CIS 6.1.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_6_1_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.3"
+    req_1: "Check if AIDE is installed using command: rpm -q aide. Expected result: AIDE package is installed. If not, SKIP all subsequent steps with status: 'SKIPPED - Remediation not applicable - aide is not installed on this server'."
+    req_2: "Determine the absolute path to the non-symlinked version of the audit tools directory using command: readlink -f /sbin. Expected result: Output is either /usr/sbin or /sbin."
+    req_3: |
+      Apply configuration to protect audit tools in /etc/aide.conf using command: printf '\n%s' '# Audit Tools' '$(readlink -f /sbin/auditctl) p+i+n+u+g+s+b+acl+xattrs+sha512' '$(readlink -f /sbin/auditd) p+i+n+u+g+s+b+acl+xattrs+sha512' '$(readlink -f /sbin/ausearch) p+i+n+u+g+s+b+acl+xattrs+sha512' '$(readlink -f /sbin/aureport) p+i+n+u+g+s+b+acl+xattrs+sha512' '$(readlink -f /sbin/autrace) p+i+n+u+g+s+b+acl+xattrs+sha512' '$(readlink -f /sbin/augenrules) p+i+n+u+g+s+b+acl+xattrs+sha512' >> /etc/aide.conf. Expected result: The selection lines for audit tools are appended to /etc/aide.conf.
+    req_4: |
+      Confirm cryptographic mechanisms are configured to protect the integrity of audit tools using command: grep -E '^(/usr)?/sbin/(auditctl|auditd|ausearch|aureport|autrace|augenrules) p\+i\+n\+u\+g\+s\+b\+acl\+xattrs\+sha512' /etc/aide.conf. Expected result: Six matching lines are found, one for each audit tool.
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      ignore_errors: true
+      become: false
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Check if aide.conf.present backup exists"
+      stat:
+        path: "{{ state_guard_dir }}/aide.conf.present"
+      register: _sg_aide_conf_present
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+      become: false
+
+    - name: "State Guard - Check if aide.conf.absent marker exists"
+      stat:
+        path: "{{ state_guard_dir }}/aide.conf.absent"
+      register: _sg_aide_conf_absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+      become: false
+
+    - name: "State Guard - Restore /etc/aide.conf from backup (if it existed before)"
+      copy:
+        src: "{{ state_guard_dir }}/aide.conf.present"
+        dest: "/etc/aide.conf"
+        remote_src: true
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists and _sg_aide_conf_present.stat is defined and _sg_aide_conf_present.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Delete /etc/aide.conf (if it was created by remediation)"
+      file:
+        path: "/etc/aide.conf"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists and _sg_aide_conf_absent.stat is defined and _sg_aide_conf_absent.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+      become: false
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      ignore_errors: true
+      become: false
+
+    - name: "State Guard - Check if /etc/aide.conf exists"
+      stat:
+        path: "/etc/aide.conf"
+      register: _sg_aide_conf_stat
+      ignore_errors: true
+
+    - name: "State Guard - Backup /etc/aide.conf (present)"
+      copy:
+        src: "/etc/aide.conf"
+        dest: "{{ state_guard_dir }}/aide.conf.present"
+        remote_src: true
+      when: "_sg_aide_conf_stat.stat is defined and _sg_aide_conf_stat.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Mark /etc/aide.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/aide.conf.absent"
+      when: "_sg_aide_conf_stat.stat is defined and not _sg_aide_conf_stat.stat.exists"
+      ignore_errors: true
+      become: false
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      ignore_errors: true
+      become: false
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        status_4: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        rationale_4: "Not evaluated"
+        aide_installed: false
+        audit_path_determined: false
+        config_applied: false
+
+    - name: "Req 1 - Check if AIDE is installed"
+      shell: rpm -q aide
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check AIDE installation"
+        task_1_cmd: "rpm -q aide"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        aide_installed: "{{ (result_1.rc | default(1)) == 0 }}"
+        aide_check_failed: "{{ (result_1.rc | default(-2)) not in [0, 1] }}"
+        status_1: >-
+          {{ ('FAILED' if (result_1.rc | default(-2)) not in [0, 1] else 
+          ('SKIPPED' if (result_1.rc | default(1)) == 1 else 'APPLIED')) | trim }}
+        rationale_1: >-
+          {{ ('FAILED: Cannot determine if AIDE is installed (rc=' + (result_1.rc | default(-2) | string) + ')' if (result_1.rc | default(-2)) not in [0, 1] else 
+          ('SKIPPED: Remediation not applicable - aide is not installed on this server' if (result_1.rc | default(1)) == 1 else 
+          'APPLIED: AIDE is installed')) | trim }}
+
+    - name: "Req 2 - Determine absolute path to audit tools directory"
+      shell: readlink -f /sbin
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Get audit tools directory path"
+        task_2_cmd: "readlink -f /sbin"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        audit_path_determined: "{{ ((result_2.rc | default(-1)) == 0) and ((result_2.stdout | default('') | trim) in ['/usr/sbin', '/sbin']) }}"
+        status_2: >-
+          {{ ('SKIPPED' if (result_1.rc | default(-1)) != 0 else 
+          ('APPLIED' if ((result_2.rc | default(-1)) == 0) and ((result_2.stdout | default('') | trim) in ['/usr/sbin', '/sbin']) else 
+          'FAILED')) | trim }}
+        rationale_2: >-
+          {{ ('SKIPPED: AIDE is not installed or status could not be determined' if (result_1.rc | default(-1)) != 0 else 
+          ('APPLIED: Output is ' + (result_2.stdout | default('') | trim) + ' (valid path)' if ((result_2.rc | default(-1)) == 0) and ((result_2.stdout | default('') | trim) in ['/usr/sbin', '/sbin']) else 
+          'FAILED: Expected /usr/sbin or /sbin, got ' + (result_2.stdout | default('') | trim))) | trim }}
+
+    - name: "Req 3 - Apply configuration to protect audit tools in /etc/aide.conf"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/aide.conf 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        printf '\n%s' "# Audit Tools" "$(readlink -f /sbin/auditctl) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/auditd) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/ausearch) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/aureport) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/autrace) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/augenrules) p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide.conf
+        echo "=== AFTER ==="
+        cat /etc/aide.conf
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "(result_1.rc | default(-1)) == 0 and audit_path_determined"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Append audit tools configuration to /etc/aide.conf"
+        task_3_cmd: >-
+          printf '\n%s' "# Audit Tools" "$(readlink -f /sbin/auditctl) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/auditd) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/ausearch) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/aureport) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/autrace) p+i+n+u+g+s+b+acl+xattrs+sha512" "$(readlink -f /sbin/augenrules) p+i+n+u+g+s+b+acl+xattrs+sha512" >> /etc/aide.conf
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        config_applied: "{{ (result_3.rc | default(-1)) == 0 }}"
+        status_3: >-
+          {{ ('SKIPPED' if (result_1.rc | default(-1)) != 0 else 
+          ('SKIPPED' if not audit_path_determined else 
+          ('APPLIED' if (result_3.rc | default(-1)) == 0 else 
+          'FAILED'))) | trim }}
+        rationale_3: >-
+          {{ ('SKIPPED: AIDE is not installed or status could not be determined' if (result_1.rc | default(-1)) != 0 else 
+          ('SKIPPED: Cannot determine audit tools path (Req 2 failed or skipped)' if not audit_path_determined else 
+          ('APPLIED: Successfully appended audit tools configuration to /etc/aide.conf' if (result_3.rc | default(-1)) == 0 else 
+          'FAILED: Command failed with exit code ' + (result_3.rc | default(-1) | string)))) | trim }}
+
+    - name: "Req 4 - Verify cryptographic mechanisms are configured"
+      shell: |
+        grep -E '^(/usr)?/sbin/(auditctl|auditd|ausearch|aureport|autrace|augenrules) p\+i\+n\+u\+g\+s\+b\+acl\+xattrs\+sha512' /etc/aide.conf
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: "(result_1.rc | default(-1)) == 0 and audit_path_determined and config_applied"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify audit tools configuration in /etc/aide.conf"
+        task_4_cmd: >-
+          grep -E '^(/usr)?/sbin/(auditctl|auditd|ausearch|aureport|autrace|augenrules) p\+i\+n\+u\+g\+s\+b\+acl\+xattrs\+sha512' /etc/aide.conf
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if (result_1.rc | default(-1)) != 0 %}
+            {{ 'SKIPPED' }}
+          {% elif not audit_path_determined %}
+            {{ 'SKIPPED' }}
+          {% elif not config_applied %}
+            {{ 'SKIPPED' }}
+          {% else %}
+            {% set lines = result_4.stdout | default('') | trim | split('\n') | list %}
+            {% if lines | length == 6 %}
+              {{ 'APPLIED' }}
+            {% else %}
+              {{ 'FAILED' }}
+            {% endif %}
+          {% endif %}
+        rationale_4: >-
+          {% if (result_1.rc | default(-1)) != 0 %}
+            {{ 'SKIPPED: AIDE is not installed or status could not be determined' }}
+          {% elif not audit_path_determined %}
+            {{ 'SKIPPED: Cannot determine audit tools path (Req 2 failed or skipped)' }}
+          {% elif not config_applied %}
+            {{ 'SKIPPED: Configuration was not applied (Req 3 failed or skipped)' }}
+          {% else %}
+            {% set lines = result_4.stdout | default('') | trim | split('\n') | list %}
+            {% if lines | length == 6 %}
+              {{ 'APPLIED: Found all 6 required audit tool entries in /etc/aide.conf' }}
+            {% else %}
+              {{ 'FAILED: Expected 6 matching lines, found ' ~ (lines | length | string) }}
+            {% endif %}
+          {% endif %}
+
+    - name: Compute overall remediation status
+      set_fact:
+        overall_result: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_3 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% elif status_2 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: AIDE is not installed, remediation not applicable
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED: Cannot determine if AIDE is installed, remediation cannot proceed
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED: All audit tools are protected by cryptographic mechanisms in AIDE configuration
+          {% elif status_3 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED: Configuration applied but verification failed or not completed
+          {% elif status_2 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED: Audit tools path determined but configuration not applied
+          {% elif status_1 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED: AIDE is installed but path determination failed
+          {% else %}
+            FAILED: Remediation could not be applied
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 6.1.3"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_result | trim }}"
+          - "  Details: {{ overall_details | trim }}"
+          - "========================================================"

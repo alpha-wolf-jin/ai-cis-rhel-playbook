@@ -1,0 +1,526 @@
+---
+- name: Remediation for CIS 5.3.2.4
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_2_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.4"
+    
+    # Requirement descriptions
+    req_1: "Run CIS verification script to check pam_pwhistory module status"
+    req_2: "Apply appropriate authselect command based on verification results"
+    req_3: "Verify remediation was applied correctly"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: State Guard - Restore PAM configuration files from backup
+      copy:
+        src: "{{ state_guard_dir }}/password-auth.present"
+        dest: "/etc/pam.d/password-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restore system-auth from backup
+      copy:
+        src: "{{ state_guard_dir }}/system-auth.present"
+        dest: "/etc/pam.d/system-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Undo authselect changes
+      shell: |
+        {% raw %}
+        if command -v authselect >/dev/null 2>&1; then
+          authselect apply-changes 2>/dev/null || true
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if PAM files exist before deciding backup suffix
+    - name: State Guard - Check if /etc/pam.d/password-auth exists
+      stat:
+        path: "/etc/pam.d/password-auth"
+      register: _sg_password_auth_stat
+
+    - name: State Guard - Check if /etc/pam.d/system-auth exists
+      stat:
+        path: "/etc/pam.d/system-auth"
+      register: _sg_system_auth_stat
+
+    # Backup existing files with .present suffix
+    - name: State Guard - Backup password-auth (present)
+      copy:
+        src: "/etc/pam.d/password-auth"
+        dest: "{{ state_guard_dir }}/password-auth.present"
+        remote_src: true
+      when: _sg_password_auth_stat.stat.exists
+
+    - name: State Guard - Backup system-auth (present)
+      copy:
+        src: "/etc/pam.d/system-auth"
+        dest: "{{ state_guard_dir }}/system-auth.present"
+        remote_src: true
+      when: _sg_system_auth_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        authselect_available: false
+        system_applicable: false
+
+    # Check if authselect is available
+    - name: Check if authselect command exists
+      command: command -v authselect
+      register: authselect_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set authselect availability
+      set_fact:
+        authselect_available: "{{ authselect_check.rc == 0 }}"
+        system_applicable: "{{ authselect_check.rc == 0 }}"
+
+    # Requirement 1: Run CIS verification script to check pam_pwhistory module status
+    # Using EXACT script from CIS remediation procedure without modifications
+    - name: Req 1 - Execute CIS verification script for pam_pwhistory
+      copy:
+        dest: "/tmp/cis_verify_5_3_2_4.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_module_name="pwhistory"
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- "\bpam_$l_module_name\.so\b" "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+      when: system_applicable
+
+    - name: Req 1 - Execute the verification script
+      shell: "/tmp/cis_verify_5_3_2_4.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when: system_applicable
+
+    - name: Req 1 - Remove temporary verification script
+      file:
+        path: "/tmp/cis_verify_5_3_2_4.sh"
+        state: absent
+      ignore_errors: true
+      when: system_applicable
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS verification script for pam_pwhistory"
+        task_1_cmd: "bash /tmp/cis_verify_5_3_2_4.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if not system_applicable %}
+            SKIPPED
+          {% else %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% set rc = result_1.rc | default(-1) %}
+            {% if rc == 0 %}
+              {% if output == '' %}
+                APPLIED
+              {% else %}
+                APPLIED
+              {% endif %}
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% if not system_applicable %}
+            SKIPPED: authselect command not found, system not applicable for this remediation
+          {% else %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% set rc = result_1.rc | default(-1) %}
+            {% if rc == 0 %}
+              {% if output == '' %}
+                APPLIED: No pam_pwhistory.so lines found, system may already be compliant or needs profile update
+              {% else %}
+                APPLIED: Verification completed successfully, found: {{ output.split('\n')[0] if '\n' in output else output }}
+              {% endif %}
+            {% else %}
+              FAILED: Verification script failed with exit code {{ rc }}
+            {% endif %}
+          {% endif %}
+
+    # Requirement 2: Apply appropriate authselect command based on verification results
+    # Using EXACT commands from CIS remediation procedure with separate tasks
+    - name: Req 2 - Capture before state of PAM files
+      shell: |
+        {% raw %}
+        echo "=== BEFORE ==="
+        if [ -f /etc/pam.d/password-auth ]; then
+          cat /etc/pam.d/password-auth
+        else
+          echo "File not found: /etc/pam.d/password-auth"
+        fi
+        echo "=== BEFORE ==="
+        if [ -f /etc/pam.d/system-auth ]; then
+          cat /etc/pam.d/system-auth
+        else
+          echo "File not found: /etc/pam.d/system-auth"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: pam_before
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_1 | trim == 'APPLIED'"
+
+    - name: Req 2 - Enable with-pwhistory feature if lines include {include if "with-pwhistory"}
+      shell: |
+        {% raw %}
+        echo "=== APPLYING CHANGE (authselect enable-feature with-pwhistory) ==="
+        # Check if feature is already enabled before attempting to enable it
+        if authselect current | grep -q "with-pwhistory"; then
+          echo "Feature 'with-pwhistory' is already enabled"
+          exit 0
+        else
+          authselect enable-feature with-pwhistory
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: enable_feature_result
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_1 | trim == 'APPLIED'"
+        - "'{include if \"with-pwhistory\"}' in data_1"
+
+    - name: Req 2 - Apply changes if lines exist without {include if "with-pwhistory"}
+      shell: |
+        {% raw %}
+        echo "=== APPLYING CHANGE (authselect apply-changes) ==="
+        # Check if changes are needed before applying
+        if authselect check; then
+          echo "No changes needed"
+          exit 0
+        else
+          authselect apply-changes
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: apply_changes_result
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_1 | trim == 'APPLIED'"
+        - "'pam_pwhistory.so' in data_1"
+        - "'{include if \"with-pwhistory\"}' not in data_1"
+
+    - name: Req 2 - Capture after state of PAM files
+      shell: |
+        {% raw %}
+        echo "=== AFTER ==="
+        if [ -f /etc/pam.d/password-auth ]; then
+          cat /etc/pam.d/password-auth
+        else
+          echo "File not found: /etc/pam.d/password-auth"
+        fi
+        echo "=== AFTER ==="
+        if [ -f /etc/pam.d/system-auth ]; then
+          cat /etc/pam.d/system-auth
+        else
+          echo "File not found: /etc/pam.d/system-auth"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: pam_after
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply authselect changes based on verification"
+        task_2_cmd: >-
+          {% if "'{include if \"with-pwhistory\"}' in data_1" %}
+            authselect enable-feature with-pwhistory
+          {% elif "'pam_pwhistory.so' in data_1" and "'{include if \"with-pwhistory\"}' not in data_1" %}
+            authselect apply-changes
+          {% else %}
+            No command executed
+          {% endif %}
+        task_2_rc: >-
+          {% if "'{include if \"with-pwhistory\"}' in data_1" %}
+            {{ enable_feature_result.rc | default(-1) }}
+          {% elif "'pam_pwhistory.so' in data_1" and "'{include if \"with-pwhistory\"}' not in data_1" %}
+            {{ apply_changes_result.rc | default(-1) }}
+          {% else %}
+            -1
+          {% endif %}
+        data_2: >-
+          {% set before = pam_before.stdout | default('') | trim %}
+          {% set after = pam_after.stdout | default('') | trim %}
+          {% set enable_output = enable_feature_result.stdout | default('') | trim if "'{include if \"with-pwhistory\"}' in data_1" else '' %}
+          {% set apply_output = apply_changes_result.stdout | default('') | trim if "'pam_pwhistory.so' in data_1" and "'{include if \"with-pwhistory\"}' not in data_1" else '' %}
+          {{ [before, enable_output, apply_output, after] | select('defined') | join('\n') }}
+        status_2: >-
+          {% if not system_applicable %}
+            SKIPPED
+          {% elif status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif "'{include if \"with-pwhistory\"}' in data_1" and enable_feature_result.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif "'pam_pwhistory.so' in data_1" and "'{include if \"with-pwhistory\"}' not in data_1" and apply_changes_result.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif "'{include if \"with-pwhistory\"}' in data_1" or ("'pam_pwhistory.so' in data_1" and "'{include if \"with-pwhistory\"}' not in data_1") %}
+            FAILED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if not system_applicable %}
+            SKIPPED: System not applicable for this remediation
+          {% elif status_1 | trim != 'APPLIED' %}
+            SKIPPED: Previous requirement failed or skipped, cannot apply changes
+          {% elif "'{include if \"with-pwhistory\"}' in data_1" %}
+            {% if enable_feature_result.rc | default(-1) == 0 %}
+              APPLIED: authselect enable-feature with-pwhistory completed successfully
+            {% else %}
+              FAILED: authselect enable-feature with-pwhistory failed with exit code {{ enable_feature_result.rc | default(-1) }}
+            {% endif %}
+          {% elif "'pam_pwhistory.so' in data_1" and "'{include if \"with-pwhistory\"}' not in data_1" %}
+            {% if apply_changes_result.rc | default(-1) == 0 %}
+              APPLIED: authselect apply-changes completed successfully
+            {% else %}
+              FAILED: authselect apply-changes failed with exit code {{ apply_changes_result.rc | default(-1) }}
+            {% endif %}
+          {% else %}
+            SKIPPED: No applicable remediation based on verification results
+          {% endif %}
+
+    # Requirement 3: Verify remediation was applied correctly
+    - name: Req 3 - Execute CIS verification script after remediation
+      copy:
+        dest: "/tmp/cis_verify_after_5_3_2_4.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_module_name="pwhistory"
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- "\bpam_$l_module_name\.so\b" "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_3
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_2 | trim in ['APPLIED', 'SKIPPED']"
+
+    - name: Req 3 - Execute the post-remediation verification script
+      shell: "/tmp/cis_verify_after_5_3_2_4.sh"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_2 | trim in ['APPLIED', 'SKIPPED']"
+
+    - name: Req 3 - Remove temporary post-verification script
+      file:
+        path: "/tmp/cis_verify_after_5_3_2_4.sh"
+        state: absent
+      ignore_errors: true
+      when: 
+        - system_applicable
+        - "status_2 | trim in ['APPLIED', 'SKIPPED']"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify remediation was applied correctly"
+        task_3_cmd: "bash /tmp/cis_verify_after_5_3_2_4.sh"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if not system_applicable %}
+            SKIPPED
+          {% elif status_2 | trim not in ['APPLIED', 'SKIPPED'] %}
+            SKIPPED
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% set rc = result_3.rc | default(-1) %}
+            {% if rc == 0 %}
+              {% if output == '' %}
+                FAILED
+              {% else %}
+                APPLIED
+              {% endif %}
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if not system_applicable %}
+            SKIPPED: System not applicable for this remediation
+          {% elif status_2 | trim not in ['APPLIED', 'SKIPPED'] %}
+            SKIPPED: Previous requirement failed, cannot verify
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% set rc = result_3.rc | default(-1) %}
+            {% if rc == 0 %}
+              {% if output == '' %}
+                FAILED: pam_pwhistory module still not enabled after remediation
+              {% else %}
+                APPLIED: Verification passed, pam_pwhistory module is enabled
+              {% endif %}
+            {% else %}
+              FAILED: Verification script failed with exit code {{ rc }}
+            {% endif %}
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if not system_applicable %}
+            SKIPPED
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_3 | trim == 'FAILED' and status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+
+    - name: Set overall remediation details
+      set_fact:
+        overall_details: >-
+          {% if overall_status == 'APPLIED' %}
+            pam_pwhistory module successfully enabled
+          {% elif overall_status == 'SKIPPED' %}
+            {% if not system_applicable %}
+              authselect command not found, system not applicable for this remediation
+            {% elif status_1 | trim == 'SKIPPED' %}
+              No pam_pwhistory.so lines found. Refer to recommendation 'Ensure active authselect profile includes pam modules'
+            {% else %}
+              Remediation not applicable or could not be applied
+            {% endif %}
+          {% elif overall_status == 'FAILED' %}
+            Failed to enable pam_pwhistory module
+          {% else %}
+            Some remediation steps were applied but verification failed
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.2.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

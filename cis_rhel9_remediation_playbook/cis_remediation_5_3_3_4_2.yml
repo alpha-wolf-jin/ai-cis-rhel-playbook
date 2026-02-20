@@ -1,0 +1,431 @@
+---
+- name: Remediation for CIS 5.3.3.4.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_4_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.4.2"
+    req_1: "Run the verification script to check for remember= in pam_unix.so lines"
+    req_2: "If remember= is found, run the remediation script to remove remember= from pam_unix.so lines"
+    req_3: "Run authselect apply-changes to update the PAM configuration"
+    req_4: "Run the verification script again to confirm remediation"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE (only if checkpoint exists from previous failed run) ---
+    - name: "State Guard - Get current authselect profile path"
+      shell: |
+        l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+        if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+           echo "/etc/authselect/$l_pam_profile"
+        else
+           echo "/usr/share/authselect/default/$l_pam_profile"
+        fi
+      args:
+        executable: /bin/bash
+      register: _sg_authselect_path_result
+      ignore_errors: true
+      changed_when: false
+
+    - name: "State Guard - Restore authselect profile password-auth from backup"
+      copy:
+        src: "{{ state_guard_dir }}/password-auth.present"
+        dest: "{{ _sg_authselect_path_result.stdout }}/password-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Restore authselect profile system-auth from backup"
+      copy:
+        src: "{{ state_guard_dir }}/system-auth.present"
+        dest: "{{ _sg_authselect_path_result.stdout }}/system-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Apply authselect changes after restore"
+      shell: authselect apply-changes
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if authselect password-auth exists"
+      stat:
+        path: "{{ _sg_authselect_path_result.stdout }}/password-auth"
+      register: _sg_authselect_password_auth_stat
+      when: _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Check if authselect system-auth exists"
+      stat:
+        path: "{{ _sg_authselect_path_result.stdout }}/system-auth"
+      register: _sg_authselect_system_auth_stat
+      when: _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Backup authselect password-auth (present)"
+      copy:
+        src: "{{ _sg_authselect_path_result.stdout }}/password-auth"
+        dest: "{{ state_guard_dir }}/password-auth.present"
+        remote_src: true
+      when: _sg_authselect_password_auth_stat.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Mark authselect password-auth as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/password-auth.absent"
+      when: not _sg_authselect_password_auth_stat.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Backup authselect system-auth (present)"
+      copy:
+        src: "{{ _sg_authselect_path_result.stdout }}/system-auth"
+        dest: "{{ state_guard_dir }}/system-auth.present"
+        remote_src: true
+      when: _sg_authselect_system_auth_stat.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Mark authselect system-auth as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/system-auth.absent"
+      when: not _sg_authselect_system_auth_stat.stat.exists and _sg_authselect_path_result.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Run the verification script to check for remember= in pam_unix.so lines
+    - name: "Req 1 - Create verification script"
+      copy:
+        dest: "/tmp/cis_verification_5.3.3.4.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- '^\h*password\h+([^#\n\r]+\h+)pam_unix\.so\b' "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Execute verification script"
+      shell: "/tmp/cis_verification_5.3.3.4.2.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove verification script"
+      file:
+        path: "/tmp/cis_verification_5.3.3.4.2.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Run verification script to check for remember="
+        task_1_cmd: "bash /tmp/cis_verification_5.3.3.4.2.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'remember=' in output %}
+              FAILED
+            {% else %}
+              APPLIED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'remember=' in output %}
+              FAILED: remember= found in pam_unix.so lines, remediation required
+            {% else %}
+              APPLIED: No remember= found in pam_unix.so lines, already compliant
+            {% endif %}
+          {% else %}
+            FAILED: Could not retrieve pam_unix.so lines or script failed
+          {% endif %}
+
+    # Requirement 2: If remember= is found, run the remediation script to remove remember= from pam_unix.so lines
+    - name: "Req 2 - Create remediation script"
+      copy:
+        dest: "/tmp/cis_remediation_5.3.3.4.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             for l_authselect_file in "$l_pam_profile_path"/password-auth "$l_pam_profile_path"/system-auth; do
+                sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_unix\.so\s+.*)(remem ber=[1-9][0-9]*)(\s*.*)$/\1\4/g' "$l_authselect_file"
+             done
+          }
+          {% endraw %}
+      when: "'remember=' in result_1.stdout"
+      register: script_create_2
+      ignore_errors: true
+
+    - name: "Req 2 - Execute remediation script"
+      shell: "/tmp/cis_remediation_5.3.3.4.2.sh"
+      args:
+        executable: /bin/bash
+      when: "'remember=' in result_1.stdout"
+      register: result_2
+      ignore_errors: true
+
+    - name: "Req 2 - Remove remediation script"
+      file:
+        path: "/tmp/cis_remediation_5.3.3.4.2.sh"
+        state: absent
+      when: "'remember=' in result_1.stdout"
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Run remediation script to remove remember="
+        task_2_cmd: "bash /tmp/cis_remediation_5.3.3.4.2.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if 'remember=' in result_1.stdout %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if 'remember=' in result_1.stdout %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: Remediation script executed successfully
+            {% else %}
+              FAILED: Remediation script failed with exit code {{ result_2.rc | default(-1) }}
+            {% endif %}
+          {% else %}
+            SKIPPED: No remember= found in initial verification
+          {% endif %}
+      when: true
+      ignore_errors: true
+
+    # Requirement 3: Run authselect apply-changes to update the PAM configuration
+    - name: "Req 3 - Run authselect apply-changes"
+      shell: authselect apply-changes
+      args:
+        executable: /bin/bash
+      when: "'remember=' in result_1.stdout"
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Run authselect apply-changes"
+        task_3_cmd: "authselect apply-changes"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if 'remember=' in result_1.stdout %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if 'remember=' in result_1.stdout %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED: authselect apply-changes executed successfully
+            {% else %}
+              FAILED: authselect apply-changes failed with exit code {{ result_3.rc | default(-1) }}
+            {% endif %}
+          {% else %}
+            SKIPPED: No remember= found in initial verification
+          {% endif %}
+      when: true
+      ignore_errors: true
+
+    # Requirement 4: Run the verification script again to confirm remediation
+    - name: "Req 4 - Create verification script (post-remediation)"
+      copy:
+        dest: "/tmp/cis_verification_post_5.3.3.4.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- '^\h*password\h+([^#\n\r]+\h+)pam_unix\.so\b' "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_4
+      ignore_errors: true
+
+    - name: "Req 4 - Execute verification script (post-remediation)"
+      shell: "/tmp/cis_verification_post_5.3.3.4.2.sh"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+
+    - name: "Req 4 - Remove verification script"
+      file:
+        path: "/tmp/cis_verification_post_5.3.3.4.2.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Run verification script post-remediation"
+        task_4_cmd: "bash /tmp/cis_verification_post_5.3.3.4.2.sh"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'remember=' in output %}
+              FAILED
+            {% else %}
+              APPLIED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'remember=' in output %}
+              FAILED: remember= still present in pam_unix.so lines after remediation
+            {% else %}
+              APPLIED: No remember= found, remediation successful
+            {% endif %}
+          {% else %}
+            FAILED: Could not retrieve pam_unix.so lines or script failed
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: "{{ status_4 | trim }}"
+        overall_details: "{{ rationale_4 | trim }}"
+        overall_result: >-
+          {% if status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_4 | trim == 'FAILED' and status_1 | trim == 'APPLIED' %}
+            APPLIED
+          {% else %}
+            {{ status_4 | trim }}
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.4.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_result | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

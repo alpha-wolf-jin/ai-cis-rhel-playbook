@@ -1,0 +1,617 @@
+---
+- name: Remediation for CIS 5.1.7 - Ensure sshd access is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_7"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.7"
+    
+    # NOTE: These variables should be set by the user running the playbook
+    # Example: -e sshd_allow_users="user1 user2" -e sshd_allow_groups="group1 group2"
+    # Only one should be set for clarity (AllowUsers OR AllowGroups)
+    sshd_allow_users: ""
+    sshd_allow_groups: ""
+    sshd_deny_users: ""
+    sshd_deny_groups: ""
+    
+    # Requirement definitions - MUST use quoted strings
+    req_1: "Check if sshd is installed using command: rpm -q openssh-server"
+    req_2: "Apply AllowUsers configuration by editing /etc/ssh/sshd_config"
+    req_3: "Apply AllowGroups configuration by editing /etc/ssh/sshd_config"
+    req_4: "Apply DenyUsers configuration by editing /etc/ssh/sshd_config"
+    req_5: "Apply DenyGroups configuration by editing /etc/ssh/sshd_config"
+    req_6: "Restart sshd service to apply configuration changes"
+    req_7: "VERIFY: Confirm sshd access is configured by checking /etc/ssh/sshd_config"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+    
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/ssh/sshd_config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+    
+    - name: "State Guard - Undo system changes (restart sshd)"
+      shell: systemctl restart sshd
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+    
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+    
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+    
+    - name: "State Guard - Check if /etc/ssh/sshd_config exists"
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+    
+    - name: "State Guard - Backup /etc/ssh/sshd_config (present)"
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+    
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        status_1: "NOT_EXECUTED"
+        rationale_1: "Not executed yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        
+        data_2: ""
+        status_2: "NOT_EXECUTED"
+        rationale_2: "Not executed yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        
+        data_3: ""
+        status_3: "NOT_EXECECUTED"
+        rationale_3: "Not executed yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        
+        data_4: ""
+        status_4: "NOT_EXECUTED"
+        rationale_4: "Not executed yet"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        
+        data_5: ""
+        status_5: "NOT_EXECUTED"
+        rationale_5: "Not executed yet"
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        
+        data_6: ""
+        status_6: "NOT_EXECUTED"
+        rationale_6: "Not executed yet"
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        
+        data_7: ""
+        status_7: "NOT_EXECUTED"
+        rationale_7: "Not executed yet"
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+
+    # Check if any SSH access control variable is set
+    - name: "Check if any SSH access control variable is set"
+      set_fact:
+        no_ssh_access_vars: true
+      when: >
+        (sshd_allow_users | trim | length == 0) and
+        (sshd_allow_groups | trim | length == 0) and
+        (sshd_deny_users | trim | length == 0) and
+        (sshd_deny_groups | trim | length == 0)
+
+    # Requirement 1: Check if sshd is installed
+    - name: "Req 1 - Check if openssh-server is installed"
+      shell: |
+        echo "=== Checking openssh-server installation ==="
+        rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+    
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if openssh-server is installed"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc | default(-1) != 0 else 'APPLIED') | trim }}"
+        rationale_1: "{{ ('SKIPPED: openssh-server not installed, remediation not applicable' if result_1.rc | default(-1) != 0 else 'APPLIED: openssh-server is installed') | trim }}"
+
+    # Requirement 2: Apply AllowUsers configuration
+    - name: "Req 2 - Apply AllowUsers configuration"
+      shell: |
+        echo "=== BEFORE modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+        echo ""
+        echo "=== Applying AllowUsers configuration ==="
+        # Set variable for bash to use
+        allow_users="{{ sshd_allow_users }}"
+        {% raw %}
+        # Check if AllowUsers already exists
+        if grep -q "^AllowUsers" /etc/ssh/sshd_config; then
+          echo "AllowUsers directive already exists in configuration"
+        elif [ -n "$allow_users" ]; then
+          echo "AllowUsers $allow_users" >> /etc/ssh/sshd_config
+          echo "Added AllowUsers $allow_users to /etc/ssh/sshd_config"
+        else
+          echo "sshd_allow_users variable is empty - skipping AllowUsers configuration"
+        fi
+        {% endraw %}
+        echo ""
+        echo "=== AFTER modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: >
+        (status_1 | trim == 'APPLIED') and 
+        not (no_ssh_access_vars | default(false))
+    
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply AllowUsers configuration"
+        task_2_cmd: "echo 'AllowUsers {{ sshd_allow_users }}' >> /etc/ssh/sshd_config (if not empty)"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif result_2 is defined %}
+            {% if sshd_allow_users | trim | length > 0 %}
+              {{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set
+          {% elif result_2 is defined %}
+            {% if sshd_allow_users | trim | length > 0 %}
+              {{ ('APPLIED: AllowUsers directive added to configuration' if result_2.rc | default(-1) == 0 else 'FAILED: Could not add AllowUsers directive') | trim }}
+            {% else %}
+              SKIPPED: sshd_allow_users variable is empty - not setting AllowUsers
+            {% endif %}
+          {% else %}
+            SKIPPED: Requirement 1 not met (openssh-server not installed) or no SSH access control variables set
+          {% endif %}
+
+    # Requirement 3: Apply AllowGroups configuration
+    - name: "Req 3 - Apply AllowGroups configuration"
+      shell: |
+        echo "=== BEFORE modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+        echo ""
+        echo "=== Applying AllowGroups configuration ==="
+        # Set variable for bash to use
+        allow_groups="{{ sshd_allow_groups }}"
+        {% raw %}
+        # Check if AllowGroups already exists
+        if grep -q "^AllowGroups" /etc/ssh/sshd_config; then
+          echo "AllowGroups directive already exists in configuration"
+        elif [ -n "$allow_groups" ]; then
+          echo "AllowGroups $allow_groups" >> /etc/ssh/sshd_config
+          echo "Added AllowGroups $allow_groups to /etc/ssh/sshd_config"
+        else
+          echo "sshd_allow_groups variable is empty - skipping AllowGroups configuration"
+        fi
+        {% endraw %}
+        echo ""
+        echo "=== AFTER modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: >
+        (status_1 | trim == 'APPLIED') and 
+        not (no_ssh_access_vars | default(false))
+    
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Apply AllowGroups configuration"
+        task_3_cmd: "echo 'AllowGroups {{ sshd_allow_groups }}' >> /etc/ssh/sshd_config (if not empty)"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif result_3 is defined %}
+            {% if sshd_allow_groups | trim | length > 0 %}
+              {{ ('APPLIED' if result_3.rc | default(-1) == 0 else 'FAILED') | trim }}
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set
+          {% elif result_3 is defined %}
+            {% if sshd_allow_groups | trim | length > 0 %}
+              {{ ('APPLIED: AllowGroups directive added to configuration' if result_3.rc | default(-1) == 0 else 'FAILED: Could not add AllowGroups directive') | trim }}
+            {% else %}
+              SKIPPED: sshd_allow_groups variable is empty - not setting AllowGroups
+            {% endif %}
+          {% else %}
+            SKIPPED: Requirement 1 not met (openssh-server not installed) or no SSH access control variables set
+          {% endif %}
+
+    # Requirement 4: Apply DenyUsers configuration
+    - name: "Req 4 - Apply DenyUsers configuration"
+      shell: |
+        echo "=== BEFORE modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+        echo ""
+        echo "=== Applying DenyUsers configuration ==="
+        # Set variable for bash to use
+        deny_users="{{ sshd_deny_users }}"
+        {% raw %}
+        # Check if DenyUsers already exists
+        if grep -q "^DenyUsers" /etc/ssh/sshd_config; then
+          echo "DenyUsers directive already exists in configuration"
+        elif [ -n "$deny_users" ]; then
+          echo "DenyUsers $deny_users" >> /etc/ssh/sshd_config
+          echo "Added DenyUsers $deny_users to /etc/ssh/sshd_config"
+        else
+          echo "sshd_deny_users variable is empty - skipping DenyUsers configuration"
+        fi
+        {% endraw %}
+        echo ""
+        echo "=== AFTER modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: >
+        (status_1 | trim == 'APPLIED') and 
+        not (no_ssh_access_vars | default(false))
+    
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Apply DenyUsers configuration"
+        task_4_cmd: "echo 'DenyUsers {{ sshd_deny_users }}' >> /etc/ssh/sshd_config (if not empty)"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif result_4 is defined %}
+            {% if sshd_deny_users | trim | length > 0 %}
+              {{ ('APPLIED' if result_4.rc | default(-1) == 0 else 'FAILED') | trim }}
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set
+          {% elif result_4 is defined %}
+            {% if sshd_deny_users | trim | length > 0 %}
+              {{ ('APPLIED: DenyUsers directive added to configuration' if result_4.rc | default(-1) == 0 else 'FAILED: Could not add DenyUsers directive') | trim }}
+            {% else %}
+              SKIPPED: sshd_deny_users variable is empty - not setting DenyUsers
+            {% endif %}
+          {% else %}
+            SKIPPED: Requirement 1 not met (openssh-server not installed) or no SSH access control variables set
+          {% endif %}
+
+    # Requirement 5: Apply DenyGroups configuration
+    - name: "Req 5 - Apply DenyGroups configuration"
+      shell: |
+        echo "=== BEFORE modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+        echo ""
+        echo "=== Applying DenyGroups configuration ==="
+        # Set variable for bash to use
+        deny_groups="{{ sshd_deny_groups }}"
+        {% raw %}
+        # Check if DenyGroups already exists
+        if grep -q "^DenyGroups" /etc/ssh/sshd_config; then
+          echo "DenyGroups directive already exists in configuration"
+        elif [ -n "$deny_groups" ]; then
+          echo "DenyGroups $deny_groups" >> /etc/ssh/sshd_config
+          echo "Added DenyGroups $deny_groups to /etc/ssh/sshd_config"
+        else
+          echo "sshd_deny_groups variable is empty - skipping DenyGroups configuration"
+        fi
+        {% endraw %}
+        echo ""
+        echo "=== AFTER modifying sshd_config ==="
+        cat /etc/ssh/sshd_config | grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" || echo "No access control directives found"
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: >
+        (status_1 | trim == 'APPLIED') and 
+        not (no_ssh_access_vars | default(false))
+    
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Apply DenyGroups configuration"
+        task_5_cmd: "echo 'DenyGroups {{ sshd_deny_groups }}' >> /etc/ssh/sshd_config (if not empty)"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif result_5 is defined %}
+            {% if sshd_deny_groups | trim | length > 0 %}
+              {{ ('APPLIED' if result_5.rc | default(-1) == 0 else 'FAILED') | trim }}
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set
+          {% elif result_5 is defined %}
+            {% if sshd_deny_groups | trim | length > 0 %}
+              {{ ('APPLIED: DenyGroups directive added to configuration' if result_5.rc | default(-1) == 0 else 'FAILED: Could not add DenyGroups directive') | trim }}
+            {% else %}
+              SKIPPED: sshd_deny_groups variable is empty - not setting DenyGroups
+            {% endif %}
+          {% else %}
+            SKIPPED: Requirement 1 not met (openssh-server not installed) or no SSH access control variables set
+          {% endif %}
+
+    # Requirement 6: Restart sshd service
+    - name: "Req 6 - Restart sshd service"
+      shell: |
+        echo "=== Restarting sshd service ==="
+        systemctl restart sshd 2>&1
+        echo "=== Checking sshd service status ==="
+        systemctl status sshd --no-pager -l | head -20 2>&1
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: >
+        (status_1 | trim == 'APPLIED') and 
+        not (no_ssh_access_vars | default(false)) and
+        ((status_2 | trim == 'APPLIED') or 
+         (status_3 | trim == 'APPLIED') or 
+         (status_4 | trim == 'APPLIED') or 
+         (status_5 | trim == 'APPLIED'))
+    
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Restart sshd service"
+        task_6_cmd: "systemctl restart sshd"
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: >-
+          {% if result_6 is defined %}
+            {{ result_6.stdout | default('') | trim }}
+            {% if result_6.stderr | default('') | trim %}
+              {% if result_6.stderr | default('') | trim not in result_6.stdout | default('') | trim %}
+                STDERR: {{ result_6.stderr | default('') | trim }}
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        status_6: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif result_6 is defined %}
+            {% if result_6.skipped is defined and result_6.skipped %}
+              SKIPPED
+            {% else %}
+              {{ ('APPLIED' if result_6.rc | default(-1) == 0 else 'FAILED') | trim }}
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_6: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set
+          {% elif result_6 is defined %}
+            {% if result_6.skipped is defined and result_6.skipped %}
+              SKIPPED: Task was skipped due to condition
+            {% elif result_6.rc | default(-1) == 0 %}
+              APPLIED: sshd service restarted successfully
+            {% else %}
+              FAILED: Could not restart sshd service
+            {% endif %}
+          {% else %}
+            SKIPPED: Task was not executed
+          {% endif %}
+
+    # Requirement 7: Verify sshd access configuration
+    - name: "Req 7 - Verify sshd access is configured"
+      shell: |
+        echo "=== Verifying sshd access configuration ==="
+        grep -E "^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)" /etc/ssh/sshd_config || echo "No access control directives found"
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      changed_when: false
+      when: >
+        (status_1 | trim == 'APPLIED') and 
+        not (no_ssh_access_vars | default(false))
+    
+    - name: Store requirement 7 details
+      set_fact:
+        task_7_name: "Verify sshd access configuration"
+        task_7_cmd: "grep -E '^(AllowUsers|AllowGroups|DenyUsers|DenyGroups)' /etc/ssh/sshd_config"
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif result_7 is defined %}
+            {% set output = result_7.stdout | default('') | trim %}
+            {% if output != '' and 'No access control directives found' not in output %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_7: >-
+          {% if no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set
+          {% elif result_7 is defined %}
+            {% set output = result_7.stdout | default('') | trim %}
+            {% if output != '' and 'No access control directives found' not in output %}
+              APPLIED: At least one access control directive is present in sshd_config
+            {% else %}
+              FAILED: No access control directives found in sshd_config
+            {% endif %}
+          {% else %}
+            SKIPPED: Requirement 1 not met (openssh-server not installed) or no SSH access control variables set
+          {% endif %}
+
+    # Determine overall remediation status - FIXED BASED ON FEEDBACK
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif no_ssh_access_vars | default(false) %}
+            SKIPPED
+          {% elif status_7 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'APPLIED' or status_3 | trim == 'APPLIED' or status_4 | trim == 'APPLIED' or status_5 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: openssh-server not installed, remediation not applicable
+          {% elif no_ssh_access_vars | default(false) %}
+            SKIPPED: No SSH access control variables were set (sshd_allow_users, sshd_allow_groups, sshd_deny_users, sshd_deny_groups). Manual configuration is required to set at least one to comply with CIS 5.1.7.
+          {% elif status_7 | trim == 'APPLIED' %}
+            APPLIED: SSH access control configured successfully
+          {% elif status_2 | trim == 'APPLIED' or status_3 | trim == 'APPLIED' or status_4 | trim == 'APPLIED' or status_5 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED: Some access control directives were configured but verification failed
+          {% else %}
+            FAILED: SSH access control not configured
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.7"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.7"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') }}"
+          - "  Command: {{ task_7_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_7_rc | default(-1) }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -2,99 +2,174 @@
 - name: Data Collection for CIS 2.1.16
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.16"
-    req_1: "Verify the telnet-server package is NOT installed"
-    req_2: "If telnet-server is installed, verify telnet.socket is NOT enabled"
-    req_3: "If telnet-server is installed, verify telnet.socket is NOT active"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.16"
+    req_1: "Check if telnet-server package is installed"
+    req_2: "Check if telnet.socket is enabled"
+    req_3: "Check if telnet.socket is active"
     req_4: "OVERALL Verify: Ensure telnet server services are not in use"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
+        data_4: ""
+        status_4: "UNKNOWN"
+        rationale_4: "Not evaluated"
 
-    # Requirement 1: Verify the telnet-server package is NOT installed
-    - name: "Req 1 - Check telnet-server package installation"
-      shell: >
-        rpm -q telnet-server
+    # Requirement 1: Check if telnet-server package is installed
+    - name: Req 1 - Check telnet-server package installation
+      shell: rpm -q telnet-server
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
         task_1_name: "Check telnet-server package installation"
         task_1_cmd: "rpm -q telnet-server"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package telnet-server is not installed') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'package telnet-server is not installed', FAIL if the package is installed"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'package telnet-server is not installed' in output or output == '' %}
+            PASS
+          {% elif output is search('telnet-server-') %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'package telnet-server is not installed' in output or output == '' %}
+            PASS when output is 'package telnet-server is not installed' or empty
+          {% elif output is search('telnet-server-') %}
+            FAIL when output shows a version number indicating the package is installed
+          {% else %}
+            UNKNOWN: Unexpected output
+          {% endif %}
 
-    # Requirement 2: If telnet-server is installed, verify telnet.socket is NOT enabled
-    - name: "Req 2 - Check if telnet.socket is enabled"
-      shell: >
-        systemctl is-enabled telnet.socket 2>/dev/null | grep 'enabled'
+    # Requirement 2: Check if telnet.socket is enabled
+    - name: Req 2 - Check if telnet.socket is enabled
+      shell: systemctl is-enabled telnet.socket 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 | trim == "FAIL"
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
         task_2_name: "Check if telnet.socket is enabled"
         task_2_cmd: "systemctl is-enabled telnet.socket 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when no output is returned (service is not enabled), FAIL if 'enabled' is returned"
-      when: status_1 | trim == 'FAIL'
+        status_2: >-
+          {% if status_1 | trim == "PASS" %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == '' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == "PASS" %}
+            NA: Package not installed, check not required
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == '' %}
+              PASS when command returns no output (empty)
+            {% else %}
+              FAIL when output contains the string 'enabled'
+            {% endif %}
+          {% endif %}
 
-    # Requirement 3: If telnet-server is installed, verify telnet.socket is NOT active
-    - name: "Req 3 - Check if telnet.socket is active"
-      shell: >
-        systemctl is-active telnet.socket 2>/dev/null | grep '^active'
+    # Requirement 3: Check if telnet.socket is active
+    - name: Req 3 - Check if telnet.socket is active
+      shell: systemctl is-active telnet.socket 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 | trim == "FAIL"
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
         task_3_name: "Check if telnet.socket is active"
         task_3_cmd: "systemctl is-active telnet.socket 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when no output is returned (service is not active), FAIL if 'active' is returned"
-      when: status_1 | trim == 'FAIL'
+        status_3: >-
+          {% if status_1 | trim == "PASS" %}
+            NA
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output == '' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == "PASS" %}
+            NA: Package not installed, check not required
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output == '' %}
+              PASS when command returns no output (empty)
+            {% else %}
+              FAIL when output contains the string 'active'
+            {% endif %}
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify: Ensure telnet server services are not in use
-    - name: Determine overall compliance status
+    # Requirement 4: Overall verification
+    - name: Store requirement 4 details
       set_fact:
-        status_4: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        data_4: "Req1: {{ status_1 }}, Req2: {{ status_2 }}, Req3: {{ status_3 }}"
+        status_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif (status_1 | trim == 'FAIL') and (status_2 | trim == 'PASS') and (status_3 | trim == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)
+          {% elif (status_1 | trim == 'FAIL') and (status_2 | trim == 'PASS') and (status_3 | trim == 'PASS') %}
+            PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS)
+          {% else %}
+            FAIL when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS) condition not met
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -119,7 +194,7 @@
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
@@ -127,10 +202,14 @@
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

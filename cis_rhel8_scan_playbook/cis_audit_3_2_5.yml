@@ -1,24 +1,18 @@
 ---
-- name: Data Collection for CIS 3.2.5 - Ensure sctp kernel module is not available
+- name: Data Collection for CIS checkpoint 3.2.5
   hosts: all
   become: yes
-  gather_facts: no
-  # CIS RHEL 8 Benchmark v4.0.0, checkpoint 3.2.5
-  # Using ignore_errors: true and failed_when: false on audit tasks to ensure all checks complete
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0, checkpoint 3.2.5"
-    req_1: "Run the following script to verify the sctp kernel module is NOT available in the filesystem"
-    req_2: "Verify the sctp kernel module is NOT loaded using command: lsmod | grep 'sctp'"
-    req_3: |
-      Verify the sctp kernel module is blacklisted and configured to NOT be loadable using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+sctp\b'
-    req_4: "OVERALL Verify: Ensure sctp kernel module is not available"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.2.5"
+    req_1: "Run script to determine if the sctp kernel module is available on the system"
+    req_2: "Verify the sctp kernel module is not loaded"
+    req_3: "Verify the sctp kernel module is not loadable"
+    req_4: "Overall Verify: Ensure sctp kernel module is not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
-        data_2: ""
-        data_3: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -28,11 +22,19 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        # Initialize status variables with defaults
+        status_2: "NA"
+        rationale_2: "Not executed because module is not available"
+        status_3: "NA"
+        rationale_3: "Not executed because module is not available"
 
-    # Requirement 1: Run the following script to verify the sctp kernel module is NOT available in the filesystem
-    - name: "Req 1 - Create temporary audit script for sctp module availability"
+    # Requirement 1: Run script to determine if the sctp kernel module is available on the system
+    - name: Req 1 - Execute CIS audit script for sctp module availability
       copy:
-        dest: "/tmp/cis_audit_sctp_module.sh"
+        dest: "/tmp/cis_audit_3.2.5.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -48,138 +50,148 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
 
-    - name: "Req 1 - Execute audit script for sctp module availability"
-      shell: "/tmp/cis_audit_sctp_module.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_3.2.5.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_sctp_module.sh"
+        path: "/tmp/cis_audit_3.2.5.sh"
         state: absent
       ignore_errors: true
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute audit script for sctp module availability"
-        task_1_cmd: "/tmp/cis_audit_sctp_module.sh"
+        task_1_name: "Execute CIS audit script for sctp module availability"
+        task_1_cmd: "bash /tmp/cis_audit_3.2.5.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when script returns NO output (module not found), FAIL when script returns any output (module exists)"
+        rationale_1: "PASS when no output (module not available), FAIL when output shows module exists"
 
-    # Requirement 2: Verify the sctp kernel module is NOT loaded using command: lsmod | grep 'sctp'
-    - name: "Req 2 - Check if sctp kernel module is loaded"
+    # Requirement 2: Verify the sctp kernel module is not loaded
+    # Only execute if Requirement 1 returned output (module is available)
+    - name: Req 2 - Check if sctp module is loaded
       shell: |
         lsmod | grep 'sctp'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim != ''
+      when: data_1 | length > 0
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if sctp kernel module is loaded"
+        task_2_name: "Check if sctp module is loaded"
         task_2_cmd: "lsmod | grep 'sctp'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns NO output (module not loaded), FAIL when command returns any output (module is loaded)"
-      when: data_1 | trim != ''
+        rationale_2: "PASS when no output (module not loaded), FAIL when output shows module is loaded"
+      when: data_1 | length > 0
 
-    # Requirement 3: Verify the sctp kernel module is blacklisted and configured to NOT be loadable
-    - name: "Req 3 - Check if sctp kernel module is blacklisted and not loadable"
+    # Requirement 3: Verify the sctp kernel module is not loadable
+    # Only execute if Requirement 1 returned output (module is available)
+    - name: Req 3 - Check if sctp module is loadable
       shell: |
         modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+sctp\b'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim != ''
+      when: data_1 | length > 0
 
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if sctp kernel module is blacklisted and not loadable"
+        task_3_name: "Check if sctp module is loadable"
         task_3_cmd: |
           modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+sctp\b'
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if (
-              result_3.stdout | default('') | trim | length > 0 and
-              'blacklist sctp' in result_3.stdout and
-              ('install sctp /bin/false' in result_3.stdout or 'install sctp /bin/true' in result_3.stdout)
-            ) else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when output contains BOTH 'blacklist sctp' AND ( 'install sctp /bin/false' OR 'install sctp /bin/true' ), FAIL otherwise"
-      when: data_1 | trim != ''
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'blacklist sctp' in output and ('install sctp /bin/false' in output or 'install sctp /bin/true' in output) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when output contains 'blacklist sctp' AND either 'install sctp /bin/false' or 'install sctp /bin/true', FAIL otherwise"
+      when: data_1 | length > 0
 
-    # Requirement 4: OVERALL Verify: Ensure sctp kernel module is not available
-    - name: Store requirement 4 details and determine overall status
+    # Requirement 4: Overall verification
+    - name: Store requirement 4 details
       set_fact:
-        status_4: >
-          {{ (
-            'PASS' if
-            (data_1 | trim == '') or
-            (data_1 | trim != '' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        data_4: "Combined status from requirements 1-3"
+        status_4: >-
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('NA') | trim %}
+          {% set s3 = status_3 | default('NA') | trim %}
+          {% if s1 == 'PASS' %}
+            PASS
+          {% elif s1 == 'FAIL' and s2 == 'PASS' and s3 == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: "PASS when module is not available (req1=PASS) OR module is available but not loaded and not loadable (req1=FAIL, req2=PASS, req3=PASS)"
 
-    # Generate compliance report
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.2.5"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.2.5"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not executed - module not found in filesystem') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not executed - module not found in filesystem') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Rationale: PASS when sctp module is not available OR module is available but not loaded and not loadable"
           - "========================================================"

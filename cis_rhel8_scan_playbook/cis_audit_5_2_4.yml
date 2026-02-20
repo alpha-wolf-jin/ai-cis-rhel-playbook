@@ -2,54 +2,94 @@
 - name: Data Collection for CIS 5.2.4
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.2.4"
-    req_1: "Verify the operating system requires users to supply a password for privilege escalation by checking for the absence of NOPASSWD directives in sudo configuration files"
-    req_2: "OVERALL Verify: Ensure users must provide password for escalation"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.4"
+    req_1: "Check if password authentication is being used (if not, this checkpoint is not applicable)"
+    req_2: "Verify the operating system requires a password for privilege escalation by checking for NOPASSWD directives in sudo configuration files"
+    req_3: "OVERALL Verify: Ensure users must provide password for escalation"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_2: "N/A - Password authentication not used"
+        status_2: "NA"
+        rationale_2: "Not applicable because passwords are not used for authentication"
+        data_3: "N/A - Password authentication not used"
+        status_3: "NA"
+        rationale_3: "Checkpoint is not applicable because passwords are not used for authentication"
 
-    # Requirement 1: Verify the operating system requires users to supply a password for privilege escalation by checking for the absence of NOPASSWD directives in sudo configuration files
-    - name: "Req 1 - Check for NOPASSWD directives in sudo configuration"
-      shell: >
-        grep -r "^[^#].*NOPASSWD" /etc/sudoers*
+    # Requirement 1: Check if password authentication is being used
+    - name: Req 1 - Check PAM configuration for password authentication
+      shell: |
+        # Check common PAM configurations for password authentication
+        if grep -q "^auth.*pam_unix.so" /etc/pam.d/system-auth 2>/dev/null || 
+           grep -q "^auth.*pam_unix.so" /etc/pam.d/password-auth 2>/dev/null ||
+           grep -q "^password.*pam_unix.so" /etc/pam.d/system-auth 2>/dev/null ||
+           grep -q "^password.*pam_unix.so" /etc/pam.d/password-auth 2>/dev/null; then
+          echo "PASS: Password authentication is configured in PAM"
+        else
+          echo "FAIL: Password authentication not found in common PAM configurations"
+        fi
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for NOPASSWD directives in sudo configuration"
-        task_1_cmd: |
-          grep -r \"^[^#].*NOPASSWD\" /etc/sudoers*
+        task_1_name: "Check PAM configuration for password authentication"
+        task_1_cmd: "Check PAM files for pam_unix.so configuration"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns no output (empty), FAIL when any line is found"
+        status_1: "{{ ('PASS' if ('PASS:' in (result_1.stdout | default(''))) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when passwords are being used for authentication (checkpoint is applicable), FAIL when passwords are not used (checkpoint is N/A)' if ('PASS:' in (result_1.stdout | default(''))) else 'FAIL: Password authentication not found in common PAM configurations') | trim }}"
 
-    # Requirement 2: OVERALL Verify: Ensure users must provide password for escalation
-    - name: "Req 2 - Determine overall compliance"
+    # Requirement 2: Check for NOPASSWD directives in sudo configuration files
+    # ONLY execute if Requirement 1 passed (passwords are used)
+    - name: Req 2 - Check for NOPASSWD directives in sudo configuration
+      shell: |
+        {% raw %}
+        grep -r "^[^#].*NOPASSWD" /etc/sudoers* 2>/dev/null
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | default('FAIL') == 'PASS'
+
+    - name: Store requirement 2 details (when applicable)
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 | trim }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Check for NOPASSWD directives in sudo configuration files"
+        task_2_cmd: "grep -r '^[^#].*NOPASSWD' /etc/sudoers*"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when the command returns no output (no lines found), FAIL when any matching line is found' if (result_2.stdout | default('') | trim == '') else 'FAIL: Found NOPASSWD directives in sudo configuration') | trim }}"
+      when: status_1 | default('FAIL') == 'PASS'
+
+    # Requirement 3: Overall verification
+    # ONLY execute if Requirement 1 passed (passwords are used)
+    - name: Store requirement 3 details (when applicable)
+      set_fact:
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A (calculated from requirements 1 and 2)"
+        task_3_rc: 0
+        data_3: "Combined check of requirement 1 and 2"
+        status_3: "{{ ('PASS' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when req_1=PASS (passwords are used) AND req_2=PASS (no NOPASSWD directives found), FAIL otherwise' if (status_1 | default('FAIL') == 'PASS' and status_2 | default('FAIL') == 'PASS') else 'FAIL: Either passwords are not used or NOPASSWD directives found') | trim }}"
+      when: status_1 | default('FAIL') == 'PASS'
 
     - name: Generate compliance report
       debug:
@@ -57,7 +97,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.2.4"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.2.4"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -76,8 +116,16 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

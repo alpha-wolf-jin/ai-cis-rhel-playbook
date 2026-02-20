@@ -1,34 +1,32 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.4.2.5
 - name: Data Collection for CIS 5.4.2.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.4.2.5"
-    req_1: "Run the following script to verify root's PATH does not contain empty directories (::), trailing colons (:), or the current working directory (.), and that all entries are directories owned by root with permissions of 0755 or more restrictive"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.5"
+    req_1: "Run the provided CIS audit script to verify Ensure root path integrity"
     req_2: "OVERALL Verify: Ensure root path integrity"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Run audit script
-    - name: "Req 1 - Create temporary audit script"
+    # Requirement 1: Run the provided CIS audit script
+    - name: Req 1 - Execute CIS audit script for root path integrity
       copy:
         dest: "/tmp/cis_audit_5.4.2.5.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
              l_output2=""
              l_pmask="0022"
@@ -55,42 +53,40 @@
              fi
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
 
-    - name: "Req 1 - Execute audit script"
+    - name: Req 1 - Execute the audit script
       shell: "/tmp/cis_audit_5.4.2.5.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
         path: "/tmp/cis_audit_5.4.2.5.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute root PATH audit script"
+        task_1_name: "Execute CIS audit script for root path integrity"
         task_1_cmd: "/tmp/cis_audit_5.4.2.5.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if ('*** PASS ***' in result_1.stdout and 'Root''s path is correctly configured' in result_1.stdout) else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script output contains '*** PASS ***' and 'Root's path is correctly configured', FAIL when the script output contains '** FAIL **' and lists reasons"
+        status_1: "{{ ('PASS' if ('*** PASS ***' in result_1.stdout or '** PASS **' in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
 
     # Requirement 2: Overall verification
-    - name: "Req 2 - Determine overall compliance"
+    - name: Req 2 - Overall verification
       set_fact:
         task_2_name: "Overall verification"
-        task_2_cmd: "N/A"
+        task_2_cmd: "N/A (based on requirement 1 status)"
         task_2_rc: 0
-        data_2: "Overall status based on requirement 1"
-        status_2: "{{ status_1 | trim }}"
+        data_2: "Based on requirement 1 status"
+        status_2: "{{ status_1 | default('FAIL') | trim }}"
         rationale_2: "PASS when req_1=PASS, FAIL otherwise"
 
     # Final report
@@ -100,7 +96,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.4.2.5"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.5"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -121,6 +117,6 @@
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

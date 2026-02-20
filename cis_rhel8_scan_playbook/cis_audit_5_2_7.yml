@@ -2,12 +2,13 @@
 - name: Data Collection for CIS 5.2.7
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.2.7"
-    req_1: "Check if pam_wheel.so is configured correctly in /etc/pam.d/su"
-    req_2: "Verify the specified group from the pam_wheel.so configuration contains no users"
-    req_3: "OVERALL Verify: Ensure access to the su command is restricted"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.7"
+    req_1: |
+      Check the PAM configuration for su command using command: grep -Pi '^\h*auth\h+(?:required|requisite)\h+pam_wheel\.so\h+(?:[^#\n\r]+\h+)?((?!\2)(use_uid\b|group=\H+\b))\h+(?:[^#\n\r]+\h+)?((?!\1)(use_uid\b|group=\H+\b))(\h+.*)?$' /etc/pam.d/su. Rationale: PASS when the output exactly matches the pattern 'auth required pam_wheel.so use_uid group=<group_name>' (where <group_name> is a valid group name), FAIL otherwise.
+    req_2: "Verify the specified group contains no users using command: grep <group_name> /etc/group. Rationale: PASS when the output matches the pattern '<group_name>:x:<GID>:' (i.e., no users listed after the GID field), FAIL otherwise."
+    req_3: "Ensure access to the su command is restricted. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise."
 
   tasks:
     - name: Initialize data variables
@@ -18,113 +19,157 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
-    # Requirement 1: Check if pam_wheel.so is configured correctly
-    - name: "Req 1 - Check pam_wheel.so configuration"
+    # Requirement 1: Check PAM configuration for su command
+    - name: Req 1 - Check PAM configuration for su command
       shell: |
+        {% raw %}
         grep -Pi '^\h*auth\h+(?:required|requisite)\h+pam_wheel\.so\h+(?:[^#\n\r]+\h+)?((?!\2)(use_uid\b|group=\H+\b))\h+(?:[^#\n\r]+\h+)?((?!\1)(use_uid\b|group=\H+\b))(\h+.*)?$' /etc/pam.d/su
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
-    - name: Store requirement 1 details
+    - name: Store requirement 1 details and extract group name
       set_fact:
-        task_1_name: "Check pam_wheel.so configuration"
-        task_1_cmd: |
-          grep -Pi '^\h*auth\h+(?:required|requisite)\h+pam_wheel\.so\h+(?:[^#\n\r]+\h+)?((?!\2)(use_uid\b|group=\H+\b))\h+(?:[^#\n\r]+\h+)?((?!\1)(use_uid\b|group=\H+\b))(\h+.*)?$' /etc/pam.d/su
+        task_1_name: "Check PAM configuration for su command"
+        task_1_cmd: "grep -Pi pattern /etc/pam.d/su"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: |
-          {{ ('PASS' if (result_1.stdout | default('') | trim | regex_search('^auth\\s+(required|requisite)\\s+pam_wheel\\.so\\s+.*use_uid\\s+group=\\w+.*$')) else 'FAIL') | trim }}
-        rationale_1: |
-          {{ ('PASS when output matches pattern auth required pam_wheel.so use_uid group=<group_name>, FAIL otherwise' if (result_1.stdout | default('') | trim | regex_search('^auth\\s+(required|requisite)\\s+pam_wheel\\.so\\s+.*use_uid\\s+group=\\w+.*$')) else 'FAIL: pam_wheel.so not configured correctly') | trim }}
-        extracted_group: |
-          {{ result_1.stdout | default('') | trim | regex_replace('.*group=(\\w+).*', '\\1') }}
+        # Extract group name from the output using regex
+        group_name: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set match = output | regex_search('group=([^\\s]+)') %}
+            {% if match %}
+              {{ match[0].replace('group=', '') | trim }}
+            {% else %}
+              ""
+            {% endif %}
+          {% else %}
+            ""
+          {% endif %}
 
-    # Requirement 2: Verify group contains no users - ONLY execute if group was extracted
-    - name: "Req 2 - Check group membership"
+    - name: Set status and rationale for requirement 1
+      set_fact:
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if output | regex_search('^auth\\s+(required|requisite)\\s+pam_wheel\\.so\\s+use_uid\\s+group=[^\\s]+$') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if output | regex_search('^auth\\s+(required|requisite)\\s+pam_wheel\\.so\\s+use_uid\\s+group=[^\\s]+$') %}
+              PASS: Output matches expected pattern auth required pam_wheel.so use_uid group=<group_name>
+            {% else %}
+              FAIL: Output does not match expected pattern auth required pam_wheel.so use_uid group=<group_name>
+            {% endif %}
+          {% else %}
+            FAIL: No output from PAM configuration check
+          {% endif %}
+
+    # Requirement 2: Verify group has no users
+    - name: Req 2 - Verify group has no users
       shell: |
-        grep "{{ extracted_group }}" /etc/group
+        {% raw %}
+        grep '^{{ group_name }}:' /etc/group
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: 
-        - extracted_group | default('') != ''
-        - extracted_group | trim != ''
+      when: group_name != ""
 
     - name: Store requirement 2 details when group exists
       set_fact:
-        task_2_name: "Check group membership"
-        task_2_cmd: "grep {{ extracted_group }} /etc/group"
+        task_2_name: "Verify group {{ group_name }} has no users"
+        task_2_cmd: "grep '^{{ group_name }}:' /etc/group"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | regex_search('^' + extracted_group + ':x:[0-9]+:$')) else 'FAIL') | trim }}"
-        rationale_2: "{{ ('PASS when output matches pattern <group_name>:x:<GID>: with no usernames after GID, FAIL otherwise' if (result_2.stdout | default('') | trim | regex_search('^' + extracted_group + ':x:[0-9]+:$')) else 'FAIL: group contains users or not found') | trim }}"
-      when: 
-        - extracted_group | default('') != ''
-        - extracted_group | trim != ''
+      when: group_name != ""
 
-    - name: Store requirement 2 details when no group extracted
+    - name: Set status and rationale for requirement 2 when group exists
       set_fact:
-        task_2_name: "Check group membership"
-        task_2_cmd: "N/A - No group extracted from requirement 1"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if output | regex_search('^[^:]+:x:[0-9]+:$') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if output | regex_search('^[^:]+:x:[0-9]+:$') %}
+              PASS: Group entry has no users listed after GID field
+            {% else %}
+              FAIL: Group entry has users listed or format is incorrect
+            {% endif %}
+          {% else %}
+            FAIL: Group not found or no output
+          {% endif %}
+      when: group_name != ""
+
+    # Handle case when no group name was extracted (requirement 1 failed)
+    - name: Set requirement 2 to FAIL when no group name
+      set_fact:
+        task_2_name: "Verify group has no users"
+        task_2_cmd: "N/A - No group name extracted from requirement 1"
         task_2_rc: -1
-        data_2: "No group name extracted from pam_wheel.so configuration"
-        status_2: "NA"
-        rationale_2: "NA: No group name found in pam_wheel.so configuration, requirement not applicable"
-      when: 
-        - extracted_group | default('') == '' or extracted_group | trim == ''
+        data_2: "No group name extracted from PAM configuration"
+        status_2: "FAIL"
+        rationale_2: "FAIL: No group name extracted from PAM configuration, cannot verify group"
+      when: group_name == ""
 
-    # Requirement 3: Overall verification
-    - name: Store requirement 3 details
+    # Overall compliance check
+    - name: Set overall compliance status
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Combined result of requirements 1 and 2"
-        status_3: "{{ ('PASS' if (status_1 | default('FAIL') | trim == 'PASS' and (status_2 | default('FAIL') | trim == 'PASS' or status_2 | default('FAIL') | trim == 'NA')) else 'FAIL') | trim }}"
-        rationale_3: "{{ ('PASS when req_1=PASS AND (req_2=PASS or req_2=NA), FAIL otherwise' if (status_1 | default('FAIL') | trim == 'PASS' and (status_2 | default('FAIL') | trim == 'PASS' or status_2 | default('FAIL') | trim == 'NA')) else 'FAIL: Requirement 1 failed or Requirement 2 failed') | trim }}"
+        status_3: "{{ 'PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL' }}"
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
+            PASS: Both requirements passed - access to su command is properly restricted
+          {% else %}
+            FAIL: One or more requirements failed - access to su command is not properly restricted
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.2.7"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.7"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Task: {{ task_2_name | default('Task not executed') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

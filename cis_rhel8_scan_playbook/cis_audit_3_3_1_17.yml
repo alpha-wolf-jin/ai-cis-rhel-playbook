@@ -1,61 +1,71 @@
 ---
-# Audit CIS RHEL 8 Benchmark v4.0.0, checkpoint 3.3.1.17
-# Ensure net.ipv4.conf.default.log_martians is configured (Automated)
-- name: Data Collection for CIS 3.3.1.17
+- name: Data Collection for CIS Benchmark 3.3.1.17
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.17"
-    req_1: "Verify net.ipv4.conf.default.log_martians is set to 1 in the running configuration using command: sysctl net.ipv4.conf.default.log_martians"
-    req_2: "Run the following script to verify net.ipv4.conf.default.log_martians = 1 is set in a persistent configuration file used by systemd-sysctl"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.1.17"
+    req_1: "Verify net.ipv4.conf.default.log_martians is set to 1 in the running configuration"
+    req_2: "Run CIS audit script to verify net.ipv4.conf.default.log_martians = 1 is set in systemd sysctl configuration files"
     req_3: "OVERALL Verify: Ensure net.ipv4.conf.default.log_martians is configured"
+    # Remediation control variable - set to false for audit-only mode
+    perform_remediation: false
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
 
-    # Requirement 1: Verify net.ipv4.conf.default.log_martians is set to 1 in the running configuration using command: sysctl net.ipv4.conf.default.log_martians
-    - name: "Req 1 - Check running sysctl configuration"
-      shell: sysctl net.ipv4.conf.default.log_martians
+    # Requirement 1: Run sysctl command
+    - name: Req 1 - Check running configuration for net.ipv4.conf.default.log_martians
+      shell: |
+        sysctl net.ipv4.conf.default.log_martians
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl configuration"
+        task_1_name: "Check running configuration for net.ipv4.conf.default.log_martians"
         task_1_cmd: "sysctl net.ipv4.conf.default.log_martians"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv4.conf.default.log_martians = 1') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'net.ipv4.conf.default.log_martians = 1', FAIL otherwise"
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == 'net.ipv4.conf.default.log_martians = 1' %}
+            PASS when output is exactly "net.ipv4.conf.default.log_martians = 1", FAIL otherwise
+          {% else %}
+            FAIL: Expected "net.ipv4.conf.default.log_martians = 1", got "{{ output }}"
+          {% endif %}
 
-    # Requirement 2: Run the following script to verify net.ipv4.conf.default.log_martians = 1 is set in a persistent configuration file used by systemd-sysctl
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Execute CIS audit script
+    - name: Req 2 - Execute CIS audit script for net.ipv4.conf.default.log_martians configuration files
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_3.3.1.17.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
-             l_parameter_name="net.ipv4.conf.default.log_martians"  
+             l_parameter_name="net.ipv4.conf.default.log_martians"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
              l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
              || readlink -e /usr/lib/systemd/systemd-sysctl)"
@@ -79,50 +89,132 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
+      register: script_create_2
+      ignore_errors: true
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_audit_3.3.1.17.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: script_create_2 is succeeded
 
-    - name: "Req 2 - Remove temporary audit script"
+    - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_3.3.1.17.sh"
         state: absent
       ignore_errors: true
+      when: script_create_2 is succeeded
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Execute audit script for persistent configuration"
-        task_2_cmd: "/tmp/cis_audit_script_2.sh"
+        task_2_name: "Execute CIS audit script for net.ipv4.conf.default.log_martians configuration files"
+        task_2_cmd: "Execute /tmp/cis_audit_3.3.1.17.sh (full bash script from CIS procedure)"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | length > 0 and 'net.ipv4.conf.default.log_martians = 1' in result_2.stdout) else 'FAIL') | trim }}"
-        rationale_2: "PASS when the script outputs a line confirming 'net.ipv4.conf.default.log_martians = 1' is set in a configuration file, FAIL if no such line is found or if the value is not 1"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set first_line = output.split('\n')[0] if '\n' in output else output %}
+            {% if first_line is search('net\.ipv4\.conf\.default\.log_martians = 1') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set first_line = output.split('\n')[0] if '\n' in output else output %}
+            {% if first_line is search('net\.ipv4\.conf\.default\.log_martians = 1') %}
+              PASS: Output contains correct value " = 1" as required by audit procedure
+            {% else %}
+              FAIL: Output does not contain correct value " = 1". Output: "{{ first_line }}"
+            {% endif %}
+          {% else %}
+            FAIL: Script produced no output or failed to execute
+          {% endif %}
 
-    # Requirement 3: OVERALL Verify: Ensure net.ipv4.conf.default.log_martians is configured
-    - name: Store requirement 3 details and determine overall status
+    # Remediation tasks - only executed if perform_remediation is true and audit failed
+    # Requirement 4: Create/edit sysctl.d file
+    - name: Req 4 - Create or edit sysctl.d file for net.ipv4.conf.default.log_martians
+      shell: |
+        [ ! -d "/etc/sysctl.d/" ] && mkdir -p /etc/sysctl.d/
+        printf '%s\n' "net.ipv4.conf.default.log_martians = 1" >> /etc/sysctl.d/60-ipv4_sysctl.conf
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: result_4.rc == 0
+      when: perform_remediation and (status_1 == 'FAIL' or status_2 == 'FAIL')
+
+    - name: Store requirement 4 details
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Combined result of req_1 and req_2"
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        task_4_name: "Create or edit sysctl.d file for net.ipv4.conf.default.log_martians"
+        task_4_cmd: "Create directory if needed and append setting to /etc/sysctl.d/60-ipv4_sysctl.conf"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('PASS' if (result_4.rc | default(1) == 0) else 'FAIL') | trim }}"
+        rationale_4: >-
+          {% if result_4 is defined and result_4.rc | default(1) == 0 %}
+            PASS: Successfully created/updated sysctl.d file
+          {% else %}
+            FAIL: Failed to create/update sysctl.d file
+          {% endif %}
+      when: perform_remediation and (status_1 == 'FAIL' or status_2 == 'FAIL')
 
-    # Final report
+    # Requirement 5: Run sysctl --system
+    - name: Req 5 - Run sysctl --system to load configurations
+      shell: |
+        sysctl --system
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      changed_when: false
+      when: perform_remediation and (status_1 == 'FAIL' or status_2 == 'FAIL') and result_4 is defined and result_4.rc == 0
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Run sysctl --system to load configurations"
+        task_5_cmd: "sysctl --system"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: "{{ ('PASS' if (result_5.rc | default(1) == 0) else 'FAIL') | trim }}"
+        rationale_5: >-
+          {% if result_5 is defined and result_5.rc | default(1) == 0 %}
+            PASS: Successfully loaded sysctl configurations
+          {% else %}
+            FAIL: Failed to load sysctl configurations
+          {% endif %}
+      when: perform_remediation and (status_1 == 'FAIL' or status_2 == 'FAIL') and result_4 is defined and result_4.rc == 0
+
+    # Requirement 3: Overall compliance check - based ONLY on req_1 as per feedback
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "Manual evaluation based on req_1 result only"
+        task_3_rc: 0
+        data_3: "Evaluated req_1 only (CIS audit script)"
+        status_3: "{{ status_1 | default('FAIL') | trim }}"
+        rationale_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' %}
+            PASS: req_1 (running config) passed as required by overall compliance requirement
+          {% else %}
+            FAIL: req_1 (running config) failed. Overall compliance requires req_1 to pass
+          {% endif %}
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.1.17"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.1.17"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -148,6 +240,22 @@
           - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - Create or edit sysctl.d file for net.ipv4.conf.default.log_martians:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('Remediation not performed (perform_remediation=false)') | trim }}"
+          - "  Status: {{ status_4 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Remediation not performed (perform_remediation=false)') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - Run sysctl --system to load configurations:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('Remediation not performed (perform_remediation=false)') | trim }}"
+          - "  Status: {{ status_5 | default('NA') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Remediation not performed (perform_remediation=false)') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"

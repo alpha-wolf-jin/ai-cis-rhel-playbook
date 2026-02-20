@@ -1,0 +1,264 @@
+---
+- name: Remediation for CIS 5.2.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_2_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.2.3"
+    # COPY EXACT requirement text from requirements above!
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if sudo is installed using command: rpm -q sudo. Expected result: sudo package is installed. If not, skip all subsequent steps."
+    req_2: |
+      Apply configuration to set sudo log file path using command: echo 'Defaults logfile=\"/var/log/sudo.log\"' | EDITOR='tee -a' visudo -f /etc/sudoers.d/00_cis_logfile. Expected result: The line 'Defaults logfile=\"/var/log/sudo.log\"' is appended to the file /etc/sudoers.d/00_cis_logfile.
+    req_3: "VERIFY: Confirm sudo log file is configured using command: sudo -V | grep -i 'log file'. Expected result: Output shows 'Log file path: /var/log/sudo.log' or similar."
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/sudoers.d/00_cis_logfile from backup (if existed)"
+      copy:
+        src: "{{ state_guard_dir }}/00_cis_logfile.present"
+        dest: "/etc/sudoers.d/00_cis_logfile"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete /etc/sudoers.d/00_cis_logfile (if created by remediation)"
+      file:
+        path: "/etc/sudoers.d/00_cis_logfile"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if each file exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/sudoers.d/00_cis_logfile exists"
+      stat:
+        path: "/etc/sudoers.d/00_cis_logfile"
+      register: _sg_file_stat
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/sudoers.d/00_cis_logfile (present)"
+      copy:
+        src: "/etc/sudoers.d/00_cis_logfile"
+        dest: "{{ state_guard_dir }}/00_cis_logfile.present"
+        remote_src: true
+      when: _sg_file_stat.stat.exists
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/sudoers.d/00_cis_logfile as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/00_cis_logfile.absent"
+      when: not _sg_file_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if sudo is installed using command: rpm -q sudo. Expected result: sudo package is installed. If not, skip all subsequent steps.
+    - name: "Req 1 - Check if sudo package is installed"
+      shell: |
+        echo "=== CHECKING SUDO PACKAGE INSTALLATION ==="
+        rpm -q sudo
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check sudo package installation"
+        task_1_cmd: "rpm -q sudo"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: sudo package is installed ({{ result_1.stdout | default('') | trim }})
+          {% else %}
+            SKIPPED: sudo package not installed, skipping subsequent steps
+          {% endif %}
+
+    # Requirement 2: Apply configuration to set sudo log file path using command: echo 'Defaults logfile="/var/log/sudo.log"' | EDITOR='tee -a' visudo -f /etc/sudoers.d/00_cis_logfile. Expected result: The line 'Defaults logfile="/var/log/sudo.log"' is appended to the file /etc/sudoers.d/00_cis_logfile.
+    - name: "Req 2 - Apply sudo log file configuration"
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/sudoers.d/00_cis_logfile ]; then
+          cat /etc/sudoers.d/00_cis_logfile
+        else
+          echo "File /etc/sudoers.d/00_cis_logfile does not exist"
+        fi
+        echo "=== APPLYING CHANGE ==="
+        echo 'Defaults logfile="/var/log/sudo.log"' | EDITOR='tee -a' visudo -f /etc/sudoers.d/00_cis_logfile
+        echo "=== AFTER ==="
+        cat /etc/sudoers.d/00_cis_logfile
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Configure sudo log file path"
+        task_2_cmd: |
+          echo 'Defaults logfile=\"/var/log/sudo.log\"' | EDITOR='tee -a' visudo -f /etc/sudoers.d/00_cis_logfile
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2 is defined and result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2 is defined and result_2.rc | default(-1) == 0 %}
+            APPLIED: Successfully configured sudo log file path
+          {% elif status_1 | trim != 'APPLIED' %}
+            SKIPPED: sudo package not installed (skipped)
+          {% else %}
+            FAILED: Could not apply sudo log file configuration
+          {% endif %}
+
+    # Requirement 3: VERIFY: Confirm sudo log file is configured using command: sudo -V | grep -i 'log file'. Expected result: Output shows 'Log file path: /var/log/sudo.log' or similar.
+    - name: "Req 3 - Verify sudo log file configuration"
+      shell: |
+        echo "=== VERIFYING SUDO LOG FILE CONFIGURATION ==="
+        sudo -V | grep -i 'log file'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify sudo log file configuration"
+        task_3_cmd: "sudo -V | grep -i 'log file'"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3 is defined and '/var/log/sudo.log' in result_3.stdout | default('') %}
+            APPLIED
+          {% elif status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_3 is defined and '/var/log/sudo.log' in result_3.stdout | default('') %}
+            APPLIED: sudo log file is configured to /var/log/sudo.log
+          {% elif status_1 | trim != 'APPLIED' %}
+            SKIPPED: sudo package not installed (skipped)
+          {% else %}
+            FAILED: sudo log file not configured correctly
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_3 | trim == 'FAILED' and status_1 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            Skipped: sudo package not installed
+          {% elif status_3 | trim == 'APPLIED' %}
+            Successfully configured sudo log file to /var/log/sudo.log
+          {% elif status_3 | trim == 'FAILED' and status_1 | trim == 'APPLIED' %}
+            Partial: sudo package installed but log file configuration failed verification
+          {% else %}
+            Failed: Could not apply sudo log file configuration
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.2.3"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

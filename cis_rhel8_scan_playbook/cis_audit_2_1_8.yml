@@ -1,129 +1,126 @@
 ---
-- name: Data Collection for CIS 2.1.8
+- name: Data Collection for CIS checkpoint 2.1.8
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.8"
-    req_1: "Verify the dovecot and cyrus-imapd packages are NOT installed"
-    req_2: "If a required package is installed, verify the dovecot.socket, dovecot.service, and cyrus-imapd.service are NOT enabled"
-    req_3: "If a required package is installed, verify the dovecot.socket, dovecot.service, and cyrus-imapd.service are NOT active"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.8"
+    req_1: "Check if dovecot or cyrus-imapd packages are installed using command: rpm -q dovecot cyrus-imapd"
+    req_2: "If a package is installed, check if dovecot.socket, dovecot.service, and cyrus-imapd.service are enabled using command: systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
+    req_3: "If a package is installed, check if dovecot.socket, dovecot.service, and cyrus-imapd.service are active using command: systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
     req_4: "OVERALL Verify: Ensure message access server services are not in use"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_2: "NA"
-        rationale_2: "Requirement 2 not executed - packages are not installed"
-        status_3: "NA"
-        rationale_3: "Requirement 3 not executed - packages are not installed"
+        task_4_name: "Overall verification"
+        task_4_cmd: "N/A"
+        task_4_rc: 0
 
-    # Requirement 1: Verify the dovecot and cyrus-imapd packages are NOT installed
-    - name: "Req 1 - Check if packages are installed"
-      shell: >
-        rpm -q dovecot cyrus-imapd
+    # Requirement 1: Check if dovecot or cyrus-imapd packages are installed using command: rpm -q dovecot cyrus-imapd
+    - name: "Req 1 - Check packages installed"
+      shell: "rpm -q dovecot cyrus-imapd"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if packages are installed"
+        task_1_name: "Check packages installed"
         task_1_cmd: "rpm -q dovecot cyrus-imapd"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >
-          {{ (
-            'PASS' if
-            'package dovecot is not installed' in result_1.stdout | default('') and
-            'package cyrus-imapd is not installed' in result_1.stdout | default('')
-            else 'FAIL'
-          ) | trim }}
-        rationale_1: "PASS when output for each package is 'package <name> is not installed', FAIL if any package is installed"
-        packages_installed: >
-          {{ (
-            'package dovecot is not installed' not in result_1.stdout | default('') or
-            'package cyrus-imapd is not installed' not in result_1.stdout | default('')
-          ) }}
+        status_1: "{{ ('PASS' if ('package dovecot is not installed' in result_1.stdout and 'package cyrus-imapd is not installed' in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when output for both packages is ''package <name> is not installed'', FAIL when any package is installed' if ('package dovecot is not installed' in result_1.stdout and 'package cyrus-imapd is not installed' in result_1.stdout) else 'FAIL: At least one package is installed') | trim }}"
+        packages_installed: "{{ not ('package dovecot is not installed' in result_1.stdout and 'package cyrus-imapd is not installed' in result_1.stdout) }}"
 
-    # Requirement 2: If a required package is installed, verify services are NOT enabled
-    - name: "Req 2 - Check if services are enabled"
-      shell: >
-        systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'
+    # Requirement 2: If a package is installed, check if services are enabled
+    - name: "Req 2 - Check services enabled"
+      shell: "systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: packages_installed | bool
+      when: packages_installed
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if services are enabled"
+        task_2_name: "Check services enabled"
         task_2_cmd: "systemctl is-enabled dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep 'enabled'"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{ (
-            'PASS' if result_2.stdout | default('') | trim == ''
-            else 'FAIL'
-          ) | trim }}
-        rationale_2: "PASS when the command returns no output (nothing is returned), FAIL if any service/socket is listed as enabled"
-      when: packages_installed | bool
+        status_2: >-
+          {% if packages_installed %}
+            {{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if packages_installed %}
+            {{ ('PASS when command returns no output (no services are enabled), FAIL when any service is listed as enabled' if (result_2.stdout | default('') | trim == '') else 'FAIL: At least one service is enabled') | trim }}
+          {% else %}
+            NA: No packages installed, requirement not applicable
+          {% endif %}
 
-    # Requirement 3: If a required package is installed, verify services are NOT active
-    - name: "Req 3 - Check if services are active"
-      shell: >
-        systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'
+    # Requirement 3: If a package is installed, check if services are active
+    - name: "Req 3 - Check services active"
+      shell: "systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: packages_installed | bool
+      when: packages_installed
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if services are active"
+        task_3_name: "Check services active"
         task_3_cmd: "systemctl is-active dovecot.socket dovecot.service cyrus-imapd.service 2>/dev/null | grep '^active'"
         task_3_rc: "{{ result_3.rc | default(-1) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >
-          {{ (
-            'PASS' if result_3.stdout | default('') | trim == ''
-            else 'FAIL'
-          ) | trim }}
-        rationale_3: "PASS when the command returns no output (nothing is returned), FAIL if any service/socket is listed as active"
-      when: packages_installed | bool
+        status_3: >-
+          {% if packages_installed %}
+            {{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_3: >-
+          {% if packages_installed %}
+            {{ ('PASS when command returns no output (no services are active), FAIL when any service is listed as active' if (result_3.stdout | default('') | trim == '') else 'FAIL: At least one service is active') | trim }}
+          {% else %}
+            NA: No packages installed, requirement not applicable
+          {% endif %}
 
-    # Requirement 4: OVERALL Verify
-    - name: Store requirement 4 details and determine overall status
+    # Requirement 4: Overall verification
+    - name: Store requirement 4 details
       set_fact:
-        status_4: >
-          {{ (
-            'PASS' if
-            status_1 | trim == 'PASS' or
-            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when (req_1=PASS) OR (req_1=FAIL due to installed package AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        data_4: "req_1={{ status_1 }}, req_2={{ status_2 }}, req_3={{ status_3 }}"
+        status_4: >-
+          {% if status_1 | trim == 'PASS' or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS: No packages installed
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+            PASS: Packages installed but services are not enabled or active
+          {% else %}
+            FAIL: Packages installed and services are either enabled or active
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -132,7 +129,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.1.8"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.8"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -160,6 +157,10 @@
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""

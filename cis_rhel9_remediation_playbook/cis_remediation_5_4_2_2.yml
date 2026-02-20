@@ -1,0 +1,454 @@
+---
+- name: Remediation for CIS 5.4.2.2 - Ensure root is the only GID 0 account
+  hosts: all
+  become: yes
+  gather_facts: false
+  
+  vars:
+    checkpoint_id: "cis_5_4_2_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.2"
+    
+    # Requirement texts
+    req_1: "Apply root user's GID to 0 using command: `usermod -g 0 root`. Expected result: The root user's primary group is set to GID 0."
+    req_2: "Apply root group's GID to 0 using command: `groupmod -g 0 root`. Expected result: The root group's GID is set to 0."
+    req_3: |
+      Remove or reassign any non-root users with GID 0 using command: `awk -F: '($4 == 0) && ($1 != \"root\") {print $1}' /etc/passwd | xargs -r -I {} usermod -g <new-gid> {}`. Expected result: All users other than root are removed from GID 0.
+    req_4: |
+      VERIFY: Run audit check to confirm Ensure root is the only GID 0 account is properly configured using command: `awk -F: '($4 == 0) && ($1 != \"root\") {print $1}' /etc/passwd`. Expected result: No output, confirming only root has GID 0.
+    
+    # Variable for new GID for non-root users with GID 0
+    new_gid: 1000
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    # First task doesn't need become since it's checking a temp file
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      become: false
+
+    # --- RESTORE PHASE (only if checkpoint exists from previous failed run) ---
+    
+    # Restore user and group databases if backup exists
+    - name: "State Guard - Restore /etc/passwd from backup"
+      copy:
+        src: "{{ state_guard_dir }}/passwd.present"
+        dest: "/etc/passwd"
+        remote_src: true
+      when: "_sg_flag.stat.exists"
+      ignore_errors: true
+    
+    - name: "State Guard - Restore /etc/group from backup"
+      copy:
+        src: "{{ state_guard_dir }}/group.present"
+        dest: "/etc/group"
+        remote_src: true
+      when: "_sg_flag.stat.exists"
+      ignore_errors: true
+    
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag.stat.exists"
+      ignore_errors: true
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+    
+    # Check if each file exists before backup
+    - name: "State Guard - Check if /etc/passwd exists"
+      stat:
+        path: "/etc/passwd"
+      register: _sg_passwd_stat
+    
+    - name: "State Guard - Check if /etc/group exists"
+      stat:
+        path: "/etc/group"
+      register: _sg_group_stat
+    
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/passwd (present)"
+      copy:
+        src: "/etc/passwd"
+        dest: "{{ state_guard_dir }}/passwd.present"
+        remote_src: true
+      when: "_sg_passwd_stat.stat.exists"
+    
+    - name: "State Guard - Backup /etc/group (present)"
+      copy:
+        src: "/etc/group"
+        dest: "{{ state_guard_dir }}/group.present"
+        remote_src: true
+      when: "_sg_group_stat.stat.exists"
+    
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Set root user's GID to 0 - only if not already set
+    - name: "Req 1 - Capture /etc/passwd before change"
+      shell: |
+        echo "=== /etc/passwd BEFORE ==="
+        grep '^root:' /etc/passwd
+        echo "=== END BEFORE ==="
+      args:
+        executable: /bin/bash
+      register: passwd_before_1
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Req 1 - Check current root user GID"
+      shell: |
+        awk -F: '($1 == "root") {print $4}' /etc/passwd
+      args:
+        executable: /bin/bash
+      register: current_root_gid
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Req 1 - Set root user's primary group to GID 0"
+      shell: usermod -g 0 root
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when: "current_root_gid.stdout | default('') | trim != '0'"
+
+    - name: "Req 1 - Capture /etc/passwd after change"
+      shell: |
+        echo "=== /etc/passwd AFTER ==="
+        grep '^root:' /etc/passwd
+        echo "=== END AFTER ==="
+      args:
+        executable: /bin/bash
+      register: passwd_after_1
+      changed_when: false
+      ignore_errors: true
+      when: "current_root_gid.stdout | default('') | trim != '0'"
+
+    - name: "Req 1 - Skip if already compliant"
+      set_fact:
+        result_1:
+          rc: 0
+          stdout: "Root user GID already set to 0"
+          changed: false
+        passwd_after_1:
+          stdout: "No change needed - already compliant"
+      when: "current_root_gid.stdout | default('') | trim == '0'"
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Set root user's primary group to GID 0"
+        task_1_cmd: "usermod -g 0 root"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: |
+          {{ passwd_before_1.stdout | default('') | trim }}
+          {{ passwd_after_1.stdout | default('') | trim }}
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.changed | default(false) %}
+            APPLIED: root user primary group set to GID 0
+          {% elif current_root_gid.stdout | default('') | trim == '0' %}
+            APPLIED: root user primary group already set to GID 0
+          {% else %}
+            FAILED: could not set root user primary group to GID 0
+          {% endif %}
+
+    # Requirement 2: Set root group's GID to 0 - only if not already set
+    - name: "Req 2 - Capture /etc/group before change"
+      shell: |
+        echo "=== /etc/group BEFORE ==="
+        grep '^root:' /etc/group
+        echo "=== END BEFORE ==="
+      args:
+        executable: /bin/bash
+      register: group_before_2
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Req 2 - Check current root group GID"
+      shell: |
+        awk -F: '($1 == "root") {print $3}' /etc/group
+      args:
+        executable: /bin/bash
+      register: current_root_group_gid
+      changed_when: false
+      ignore_errors: true
+
+    - name: "Req 2 - Set root group's GID to 0"
+      shell: groupmod -g 0 root
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "current_root_group_gid.stdout | default('') | trim != '0'"
+
+    - name: "Req 2 - Capture /etc/group after change"
+      shell: |
+        echo "=== /etc/group AFTER ==="
+        grep '^root:' /etc/group
+        echo "=== END AFTER ==="
+      args:
+        executable: /bin/bash
+      register: group_after_2
+      changed_when: false
+      ignore_errors: true
+      when: "current_root_group_gid.stdout | default('') | trim != '0'"
+
+    - name: "Req 2 - Skip if already compliant"
+      set_fact:
+        result_2:
+          rc: 0
+          stdout: "Root group GID already set to 0"
+          changed: false
+        group_after_2:
+          stdout: "No change needed - already compliant"
+      when: "current_root_group_gid.stdout | default('') | trim == '0'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Set root group's GID to 0"
+        task_2_cmd: "groupmod -g 0 root"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: |
+          {{ group_before_2.stdout | default('') | trim }}
+          {{ group_after_2.stdout | default('') | trim }}
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.changed | default(false) %}
+            APPLIED: root group GID set to 0
+          {% elif current_root_group_gid.stdout | default('') | trim == '0' %}
+            APPLIED: root group GID already set to 0
+          {% else %}
+            FAILED: could not set root group GID to 0
+          {% endif %}
+
+    # Requirement 3: Remove or reassign non-root users with GID 0
+    - name: "Req 3 - Check for non-root users with GID 0"
+      shell: |
+        echo "=== Users with GID 0 BEFORE ==="
+        awk -F: '($4 == 0) && ($1 != "root") {print $1}' /etc/passwd
+        echo "=== END BEFORE ==="
+      args:
+        executable: /bin/bash
+      register: check_users_3
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 3 users found
+      set_fact:
+        task_3_name: "Reassign non-root users with GID 0 to new GID"
+        task_3_cmd: |
+          awk -F: '($4 == 0) && ($1 != \"root\") {print $1}' /etc/passwd | xargs -r -I {} usermod -g {{ new_gid }} {}
+        users_found_3: "{{ check_users_3.stdout_lines | default([]) }}"
+        users_count_3: "{{ check_users_3.stdout_lines | default([]) | length }}"
+
+    - name: "Req 3 - Actually reassign users if any found"
+      shell: |
+        # Capture affected users before reassignment
+        affected_users=$(awk -F: '($4 == 0) && ($1 != "root") {print $1}' /etc/passwd)
+        if [ -n "$affected_users" ]; then
+          echo "=== Reassigning users from GID 0 to GID {{ new_gid }} ==="
+          for user in $affected_users; do
+            echo "User: $user - Current GID: $(id -g $user) - New GID: {{ new_gid }}"
+            usermod -g {{ new_gid }} "$user"
+            echo "User: $user - New GID: $(id -g $user)"
+          done
+          echo "=== Reassignment complete ==="
+        else
+          echo "No non-root users with GID 0 found"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "users_count_3 | int > 0"
+
+    - name: "Req 3 - Skip if no non-root users with GID 0"
+      set_fact:
+        result_3:
+          rc: 0
+          stdout: "No non-root users with GID 0 found"
+          changed: false
+      when: "users_count_3 | int == 0"
+
+    - name: "Req 3 - Capture users with GID 0 after reassignment"
+      shell: |
+        echo "=== Users with GID 0 AFTER ==="
+        awk -F: '($4 == 0) && ($1 != "root") {print $1}' /etc/passwd
+        echo "=== END AFTER ==="
+      args:
+        executable: /bin/bash
+      register: check_users_after_3
+      ignore_errors: true
+      changed_when: false
+      when: "users_count_3 | int > 0"
+
+    - name: "Req 3 - Update status based on execution"
+      set_fact:
+        task_3_rc: "{{ result_3.rc | default(0) }}"
+        data_3: |
+          {% if users_count_3 | int > 0 %}
+          {{ check_users_3.stdout | default('') | trim }}
+          {{ result_3.stdout | default('') | trim }}
+          {{ check_users_after_3.stdout | default('') | trim }}
+          {% else %}
+          No non-root users found with GID 0
+          {% endif %}
+        status_3: >-
+          {% if users_count_3 | int == 0 %}
+            APPLIED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if users_count_3 | int == 0 %}
+            APPLIED: No non-root users found with GID 0
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: Successfully reassigned {{ users_count_3 }} user(s) from GID 0 to GID {{ new_gid }}
+          {% else %}
+            FAILED: Could not reassign non-root users with GID 0
+          {% endif %}
+
+    # Requirement 4: Verification
+    - name: "Req 4 - Verify only root has GID 0"
+      shell: |
+        awk -F: '($4 == 0) && ($1 != "root") {print $1}' /etc/passwd
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify only root has GID 0"
+        task_4_cmd: |
+          awk -F: '($4 == 0) && ($1 != \"root\") {print $1}' /etc/passwd
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if result_4.rc | default(-1) == 0 and result_4.stdout | default('') | trim == '' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if result_4.rc | default(-1) == 0 and result_4.stdout | default('') | trim == '' %}
+            APPLIED: Verification passed, no non-root users with GID 0
+          {% else %}
+            FAILED: Verification failed, found non-root users with GID 0: {{ result_4.stdout | default('') | trim }}
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_4 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('') | trim == 'FAILED' or status_2 | default('') | trim == 'FAILED' or status_3 | default('') | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_details: >-
+          {% if status_4 | default('') | trim == 'APPLIED' %}
+            All requirements applied successfully. System is compliant with CIS 5.4.2.2.
+          {% elif status_1 | default('') | trim == 'FAILED' %}
+            Failed to set root user's primary group to GID 0.
+          {% elif status_2 | default('') | trim == 'FAILED' %}
+            Failed to set root group's GID to 0.
+          {% elif status_3 | default('') | trim == 'FAILED' %}
+            Failed to reassign non-root users with GID 0.
+          {% else %}
+            Some requirements may not have been fully applied. Verification check failed.
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.4.2.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

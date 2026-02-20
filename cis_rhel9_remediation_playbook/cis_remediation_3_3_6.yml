@@ -1,0 +1,244 @@
+---
+- name: Remediation for CIS 3.3.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_3_3_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.6"
+    req_1: "Run the provided CIS remediation script to fix Ensure secure icmp redirects are not accepted. Set the following parameters in /etc/sysctl.conf or a file in /etc/sysctl.d/ ending in .conf: net.ipv4.conf.all.secure_redirects = 0 net.ipv4.conf.default.secure_redirects = 0. Run the following script to set the active kernel parameters: Execute the COMPLETE script as-is"
+    req_2: "VERIFY: Run the CIS audit procedure to confirm Ensure secure icmp redirects are not accepted is now properly configured"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/sysctl.d/60-netipv4_sysctl.conf from backup"
+      copy:
+        src: "{{ state_guard_dir }}/60-netipv4_sysctl.conf.present"
+        dest: "/etc/sysctl.d/60-netipv4_sysctl.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete /etc/sysctl.d/60-netipv4_sysctl.conf (if it was absent)"
+      file:
+        path: "/etc/sysctl.d/60-netipv4_sysctl.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Undo system changes"
+      shell: |
+        sysctl -p /etc/sysctl.d/60-netipv4_sysctl.conf 2>/dev/null || true
+        sysctl --system 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if /etc/sysctl.d/60-netipv4_sysctl.conf exists"
+      stat:
+        path: "/etc/sysctl.d/60-netipv4_sysctl.conf"
+      register: _sg_conf_stat
+
+    - name: "State Guard - Backup /etc/sysctl.d/60-netipv4_sysctl.conf (present)"
+      copy:
+        src: "/etc/sysctl.d/60-netipv4_sysctl.conf"
+        dest: "{{ state_guard_dir }}/60-netipv4_sysctl.conf.present"
+        remote_src: true
+      when: _sg_conf_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/sysctl.d/60-netipv4_sysctl.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/60-netipv4_sysctl.conf.absent"
+      when: not _sg_conf_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    - name: "Req 1 - Set secure ICMP redirects parameters in sysctl configuration file"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/sysctl.d/60-netipv4_sysctl.conf 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        printf '%s\n' "net.ipv4.conf.all.secure_redirects = 0" "net.ipv4.conf.default.secure_redirects = 0" >> /etc/sysctl.d/60-netipv4_sysctl.conf
+        echo "=== AFTER ==="
+        cat /etc/sysctl.d/60-netipv4_sysctl.conf 2>/dev/null || echo "File does not exist"
+      args:
+        executable: /bin/bash
+      register: result_1a
+      ignore_errors: true
+
+    - name: "Req 1 - Execute CIS remediation script for secure ICMP redirects"
+      copy:
+        dest: "/tmp/cis_remediation_cis_3_3_6.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             sysctl -w net.ipv4.conf.all.secure_redirects=0
+             sysctl -w net.ipv4.conf.default.secure_redirects=0
+             sysctl -w net.ipv4.route.flush=1
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Run the remediation script"
+      shell: "/tmp/cis_remediation_cis_3_3_6.sh"
+      args:
+        executable: /bin/bash
+      register: result_1b
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_cis_3_3_6.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Set parameters in sysctl config and run remediation script"
+        task_1_cmd: "printf parameters to /etc/sysctl.d/60-netipv4_sysctl.conf and execute script"
+        task_1_rc: "{{ result_1b.rc | default(-1) }}"
+        data_1: |
+          File configuration:
+          {{ result_1a.stdout | default('') | trim }}
+          Script execution:
+          {{ result_1b.stdout | default('') | trim }}
+        status_1: >-
+          {% set file_config_success = (result_1a.rc | default(-1) == 0) %}
+          {% set script_exec_success = (result_1b.rc | default(-1) == 0) %}
+          {% if file_config_success and script_exec_success %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set file_config_success = (result_1a.rc | default(-1) == 0) %}
+          {% set script_exec_success = (result_1b.rc | default(-1) == 0) %}
+          {% if file_config_success and script_exec_success %}
+            APPLIED: Parameters written to sysctl configuration file and script executed successfully
+          {% elif not file_config_success and script_exec_success %}
+            FAILED: Could not write parameters to sysctl configuration file
+          {% elif file_config_success and not script_exec_success %}
+            FAILED: Parameters written but script execution failed
+          {% else %}
+            FAILED: Both file configuration and script execution failed
+          {% endif %}
+
+    - name: "Req 2 - Verify secure ICMP redirects are not accepted"
+      shell: |
+        sysctl net.ipv4.conf.all.secure_redirects
+        sysctl net.ipv4.conf.default.secure_redirects
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify secure ICMP redirects are not accepted"
+        task_2_cmd: "sysctl net.ipv4.conf.all.secure_redirects; sysctl net.ipv4.conf.default.secure_redirects"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') %}
+          {% set all_match = output | regex_search('net.ipv4.conf.all.secure_redirects = 0') %}
+          {% set default_match = output | regex_search('net.ipv4.conf.default.secure_redirects = 0') %}
+          {% if all_match and default_match %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') %}
+          {% set all_match = output | regex_search('net.ipv4.conf.all.secure_redirects = 0') %}
+          {% set default_match = output | regex_search('net.ipv4.conf.default.secure_redirects = 0') %}
+          {% if all_match and default_match %}
+            APPLIED: Both parameters are set to 0
+          {% else %}
+            FAILED: One or both parameters are not set to 0. Output: {{ output }}
+          {% endif %}
+
+    - name: "Set overall remediation status"
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'FAILED' and status_2 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+            All remediation steps applied successfully
+          {% elif status_1 | trim == 'FAILED' and status_2 | trim == 'FAILED' %}
+            All remediation steps failed
+          {% else %}
+            Some remediation steps applied, some failed
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 3.3.6"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | trim }}"
+          - "  Details: {{ overall_details | trim }}"
+          - "========================================================"

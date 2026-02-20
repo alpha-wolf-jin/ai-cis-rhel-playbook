@@ -1,0 +1,300 @@
+---
+- name: Remediation for CIS checkpoint 1.1.2.6.4
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_6_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.6.4"
+    req_1: "Check if /var/log is a separate partition"
+    req_2: "Apply noexec mount option to /var/log partition in /etc/fstab"
+    req_3: "Remount /var/log partition with updated options"
+    req_4: "Verify noexec option is set on /var/log partition"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Undo previous mount changes"
+      shell: mount -o remount /var/log
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if /var/log is a separate partition
+    - name: "Req 1 - Check if /var/log is a separate partition"
+      shell: |
+        mount | grep ' /var/log '
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if /var/log is a separate partition"
+        task_1_cmd: "mount | grep ' /var/log '"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == '' %}
+            SKIPPED
+          {% else %}
+            APPLIED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output == '' %}
+            SKIPPED: Remediation not applicable - /var/log is not a separate partition on this server
+          {% else %}
+            APPLIED: /var/log is a separate partition
+          {% endif %}
+
+    # Requirement 2: Apply noexec to /var/log line in /etc/fstab
+    - name: "Req 2 - Apply noexec option and capture changes"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/fstab
+        echo "=== APPLYING CHANGE ==="
+        # Use awk to add noexec to the /var/log line if not present
+        awk '$2 == "/var/log" && $4 !~ /noexec/ { $4 = $4 ",noexec" } { print }' /etc/fstab > /etc/fstab.new
+        mv /etc/fstab.new /etc/fstab
+        echo "=== AFTER ==="
+        cat /etc/fstab
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply noexec mount option to /var/log partition in /etc/fstab"
+        task_2_cmd: "awk command to add noexec option"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - /var/log is not a separate partition on this server
+          {% else %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: Successfully added noexec option to /var/log line in /etc/fstab
+            {% else %}
+              FAILED: Could not add noexec option to /var/log line in /etc/fstab
+            {% endif %}
+          {% endif %}
+
+    # Requirement 3: Remount /var/log
+    - name: "Req 3 - Remount /var/log partition"
+      shell: |
+        mount -o remount /var/log
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_2 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remount /var/log partition with updated options"
+        task_3_cmd: "mount -o remount /var/log"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_2 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if status_2 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - /var/log is not a separate partition on this server
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED: Successfully remounted /var/log with updated options
+            {% else %}
+              FAILED: Could not remount /var/log with updated options
+            {% endif %}
+          {% endif %}
+
+    # Requirement 4: Verify the remediation
+    - name: "Req 4 - Verify noexec option is set on /var/log partition"
+      shell: |
+        mount | grep ' /var/log ' | grep noexec
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+      when: "status_3 | trim == 'APPLIED'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify noexec option is set on /var/log partition"
+        task_4_cmd: "mount | grep ' /var/log ' | grep noexec"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_3 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% set output = result_4.stdout | default('') | trim %}
+            {% if output != '' %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_4: >-
+          {% if status_3 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - /var/log is not a separate partition on this server
+          {% else %}
+            {% set output = result_4.stdout | default('') | trim %}
+            {% if output != '' %}
+              APPLIED: Verification passed - /var/log is mounted with noexec option
+            {% else %}
+              FAILED: Verification failed - /var/log is not mounted with noexec option
+            {% endif %}
+          {% endif %}
+
+    # Overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'APPLIED' and (status_2 | trim == 'APPLIED' or status_3 | trim == 'APPLIED' or status_4 | trim == 'APPLIED') %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            Remediation not applicable - /var/log is not a separate partition on this server
+          {% elif status_4 | trim == 'APPLIED' %}
+            Successfully remediated: /var/log is a separate partition and noexec option is set and verified.
+          {% elif status_1 | trim == 'APPLIED' and (status_2 | trim == 'APPLIED' or status_3 | trim == 'APPLIED' or status_4 | trim == 'APPLIED') %}
+            Partially applied: Some steps succeeded but verification failed.
+          {% else %}
+            Remediation failed.
+          {% endif %}
+
+    # Generate the report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.6.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | trim }}"
+          - "  Details: {{ overall_rationale | trim }}"
+          - "========================================================"

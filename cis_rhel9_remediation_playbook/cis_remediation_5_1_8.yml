@@ -1,0 +1,431 @@
+---
+- name: Remediation for CIS 5.1.8 - Ensure sshd Banner is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_8"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.8"
+    # Requirement descriptions from instructions
+    req_1: "Check if openssh-server is installed"
+    req_2: "Apply configuration of Banner parameter in /etc/ssh/sshd_config"
+    req_3: "Restart sshd service to apply configuration"
+    req_4: "Apply appropriate banner content to the file specified by the Banner parameter"
+    req_5: "Verify the remediation by running audit check"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, restore original state
+    - name: State Guard - Restore /etc/ssh/sshd_config from backup
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restore banner file from backup
+      copy:
+        src: "{{ state_guard_dir }}/issue.net.present"
+        dest: "/etc/issue.net"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Delete banner file if marked absent
+      file:
+        path: "/etc/issue.net"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restart sshd service to apply restored configuration
+      service:
+        name: sshd
+        state: restarted
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/ssh/sshd_config exists
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    - name: State Guard - Check if /etc/issue.net exists
+      stat:
+        path: "/etc/issue.net"
+      register: _sg_issue_net_stat
+
+    - name: State Guard - Backup /etc/ssh/sshd_config (present)
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+
+    - name: State Guard - Backup /etc/issue.net (present)
+      copy:
+        src: "/etc/issue.net"
+        dest: "{{ state_guard_dir }}/issue.net.present"
+        remote_src: true
+      when: _sg_issue_net_stat.stat.exists
+
+    - name: State Guard - Mark /etc/issue.net as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/issue.net.absent"
+      when: not _sg_issue_net_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if openssh-server is installed
+    - name: Req 1 - Check if openssh-server is installed
+      shell: rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if openssh-server is installed"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 and 'openssh-server' in result_1.stdout %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 and 'openssh-server' in result_1.stdout %}
+            APPLIED: openssh-server is installed, remediation is applicable
+          {% else %}
+            SKIPPED: openssh-server is not installed on this server
+          {% endif %}
+
+    # Requirement 2: Apply configuration of Banner parameter in /etc/ssh/sshd_config
+    - name: Req 2 - Apply configuration of Banner parameter in /etc/ssh/sshd_config
+      shell: !unsafe |
+        echo "=== BEFORE ==="
+        cat /etc/ssh/sshd_config
+        echo "=== APPLYING CHANGE ==="
+        # First remove any existing Banner lines
+        sed -i '/^Banner/d' /etc/ssh/sshd_config
+        # Then insert Banner line above any Include or Match entries
+        # Use awk to properly insert before first Include or Match line
+        awk '
+          BEGIN {inserted=0}
+          /^Include|^Match/ && !inserted {
+            print "Banner /etc/issue.net"
+            inserted=1
+          }
+          {print}
+          END {
+            if (!inserted) {
+              print "Banner /etc/issue.net"
+            }
+          }' /etc/ssh/sshd_config > /tmp/sshd_config.tmp && mv /tmp/sshd_config.tmp /etc/ssh/sshd_config
+        echo "=== AFTER ==="
+        cat /etc/ssh/sshd_config
+        echo "=== CHECK IF BANNER LINE EXISTS ==="
+        grep -n '^Banner /etc/issue.net' /etc/ssh/sshd_config || echo "Banner line not found"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply Banner configuration to sshd_config"
+        task_2_cmd: |
+          sed -i '/^Banner/d' /etc/ssh/sshd_config
+          awk '
+            BEGIN {inserted=0}
+            /^Include|^Match/ && !inserted {
+              print "Banner /etc/issue.net"
+              inserted=1
+            }
+            {print}
+            END {
+              if (!inserted) {
+                print "Banner /etc/issue.net"
+              }
+            }' /etc/ssh/sshd_config > /tmp/sshd_config.tmp && mv /tmp/sshd_config.tmp /etc/ssh/sshd_config
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 and 'Banner /etc/issue.net' in result_2.stdout %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED: Requirement 1 not met, openssh-server not installed
+          {% elif result_2.rc | default(-1) == 0 and 'Banner /etc/issue.net' in result_2.stdout %}
+            APPLIED: Banner parameter configured in /etc/ssh/sshd_config above any Include or Match entries without deleting Include lines
+          {% else %}
+            FAILED: Could not apply Banner configuration to sshd_config
+          {% endif %}
+      when: status_1 is defined
+
+    # Requirement 3: Restart sshd service to apply configuration
+    - name: Req 3 - Restart sshd service
+      service:
+        name: sshd
+        state: restarted
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Restart sshd service"
+        task_3_cmd: "systemctl restart sshd"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim != 'APPLIED' or status_2 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_3.failed | default(true) %}
+            FAILED
+          {% else %}
+            APPLIED
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim != 'APPLIED' or status_2 | trim != 'APPLIED' %}
+            SKIPPED: Previous requirements not met
+          {% elif result_3.failed | default(true) %}
+            FAILED: Could not restart sshd service
+          {% else %}
+            APPLIED: sshd service restarted to apply configuration changes
+          {% endif %}
+      when: status_1 is defined and status_2 is defined
+
+    # Requirement 4: Apply appropriate banner content to the file specified by the Banner parameter
+    - name: Req 4 - Apply banner content to banner file
+      shell: !unsafe |
+        echo "=== BEFORE ==="
+        BANNER_FILE="$(sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | awk '$1 == "banner" {print $2}')"
+        if [ -f "$BANNER_FILE" ]; then
+          cat "$BANNER_FILE"
+        else
+          echo "File does not exist: $BANNER_FILE"
+        fi
+        echo "=== APPLYING CHANGE ==="
+        printf '%s\n' "Authorized users only. All activity may be monitored and reported." > "$(sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | awk '$1 == "banner" {print $2}')"
+        echo "=== AFTER ==="
+        cat "$(sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | awk '$1 == "banner" {print $2}')"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Set banner content in banner file"
+        task_4_cmd: |
+          printf '%s\n' 'Authorized users only. All activity may be monitored and reported.' > '$(sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | awk '$1 == \"banner\" {print $2}')'
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_1 | trim != 'APPLIED' or status_2 | trim != 'APPLIED' or status_3 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_4.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim != 'APPLIED' or status_2 | trim != 'APPLIED' or status_3 | trim != 'APPLIED' %}
+            SKIPPED: Previous requirements not met
+          {% elif result_4.rc | default(-1) == 0 %}
+            APPLIED: Banner content set in banner file without \m, \r, \s, \v or OS platform references
+          {% else %}
+            FAILED: Could not set banner content in banner file
+          {% endif %}
+      when: status_1 is defined and status_2 is defined and status_3 is defined
+
+    # Requirement 5: Verify the remediation by running audit check
+    - name: Req 5 - Verify remediation by running audit check
+      shell: !unsafe |
+        sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | grep -i '^banner' | grep -q '/etc/issue.net' && echo 'Banner configured correctly'
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED'"
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify sshd Banner configuration"
+        task_5_cmd: |
+          sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | grep -i '^banner' | grep -q '/etc/issue.net' && echo 'Banner configured correctly'
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if status_1 | trim != 'APPLIED' or status_2 | trim != 'APPLIED' or status_3 | trim != 'APPLIED' or status_4 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_5.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% if status_1 | trim != 'APPLIED' or status_2 | trim != 'APPLIED' or status_3 | trim != 'APPLIED' or status_4 | trim != 'APPLIED' %}
+            SKIPPED: Previous requirements not met
+          {% elif result_5.rc | default(-1) == 0 %}
+            APPLIED: Banner configured correctly in sshd
+          {% else %}
+            FAILED: Banner not configured correctly in sshd
+          {% endif %}
+      when: status_1 is defined and status_2 is defined and status_3 is defined and status_4 is defined
+
+    # Set overall remediation status
+    - name: Set overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_2 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_2 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_3 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_4 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_5 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and 
+                (status_2 | default('UNKNOWN') | trim == 'APPLIED' or 
+                 status_3 | default('UNKNOWN') | trim == 'APPLIED' or 
+                 status_4 | default('UNKNOWN') | trim == 'APPLIED' or 
+                 status_5 | default('UNKNOWN') | trim == 'APPLIED') %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED: openssh-server is not installed on this server, remediation not applicable
+          {% elif status_2 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED: Critical configuration change (Banner parameter) could not be applied to sshd_config
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_2 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_3 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_4 | default('UNKNOWN') | trim == 'APPLIED' and 
+                status_5 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED: All remediation steps completed successfully. sshd Banner is configured correctly.
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and 
+                (status_2 | default('UNKNOWN') | trim == 'APPLIED' or 
+                 status_3 | default('UNKNOWN') | trim == 'APPLIED' or 
+                 status_4 | default('UNKNOWN') | trim == 'APPLIED' or 
+                 status_5 | default('UNKNOWN') | trim == 'APPLIED') %}
+            PARTIALLY APPLIED: Some but not all remediation steps completed. Check individual requirement statuses.
+          {% else %}
+            FAILED: Remediation failed. Check individual requirement statuses for details.
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.8"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.8"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('No overall status determined') | trim }}"
+          - "========================================================"

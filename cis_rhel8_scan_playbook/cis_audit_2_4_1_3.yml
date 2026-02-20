@@ -1,115 +1,127 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.3 - Ensure access to /etc/cron.hourly is configured
 - name: Data Collection for CIS 2.4.1.3
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.3"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.3"
     req_1: "Check if cron is installed"
-    req_2: "Verify permissions and ownership of /etc/cron.hourly"
+    req_2: "Verify /etc/cron.hourly directory permissions and ownership"
     req_3: "OVERALL Verify: Ensure access to /etc/cron.hourly is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
-        task_3_name: "Not executed"
+        task_3_name: "Overall compliance check"
         task_3_cmd: "N/A"
-        task_3_rc: -1
+        task_3_rc: 0
 
     # Requirement 1: Check if cron is installed
-    - name: "Req 1 - Check if cron is installed"
-      shell: >
+    - name: "Req 1 - Check cron installation"
+      shell: |
         rpm -q cronie
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if cron is installed"
+        task_1_name: "Check cron installation"
         task_1_cmd: "rpm -q cronie"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if 'cronie-' in result_1.stdout | default('') else 'FAIL') | trim }}"
-        rationale_1: "PASS when cronie package is installed (e.g., output 'cronie-<version>'), FAIL when package is not installed (e.g., output 'package cronie is not installed')"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim != '' and 'is not installed' not in result_1.stdout) else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when cronie package is installed (output shows version string)' if (result_1.stdout | default('') | trim != '' and 'is not installed' not in result_1.stdout) else 'FAIL when not installed (output shows package cronie is not installed)') | trim }}"
 
-    # Requirement 2: Verify permissions and ownership of /etc/cron.hourly
-    - name: "Req 2 - Verify permissions and ownership of /etc/cron.hourly"
-      shell: >
+    # Requirement 2: Verify /etc/cron.hourly directory permissions and ownership
+    # ONLY execute if cron is installed (status_1 == 'PASS')
+    - name: "Req 2 - Verify /etc/cron.hourly permissions"
+      shell: |
+        {% raw %}
         stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.hourly/
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
       when: status_1 | trim == 'PASS'
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Verify permissions and ownership of /etc/cron.hourly"
+        task_2_name: "Verify /etc/cron.hourly permissions"
         task_2_cmd: "stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.hourly/"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{
-            (
-              'PASS' if
-              result_2.stdout | default('') | trim == 'Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root)'
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_2: "PASS when output matches 'Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root)', FAIL otherwise"
-      when: status_1 | trim == 'PASS'
+        status_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output != '' %}
+              {% if 'Access: (700/drwx------)' in output and 'Uid: ( 0/ root)' in output and 'Gid: ( 0/ root)' in output %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'PASS' %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output != '' %}
+              {% if 'Access: (700/drwx------)' in output and 'Uid: ( 0/ root)' in output and 'Gid: ( 0/ root)' in output %}
+                PASS when output shows Access: (700/drwx------) AND Uid: ( 0/ root) AND Gid: ( 0/ root)
+              {% else %}
+                FAIL: Expected Access: (700/drwx------) Uid: ( 0/ root) Gid: ( 0/ root), got: {{ output }}
+              {% endif %}
+            {% else %}
+              FAIL: Command produced no output or directory does not exist
+            {% endif %}
+          {% else %}
+            NA: cron is not installed, so requirement 2 is not applicable
+          {% endif %}
 
-    - name: Set requirement 2 as NA when cron not installed
-      set_fact:
-        task_2_name: "Verify permissions and ownership of /etc/cron.hourly"
-        task_2_cmd: "stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/cron.hourly/"
-        task_2_rc: -1
-        data_2: "Not applicable - cron not installed"
-        status_2: "NA"
-        rationale_2: "Requirement not applicable because cron is not installed"
-      when: status_1 | trim == 'FAIL'
-
-    # Requirement 3: OVERALL Verify
+    # Requirement 3: Overall compliance check
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify: Ensure access to /etc/cron.hourly is configured"
-        task_3_cmd: "N/A - Overall verification"
-        task_3_rc: 0
-        data_3: "Requirement 1: {{ status_1 | trim }}, Requirement 2: {{ status_2 | trim }}"
-        status_3: >
-          {{
-            (
-              'PASS' if
-              status_1 | trim == 'PASS' and status_2 | trim == 'PASS'
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        data_3: "N/A - Overall compliance check"
+        status_3: >-
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('FAIL') | trim %}
+          {% if s1 == 'FAIL' or (s1 == 'PASS' and s2 == 'PASS') %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% set s1 = status_1 | default('FAIL') | trim %}
+          {% set s2 = status_2 | default('FAIL') | trim %}
+          {% if s1 == 'FAIL' %}
+            PASS when (req_1=FAIL) - cron not installed, so no configuration needed
+          {% elif s1 == 'PASS' and s2 == 'PASS' %}
+            PASS when (req_1=PASS AND req_2=PASS) - cron installed and properly configured
+          {% else %}
+            FAIL when (req_1=PASS AND req_2=FAIL) - cron installed but not properly configured
+          {% endif %}
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.4.1.3"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.4.1.3"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.3"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

@@ -1,0 +1,444 @@
+---
+- name: Remediation for CIS 2.1.18
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_18"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.18"
+    req_1: "Check if any web server packages (httpd, nginx, or others) are installed"
+    req_2: "Stop web server sockets and services"
+    req_3: "Remove httpd and nginx packages"
+    req_4: "Mask web server sockets and services"
+    req_5: "Verify no web server services are active or enabled"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - reinstall packages
+    - name: State Guard - Reinstall previously removed web server packages
+      shell: |
+        if [ -f "{{ state_guard_dir }}/packages.txt" ]; then
+          while IFS= read -r package; do
+            if rpm -q "$package" >/dev/null 2>&1; then
+              echo "Package $package is already installed"
+            else
+              echo "Reinstalling $package..."
+              dnf install -y "$package" || true
+            fi
+          done < "{{ state_guard_dir }}/packages.txt"
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Unmask services that were previously masked
+    - name: State Guard - Unmask previously masked services
+      shell: |
+        services="httpd.socket httpd.service nginx.service"
+        for service in $services; do
+          if systemctl is-enabled "$service" 2>/dev/null | grep -q masked; then
+            echo "Unmasking $service..."
+            systemctl unmask "$service" || true
+          fi
+        done
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Restore service states if they were previously stopped
+    - name: State Guard - Restore service states
+      shell: |
+        services="httpd.socket httpd.service nginx.service"
+        for service in $services; do
+          if systemctl is-active "$service" 2>/dev/null | grep -q inactive; then
+            if systemctl is-enabled "$service" 2>/dev/null | grep -E 'enabled|static|indirect'; then
+              echo "Starting $service..."
+              systemctl start "$service" || true
+            fi
+          fi
+        done
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Capture currently installed web server packages
+    - name: State Guard - Capture installed web server packages
+      shell: |
+        rpm -qa | grep -E '^(httpd|nginx)' | sort
+      args:
+        executable: /bin/bash
+      register: _sg_installed_packages
+      ignore_errors: true
+
+    - name: State Guard - Backup installed packages list
+      copy:
+        content: "{{ _sg_installed_packages.stdout }}"
+        dest: "{{ state_guard_dir }}/packages.txt"
+      when: _sg_installed_packages.stdout != ""
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if any web server packages (httpd, nginx, or others) are installed
+    - name: Req 1 - Check for installed web server packages
+      shell: |
+        rpm -q httpd nginx
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check for installed web server packages"
+        task_1_cmd: "rpm -q httpd nginx"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if 'not installed' not in output and 'is not installed' not in output %}
+              APPLIED
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% else %}
+            {% if 'not installed' in output or 'is not installed' in output or output == '' %}
+              SKIPPED
+            {% else %}
+              APPLIED
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if 'not installed' not in output and 'is not installed' not in output %}
+              APPLIED: Web server packages are installed on this server
+            {% else %}
+              SKIPPED: Remediation not applicable - No web server packages are installed on this server
+            {% endif %}
+          {% else %}
+            {% if 'not installed' in output or 'is not installed' in output or output == '' %}
+              SKIPPED: Remediation not applicable - No web server packages are installed on this server
+            {% else %}
+              APPLIED: Web server packages are installed on this server
+            {% endif %}
+          {% endif %}
+
+    # Requirement 2: Stop web server sockets and services
+    - name: Req 2 - Stop web server services
+      shell: |
+        systemctl stop httpd.socket httpd.service nginx.service 2>/dev/null || true
+        echo "Stopped services: httpd.socket httpd.service nginx.service"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: status_1 | trim == 'APPLIED'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Stop web server services"
+        task_2_cmd: "systemctl stop httpd.socket httpd.service nginx.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Prerequisite not met - No web server packages installed
+          {% else %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: The specified services and sockets are stopped
+            {% else %}
+              FAILED: Could not stop web server services
+            {% endif %}
+          {% endif %}
+
+    # Requirement 3: Remove httpd and nginx packages
+    - name: Req 3 - Remove web server packages
+      shell: |
+        dnf remove -y httpd nginx
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: status_1 | trim == 'APPLIED'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remove web server packages"
+        task_3_cmd: "dnf remove -y httpd nginx"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Prerequisite not met - No web server packages installed
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED: The httpd and nginx packages are removed if they were installed
+            {% else %}
+              FAILED: Could not remove web server packages
+            {% endif %}
+          {% endif %}
+
+    # Requirement 4: Mask web server sockets and services
+    - name: Req 4 - Mask web server services
+      shell: |
+        systemctl mask httpd.socket httpd.service nginx.service
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: status_1 | trim == 'APPLIED'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Mask web server services"
+        task_4_cmd: "systemctl mask httpd.socket httpd.service nginx.service"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Prerequisite not met - No web server packages installed
+          {% else %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED: The specified services and sockets are prevented from being started
+            {% else %}
+              FAILED: Could not mask web server services
+            {% endif %}
+          {% endif %}
+
+    # Requirement 5: Verify no web server services are active or enabled
+    - name: Req 5 - Verify web server services are not active or enabled
+      shell: |
+        echo "=== Checking service status ==="
+        for service in httpd.socket httpd.service nginx.service; do
+          systemctl is-active "$service" 2>&1 || true
+        done
+        echo ""
+        echo "=== Checking service enablement ==="
+        for service in httpd.socket httpd.service nginx.service; do
+          systemctl is-enabled "$service" 2>&1 || true
+        done
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      changed_when: false
+      when: status_1 | trim != 'SKIPPED'
+
+    - name: Store requirement 5 details and set overall status
+      set_fact:
+        task_5_name: "Verify web server services are not active or enabled"
+        task_5_cmd: "systemctl is-active httpd.socket httpd.service nginx.service && systemctl is-enabled httpd.socket httpd.service nginx.service"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {% set output = result_5.stdout | default('') | trim %}
+            {% set lines = output.split('\n') %}
+            {% set active_all_inactive = true %}
+            {% set enabled_all_good = true %}
+            {% set in_active_section = false %}
+            {% set in_enabled_section = false %}
+            {% for line in lines %}
+              {% if line == '=== Checking service status ===' %}
+                {% set in_active_section = true %}
+                {% set in_enabled_section = false %}
+              {% elif line == '=== Checking service enablement ===' %}
+                {% set in_active_section = false %}
+                {% set in_enabled_section = true %}
+              {% elif line != '' %}
+                {% if in_active_section and line != 'inactive' %}
+                  {% set active_all_inactive = false %}
+                {% elif in_enabled_section and line != 'masked' and 'No such file or directory' not in line and 'not-found' not in line %}
+                  {% set enabled_all_good = false %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if active_all_inactive and enabled_all_good %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_5: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Prerequisite not met - No web server packages installed
+          {% else %}
+            {% set output = result_5.stdout | default('') | trim %}
+            {% set lines = output.split('\n') %}
+            {% set active_all_inactive = true %}
+            {% set enabled_all_good = true %}
+            {% set in_active_section = false %}
+            {% set in_enabled_section = false %}
+            {% for line in lines %}
+              {% if line == '=== Checking service status ===' %}
+                {% set in_active_section = true %}
+                {% set in_enabled_section = false %}
+              {% elif line == '=== Checking service enablement ===' %}
+                {% set in_active_section = false %}
+                {% set in_enabled_section = true %}
+              {% elif line != '' %}
+                {% if in_active_section and line != 'inactive' %}
+                  {% set active_all_inactive = false %}
+                {% elif in_enabled_section and line != 'masked' and 'No such file or directory' not in line and 'not-found' not in line %}
+                  {% set enabled_all_good = false %}
+                {% endif %}
+              {% endif %}
+            {% endfor %}
+            {% if active_all_inactive and enabled_all_good %}
+              APPLIED: All checks returned inactive, masked, or not-found as expected
+            {% else %}
+              FAILED: Some web server services are still active or enabled
+            {% endif %}
+          {% endif %}
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            {{ status_5 | trim }}
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Remediation not applicable - No web server packages are installed on this server
+          {% else %}
+            {{ rationale_5 | trim }}
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.18"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

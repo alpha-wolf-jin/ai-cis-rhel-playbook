@@ -1,0 +1,320 @@
+---
+- name: Remediation for CIS 5.3.3.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_1_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.1.1"
+    req_1: "Set deny = 5 or less in /etc/security/faillock.conf"
+    req_2: "Run script to remove deny argument from pam_faillock.so in PAM files"
+    req_3: "Verify password failed attempts lockout is configured"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/security/faillock.conf from backup"
+      copy:
+        src: "{{ state_guard_dir }}/faillock.conf.present"
+        dest: "/etc/security/faillock.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if /etc/security/faillock.conf exists"
+      stat:
+        path: "/etc/security/faillock.conf"
+      register: _sg_faillock_stat
+
+    - name: "State Guard - Backup /etc/security/faillock.conf (present)"
+      copy:
+        src: "/etc/security/faillock.conf"
+        dest: "{{ state_guard_dir }}/faillock.conf.present"
+        remote_src: true
+      when: _sg_faillock_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/security/faillock.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/faillock.conf.absent"
+      when: not _sg_faillock_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_2b_name: "Not executed"
+        task_2b_cmd: "N/A"
+        task_2b_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        overall_status: "UNKNOWN"
+        overall_details: "Not evaluated"
+
+    - name: "Req 1 - Set deny = 5 in /etc/security/faillock.conf"
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/security/faillock.conf ]; then
+          cat /etc/security/faillock.conf
+        else
+          echo "File does not exist"
+        fi
+        echo "=== APPLYING CHANGE ==="
+        if [ ! -f /etc/security/faillock.conf ]; then
+          touch /etc/security/faillock.conf
+        fi
+        if grep -q '^\s*deny\s*=' /etc/security/faillock.conf; then
+          sed -i 's/^\s*deny\s*=.*/deny = 5/' /etc/security/faillock.conf
+        else
+          echo "deny = 5" >> /etc/security/faillock.conf
+        fi
+        echo "=== AFTER ==="
+        cat /etc/security/faillock.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Set deny = 5 in /etc/security/faillock.conf"
+        task_1_cmd: "Configure deny = 5 in /etc/security/faillock.conf"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('Deny setting applied to /etc/security/faillock.conf' if result_1.rc | default(-1) == 0 else 'Failed to configure deny setting') | trim }}"
+
+    - name: "Req 2 - Create remediation script"
+      copy:
+        dest: "/tmp/cis_remediation_5.3.3.1.1.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             for l_pam_file in system-auth password-auth; do
+               l_authselect_file="/etc/authselect/$(head -1 /etc/authselect/authselect.conf | grep 'custom/')/$l_pam_file"
+               sed -ri 's/(^\s*auth\s+(requisite|required|sufficient)\s+pam_faillock\.so.*)(\s+deny\ s*=\s*\S+)(.*$)/\1\4/' "$l_authselect_file"
+             done
+             authselect apply-changes
+          }
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+
+    - name: "Req 2 - Execute remediation script"
+      shell: "/tmp/cis_remediation_5.3.3.1.1.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: "Req 2 - Remove temporary script"
+      file:
+        path: "/tmp/cis_remediation_5.3.3.1.1.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: "Req 2b - Direct PAM file editing (alternative method)"
+      shell: |
+        echo "=== BEFORE PAM FILES ==="
+        for pam_file in system-auth password-auth; do
+          if [ -f /etc/pam.d/$pam_file ]; then
+            echo "File: /etc/pam.d/$pam_file"
+            grep -E '^\s*auth\s+(requisite|required|sufficient)\s+pam_faillock\.so' /etc/pam.d/$pam_file || echo "No pam_faillock.so line found"
+          fi
+        done
+        echo "=== APPLYING CHANGE ==="
+        for pam_file in system-auth password-auth; do
+          if [ -f /etc/pam.d/$pam_file ]; then
+            sed -ri 's/(^\s*auth\s+(requisite|required|sufficient)\s+pam_faillock\.so.*)(\s+deny\ s*=\s*\S+)(.*$)/\1\4/' /etc/pam.d/$pam_file
+          fi
+        done
+        echo "=== AFTER PAM FILES ==="
+        for pam_file in system-auth password-auth; do
+          if [ -f /etc/pam.d/$pam_file ]; then
+            echo "File: /etc/pam.d/$pam_file"
+            grep -E '^\s*auth\s+(requisite|required|sufficient)\s+pam_faillock\.so' /etc/pam.d/$pam_file || echo "No pam_faillock.so line found"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: result_2b
+      ignore_errors: true
+      when: result_2.rc | default(-1) != 0
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Run script to remove deny argument from pam_faillock.so"
+        task_2_cmd: "/tmp/cis_remediation_5.3.3.1.1.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        task_2b_name: "Direct PAM file editing"
+        task_2b_cmd: "sed to remove deny argument from /etc/pam.d/system-auth and /etc/pam.d/password-auth"
+        task_2b_rc: "{{ result_2b.rc | default(-1) }}"
+        data_2: "{{ (result_2.stdout | default('') + '
+' + result_2b.stdout | default('')) | trim }}"
+      when: true
+
+    - name: Calculate requirement 2 status and rationale
+      set_fact:
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_2b.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_2.rc | default(-1) == -1 and result_2b.rc | default(-1) == -1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            Authselect script executed successfully
+          {% elif result_2b.rc | default(-1) == 0 %}
+            Direct PAM file editing succeeded (system does not use authselect)
+          {% elif result_2.rc | default(-1) == -1 and result_2b.rc | default(-1) == -1 %}
+            Both methods skipped or not attempted
+          {% elif result_2.rc | default(-1) != 0 and result_2b.rc | default(-1) != 0 %}
+            Both authselect script and direct PAM editing failed
+          {% else %}
+            Unknown state
+          {% endif %}
+      when: true
+
+    - name: "Req 3 - Verify password failed attempts lockout configuration"
+      shell: |
+        echo "=== Checking /etc/security/faillock.conf ==="
+        if [ -f /etc/security/faillock.conf ]; then
+          grep -E '^\s*deny\s*=' /etc/security/faillock.conf || echo "No deny setting found"
+        else
+          echo "/etc/security/faillock.conf does not exist"
+        fi
+        echo "=== Checking PAM configuration ==="
+        for pam_file in system-auth password-auth; do
+          echo "Checking $pam_file:"
+          if [ -f /etc/pam.d/$pam_file ]; then
+            grep -E '^\s*auth\s+(requisite|required|sufficient)\s+pam_faillock\.so' /etc/pam.d/$pam_file || echo "No pam_faillock.so line found"
+          else
+            echo "/etc/pam.d/$pam_file does not exist"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify configuration"
+        task_3_cmd: "Check faillock.conf and PAM files"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output is search('deny\s*=\s*[0-5]') and not output is search('deny argument') %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output is search('deny\s*=\s*[0-5]') and not output is search('deny argument') %}
+            Verification passed: deny is 5 or less and no deny argument in PAM
+          {% else %}
+            Verification failed: missing or incorrect configuration
+          {% endif %}
+
+    - name: Calculate overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'APPLIED' and status_2 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('UNKNOWN') | trim == 'FAILED' or status_2 | default('UNKNOWN') | trim == 'FAILED' %}
+            FAILED
+          {% elif status_1 | default('UNKNOWN') | trim == 'SKIPPED' and status_2 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_details: >-
+          {% if overall_status | trim == 'APPLIED' %}
+            All remediation steps applied successfully
+          {% elif overall_status | trim == 'FAILED' %}
+            One or more remediation steps failed
+          {% elif overall_status | trim == 'SKIPPED' %}
+            Remediation not applicable or all steps skipped
+          {% elif overall_status | trim == 'PARTIALLY APPLIED' %}
+            Some but not all remediation steps were applied
+          {% else %}
+            Unknown overall status
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.1.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Alternative method: {{ task_2b_name | default('Not executed') }}"
+          - "  Alternative command: {{ task_2b_cmd | default('N/A') }}"
+          - "  Alternative exit code: {{ task_2b_rc | default(-1) }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

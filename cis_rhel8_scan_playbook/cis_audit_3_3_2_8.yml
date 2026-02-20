@@ -2,59 +2,102 @@
 - name: Data Collection for CIS 3.3.2.8
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.2.8"
-    req_1: "Verify net.ipv6.conf.default.accept_ra is set to 0 in the running configuration using command: sysctl net.ipv6.conf.default.accept_ra"
-    req_2: "Run script to verify net.ipv6.conf.default.accept_ra = 0 is set in a file being used by systemd sysctl"
-    req_3: "OVERALL Verify: Ensure net.ipv6.conf.default.accept_ra is configured"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.8"
+    req_1: "Run sysctl command to verify net.ipv6.conf.default.accept_ra is set to 0 in running configuration"
+    req_2: "Run script to verify net.ipv6.conf.default.accept_ra = 0 is set in sysctl configuration files"
+    req_3: "Overall Verify: Ensure net.ipv6.conf.default.accept_ra is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
 
-    # Requirement 1: Verify net.ipv6.conf.default.accept_ra is set to 0 in running config
-    - name: "Req 1 - Check running sysctl configuration"
+    # Check if IPv6 is enabled
+    - name: Check if IPv6 is enabled
       shell: |
-        sysctl net.ipv6.conf.default.accept_ra
+        ipv6_enabled=0
+        # Check via sysctl parameter
+        if sysctl -n net.ipv6.conf.all.disable_ipv6 2>/dev/null | grep -q "^0$"; then
+          ipv6_enabled=1
+        fi
+        # Also check if any IPv6 interface exists
+        if [ "$ipv6_enabled" -eq 0 ] && ip -6 addr show 2>/dev/null | grep -q "inet6"; then
+          ipv6_enabled=1
+        fi
+        echo "$ipv6_enabled"
+      args:
+        executable: /bin/bash
+      register: ipv6_check
+      ignore_errors: true
+      changed_when: false
+
+    # Requirement 1: Run sysctl command (only if IPv6 enabled)
+    - name: "Req 1 - Check running configuration"
+      shell: |
+        {% raw %}
+        if [ "{{ ipv6_check.stdout | default('0') | trim }}" = "1" ]; then
+          sysctl net.ipv6.conf.default.accept_ra
+        else
+          echo "IPv6 not enabled - requirement NA"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl configuration"
+        task_1_name: "Check running configuration via sysctl"
         task_1_cmd: "sysctl net.ipv6.conf.default.accept_ra"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv6.conf.default.accept_ra = 0') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'net.ipv6.conf.default.accept_ra = 0', FAIL otherwise"
+        status_1: >-
+          {% set ipv6_enabled = ipv6_check.stdout | default('0') | trim %}
+          {% if ipv6_enabled != '1' %}
+            NA
+          {% else %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if output == 'net.ipv6.conf.default.accept_ra = 0' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% set ipv6_enabled = ipv6_check.stdout | default('0') | trim %}
+          {% if ipv6_enabled != '1' %}
+            IPv6 is not enabled, requirement not applicable
+          {% else %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if output == 'net.ipv6.conf.default.accept_ra = 0' %}
+              PASS: Running configuration correctly sets net.ipv6.conf.default.accept_ra = 0
+            {% else %}
+              FAIL: Expected 'net.ipv6.conf.default.accept_ra = 0', got '{{ output }}'
+            {% endif %}
+          {% endif %}
 
-    # Requirement 2: Run script to verify configuration in sysctl files
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Run CIS audit script (only if IPv6 enabled)
+    - name: "Req 2 - Execute CIS audit script"
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_3.3.2.8.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           {
-             l_parameter_name="net.ipv6.conf.default.accept_ra"  
+             l_parameter_name="net.ipv6.conf.default.accept_ra"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
              l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
              || readlink -e /usr/lib/systemd/systemd-sysctl)"
@@ -78,43 +121,92 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
+      register: script_create_2
+      ignore_errors: true
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: "Req 2 - Run the audit script"
+      shell: |
+        {% raw %}
+        if [ "{{ ipv6_check.stdout | default('0') | trim }}" = "1" ]; then
+          /tmp/cis_audit_3.3.2.8.sh
+        else
+          echo "IPv6 not enabled - requirement NA"
+        fi
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: "Req 2 - Remove temporary audit script"
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_3.3.2.8.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Execute audit script for sysctl files"
-        task_2_cmd: "/tmp/cis_audit_script_2.sh"
+        task_2_name: "Execute CIS audit script for configuration files"
+        task_2_cmd: "CIS audit script to check sysctl configuration files"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '' and 'net.ipv6.conf.default.accept_ra = 0' in result_2.stdout) else 'FAIL') | trim }}"
-        rationale_2: "PASS when the script outputs a line confirming 'net.ipv6.conf.default.accept_ra = 0' is set in a sysctl configuration file, FAIL if no such line is found or if the value is not 0"
+        status_2: >-
+          {% set ipv6_enabled = ipv6_check.stdout | default('0') | trim %}
+          {% if ipv6_enabled != '1' %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if 'net.ipv6.conf.default.accept_ra = 0' in output %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% set ipv6_enabled = ipv6_check.stdout | default('0') | trim %}
+          {% if ipv6_enabled != '1' %}
+            IPv6 is not enabled, requirement not applicable
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if 'net.ipv6.conf.default.accept_ra = 0' in output %}
+              PASS: Script found net.ipv6.conf.default.accept_ra = 0 in configuration files
+            {% else %}
+              FAIL: Script did not find net.ipv6.conf.default.accept_ra = 0 in configuration files
+            {% endif %}
+          {% endif %}
 
-    # Requirement 3: OVERALL Verify
-    - name: Store requirement 3 details and determine overall status
+    # Requirement 3: Overall compliance
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "OVERALL Verify: Ensure net.ipv6.conf.default.accept_ra is configured"
-        task_3_cmd: "N/A - Overall assessment"
+        task_3_name: "Overall compliance determination"
+        task_3_cmd: "Evaluate requirements 1 and 2"
         task_3_rc: 0
-        data_3: "Combined assessment of req_1 and req_2"
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        data_3: "Overall compliance check"
+        status_3: >-
+          {% set ipv6_enabled = ipv6_check.stdout | default('0') | trim %}
+          {% if ipv6_enabled != '1' %}
+            PASS
+          {% else %}
+            {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% set ipv6_enabled = ipv6_check.stdout | default('0') | trim %}
+          {% if ipv6_enabled != '1' %}
+            PASS: IPv6 is not enabled, so requirement is met
+          {% else %}
+            {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+              PASS: Both running configuration and configuration files correctly set net.ipv6.conf.default.accept_ra = 0
+            {% else %}
+              FAIL: One or both requirements failed
+            {% endif %}
+          {% endif %}
 
-    # Final report
+    # Final compliance report
     - name: Generate compliance report
       debug:
         msg:

@@ -1,290 +1,146 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.1
 - name: Data Collection for CIS 5.3.2.1
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.1"
-    req_1: "Verify the active authselect profile is a custom profile"
-    req_2: "Verify the active custom authselect profile includes the pam_faillock module"
-    req_3: "Verify the active custom authselect profile includes the pam_pwquality module"
-    req_4: "Verify the active custom authselect profile includes the pam_pwhistory module"
-    req_5: "Verify the active custom authselect profile includes the pam_unix module"
-    req_6: "OVERALL Verify: Ensure active authselect profile includes pam modules"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.1"
+    req_1: "Verify the active authselect profile includes pam_pwquality.so, pam_pwhistory.so, pam_faillock.so, and pam_unix.so modules in both system-auth and password-auth files"
+    req_overall: "Ensure active authselect profile includes pam modules"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: ""
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: ""
-        task_2_name: "Not executed"
-        task_2_cmd: "N/A"
-        task_2_rc: -1
-        data_3: ""
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
-        data_4: ""
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
-        data_5: ""
-        task_5_name: "Not executed"
-        task_5_cmd: "N/A"
-        task_5_rc: -1
-        is_custom_profile: false
+        task_overall_name: "Not executed"
+        task_overall_cmd: "N/A"
+        task_overall_rc: -1
 
-    # Requirement 1: Verify the active authselect profile is a custom profile
-    - name: Req 1 - Check active authselect profile
+    # Check if authselect is configured
+    - name: Check if authselect is configured
+      stat:
+        path: /etc/authselect/authselect.conf
+      register: authselect_config
+      ignore_errors: true
+      changed_when: false
+
+    # Requirement 1: Verify PAM modules in authselect profile
+    - name: Req 1 - Check for required PAM modules in authselect profile
       shell: |
-        authselect current
+        {% raw %}
+        grep -P -- '\b(pam_pwquality\.so|pam_pwhistory\.so|pam_faillock\.so|pam_unix\.so)\b' /etc/authselect/"$(head -1 /etc/authselect/authselect.conf)"/{system,password}-auth
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: authselect_config.stat.exists
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check active authselect profile"
-        task_1_cmd: "authselect current"
+        task_1_name: "Check for required PAM modules in authselect profile"
+        task_1_cmd: |
+          grep -P -- '\\b(pam_pwquality\\.so|pam_pwhistory\\.so|pam_faillock\\.so|pam_unix\\.so)\\b' /etc/authselect/\"$(head -1 /etc/authselect/authselect.conf)\"/{system,password}-auth
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        is_custom_profile: "{{ 'Profile ID: custom/' in result_1.stdout | default('') }}"
-        status_1: "{{ ('PASS' if 'Profile ID: custom/' in result_1.stdout | default('') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output shows 'Profile ID: custom/<profile-name>', FAIL when output shows 'Profile ID: <default-profile>'"
+        status_1: >-
+          {% if not authselect_config.stat.exists %}
+            NA
+          {% else %}
+            {% set rc = result_1.rc | default(-1) %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if rc == 0 %}
+              {% set has_pwquality = 'pam_pwquality.so' in output %}
+              {% set has_pwhistory = 'pam_pwhistory.so' in output %}
+              {% set has_faillock = 'pam_faillock.so' in output %}
+              {% set has_unix = 'pam_unix.so' in output %}
+              {% if has_pwquality and has_pwhistory and has_faillock and has_unix %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% elif rc == 1 %}
+              FAIL
+            {% else %}
+              UNKNOWN
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% if not authselect_config.stat.exists %}
+            NA: authselect is not configured on this system (/etc/authselect/authselect.conf does not exist)
+          {% else %}
+            {% set rc = result_1.rc | default(-1) %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if rc == 0 %}
+              {% set has_pwquality = 'pam_pwquality.so' in output %}
+              {% set has_pwhistory = 'pam_pwhistory.so' in output %}
+              {% set has_faillock = 'pam_faillock.so' in output %}
+              {% set has_unix = 'pam_unix.so' in output %}
+              {% if has_pwquality and has_pwhistory and has_faillock and has_unix %}
+                PASS: Found all required PAM modules (pam_pwquality.so, pam_pwhistory.so, pam_faillock.so, pam_unix.so) in the combined output
+              {% else %}
+                FAIL: Missing one or more required PAM modules. Found: {{ 'pam_pwquality.so' if has_pwquality else '' }} {{ 'pam_pwhistory.so' if has_pwhistory else '' }} {{ 'pam_faillock.so' if has_faillock else '' }} {{ 'pam_unix.so' if has_unix else '' }}
+              {% endif %}
+            {% elif rc == 1 %}
+              FAIL: No required PAM modules found in the authselect profile files
+            {% else %}
+              UNKNOWN: Command failed with exit code {{ rc }}. Error: {{ result_1.stderr | default('Unknown error') | trim }}. Cannot determine compliance.
+            {% endif %}
+          {% endif %}
 
-    # Requirement 2: Verify pam_faillock module
-    - name: Req 2 - Check for pam_faillock module
-      shell: |
-        if [[ -n "$(authselect current | grep 'Profile ID: custom/')" ]]; then
-          profile_name=$(authselect current | grep 'Profile ID: custom/' | cut -d'/' -f2)
-          template_dir="/usr/share/authselect/custom/${profile_name}"
-          if [[ -d "${template_dir}" ]]; then
-            grep -r "pam_faillock" "${template_dir}" 2>/dev/null || echo "pam_faillock not found"
-          else
-            echo "Custom profile directory not found: ${template_dir}"
-          fi
-        else
-          echo "Not a custom profile - skipping module check"
-        fi
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: is_custom_profile
-
-    - name: Store requirement 2 details
+    # Overall verification
+    - name: Store overall verification details
       set_fact:
-        task_2_name: "Check for pam_faillock module in custom profile"
-        task_2_cmd: "Check template files in /usr/share/authselect/custom/<profile-name>/ for pam_faillock"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if 'pam_faillock' in result_2.stdout | default('') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the pam_faillock module is present in the relevant PAM stack template files, FAIL otherwise"
-      when: is_custom_profile
+        task_overall_name: "Overall verification"
+        task_overall_cmd: "Based on requirement 1 results"
+        task_overall_rc: 0
+        data_overall: "Overall compliance check"
+        status_overall: >-
+          {% set status1 = status_1 | default('UNKNOWN') | trim %}
+          {% if status1 == 'PASS' %}
+            PASS
+          {% elif status1 == 'NA' %}
+            NA
+          {% elif status1 == 'UNKNOWN' %}
+            UNKNOWN
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_overall: >-
+          {% set status1 = status_1 | default('UNKNOWN') | trim %}
+          {% if status1 == 'PASS' %}
+            PASS: All individual requirements passed
+          {% elif status1 == 'NA' %}
+            NA: Requirement is not applicable to this system
+          {% elif status1 == 'UNKNOWN' %}
+            FAIL: Cannot determine compliance due to data collection error
+          {% else %}
+            FAIL: One or more individual requirements failed
+          {% endif %}
 
-    - name: Set requirement 2 as NA when not custom profile
-      set_fact:
-        task_2_name: "Check for pam_faillock module in custom profile"
-        task_2_cmd: "N/A - Not a custom profile"
-        task_2_rc: 0
-        data_2: "Not applicable - not a custom profile"
-        status_2: "NA"
-        rationale_2: "Not a custom profile - requirement not applicable"
-      when: not is_custom_profile
-
-    # Requirement 3: Verify pam_pwquality module
-    - name: Req 3 - Check for pam_pwquality module
-      shell: |
-        if [[ -n "$(authselect current | grep 'Profile ID: custom/')" ]]; then
-          profile_name=$(authselect current | grep 'Profile ID: custom/' | cut -d'/' -f2)
-          template_dir="/usr/share/authselect/custom/${profile_name}"
-          if [[ -d "${template_dir}" ]]; then
-            grep -r "pam_pwquality" "${template_dir}" 2>/dev/null || echo "pam_pwquality not found"
-          else
-            echo "Custom profile directory not found: ${template_dir}"
-          fi
-        else
-          echo "Not a custom profile - skipping module check"
-        fi
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: is_custom_profile
-
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Check for pam_pwquality module in custom profile"
-        task_3_cmd: "Check template files in /usr/share/authselect/custom/<profile-name>/ for pam_pwquality"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if 'pam_pwquality' in result_3.stdout | default('') else 'FAIL') | trim }}"
-        rationale_3: "PASS when the pam_pwquality module is present in the relevant PAM stack template files, FAIL otherwise"
-      when: is_custom_profile
-
-    - name: Set requirement 3 as NA when not custom profile
-      set_fact:
-        task_3_name: "Check for pam_pwquality module in custom profile"
-        task_3_cmd: "N/A - Not a custom profile"
-        task_3_rc: 0
-        data_3: "Not applicable - not a custom profile"
-        status_3: "NA"
-        rationale_3: "Not a custom profile - requirement not applicable"
-      when: not is_custom_profile
-
-    # Requirement 4: Verify pam_pwhistory module
-    - name: Req 4 - Check for pam_pwhistory module
-      shell: |
-        if [[ -n "$(authselect current | grep 'Profile ID: custom/')" ]]; then
-          profile_name=$(authselect current | grep 'Profile ID: custom/' | cut -d'/' -f2)
-          template_dir="/usr/share/authselect/custom/${profile_name}"
-          if [[ -d "${template_dir}" ]]; then
-            grep -r "pam_pwhistory" "${template_dir}" 2>/dev/null || echo "pam_pwhistory not found"
-          else
-            echo "Custom profile directory not found: ${template_dir}"
-          fi
-        else
-          echo "Not a custom profile - skipping module check"
-        fi
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: is_custom_profile
-
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Check for pam_pwhistory module in custom profile"
-        task_4_cmd: "Check template files in /usr/share/authselect/custom/<profile-name>/ for pam_pwhistory"
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if 'pam_pwhistory' in result_4.stdout | default('') else 'FAIL') | trim }}"
-        rationale_4: "PASS when the pam_pwhistory module is present in the relevant PAM stack template files, FAIL otherwise"
-      when: is_custom_profile
-
-    - name: Set requirement 4 as NA when not custom profile
-      set_fact:
-        task_4_name: "Check for pam_pwhistory module in custom profile"
-        task_4_cmd: "N/A - Not a custom profile"
-        task_4_rc: 0
-        data_4: "Not applicable - not a custom profile"
-        status_4: "NA"
-        rationale_4: "Not a custom profile - requirement not applicable"
-      when: not is_custom_profile
-
-    # Requirement 5: Verify pam_unix module
-    - name: Req 5 - Check for pam_unix module
-      shell: |
-        if [[ -n "$(authselect current | grep 'Profile ID: custom/')" ]]; then
-          profile_name=$(authselect current | grep 'Profile ID: custom/' | cut -d'/' -f2)
-          template_dir="/usr/share/authselect/custom/${profile_name}"
-          if [[ -d "${template_dir}" ]]; then
-            grep -r "pam_unix" "${template_dir}" 2>/dev/null || echo "pam_unix not found"
-          else
-            echo "Custom profile directory not found: ${template_dir}"
-          fi
-        else
-          echo "Not a custom profile - skipping module check"
-        fi
-      args:
-        executable: /bin/bash
-      register: result_5
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: is_custom_profile
-
-    - name: Store requirement 5 details
-      set_fact:
-        task_5_name: "Check for pam_unix module in custom profile"
-        task_5_cmd: "Check template files in /usr/share/authselect/custom/<profile-name>/ for pam_unix"
-        task_5_rc: "{{ result_5.rc | default(-1) }}"
-        data_5: "{{ result_5.stdout | default('') | trim }}"
-        status_5: "{{ ('PASS' if 'pam_unix' in result_5.stdout | default('') else 'FAIL') | trim }}"
-        rationale_5: "PASS when the pam_unix module is present in the relevant PAM stack template files, FAIL otherwise"
-      when: is_custom_profile
-
-    - name: Set requirement 5 as NA when not custom profile
-      set_fact:
-        task_5_name: "Check for pam_unix module in custom profile"
-        task_5_cmd: "N/A - Not a custom profile"
-        task_5_rc: 0
-        data_5: "Not applicable - not a custom profile"
-        status_5: "NA"
-        rationale_5: "Not a custom profile - requirement not applicable"
-      when: not is_custom_profile
-
-    # Requirement 6: OVERALL Verify
-    - name: Store requirement 6 details
-      set_fact:
-        status_6: "{{ ('PASS' if (status_1|trim == 'PASS' and status_2|trim == 'PASS' and status_3|trim == 'PASS' and status_4|trim == 'PASS' and status_5|trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_6: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS AND req_5=PASS, FAIL otherwise"
-
-    # Generate compliance report
+    # Final report
     - name: Generate compliance report
       debug:
-        msg: |
-          ========================================================
-                  COMPLIANCE REPORT - CIS 5.3.2.1
-          ========================================================
-          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.1
-          ========================================================
-
-          REQUIREMENT 1 - {{ req_1 }}:
-            Task: {{ task_1_name }}
-            Command: {{ task_1_cmd }}
-            Exit code: {{ task_1_rc }}
-            Data: {{ data_1 }}
-            Status: {{ status_1 }}
-            Rationale: {{ rationale_1 }}
-
-          REQUIREMENT 2 - {{ req_2 }}:
-            Task: {{ task_2_name }}
-            Command: {{ task_2_cmd }}
-            Exit code: {{ task_2_rc }}
-            Data: {{ data_2 }}
-            Status: {{ status_2 }}
-            Rationale: {{ rationale_2 }}
-
-          REQUIREMENT 3 - {{ req_3 }}:
-            Task: {{ task_3_name }}
-            Command: {{ task_3_cmd }}
-            Exit code: {{ task_3_rc }}
-            Data: {{ data_3 }}
-            Status: {{ status_3 }}
-            Rationale: {{ rationale_3 }}
-
-          REQUIREMENT 4 - {{ req_4 }}:
-            Task: {{ task_4_name }}
-            Command: {{ task_4_cmd }}
-            Exit code: {{ task_4_rc }}
-            Data: {{ data_4 }}
-            Status: {{ status_4 }}
-            Rationale: {{ rationale_4 }}
-
-          REQUIREMENT 5 - {{ req_5 }}:
-            Task: {{ task_5_name }}
-            Command: {{ task_5_cmd }}
-            Exit code: {{ task_5_rc }}
-            Data: {{ data_5 }}
-            Status: {{ status_5 }}
-            Rationale: {{ rationale_5 }}
-
-          ========================================================
-          OVERALL COMPLIANCE:
-            Result: {{ status_6 }}
-            Rationale: {{ rationale_6 }}
-          ========================================================
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.3.2.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,253 @@
+---
+- name: Remediation for CIS 5.4.1.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_4_1_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.1.3"
+    req_1: "Apply PASS_WARN_AGE configuration in /etc/login.defs using command: sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE 7/' /etc/login.defs. Expected result: /etc/login.defs contains line 'PASS_WARN_AGE 7'"
+    req_2: |
+      Apply password warning days for all existing users with a password using command: awk -F: '($2~/^\$.+\$/) {if($6 < 7)system (\"chage --warndays 7 \" $1)}' /etc/shadow. Expected result: All users with a password have a warning period of at least 7 days
+    req_3: "VERIFY: Run audit check to confirm Ensure password expiration warning days is configured is properly configured. Expected result: System should now be compliant"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Restore /etc/login.defs from backup
+      copy:
+        src: "{{ state_guard_dir }}/login.defs.present"
+        dest: "/etc/login.defs"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/login.defs exists
+      stat:
+        path: "/etc/login.defs"
+      register: _sg_login_defs_stat
+
+    - name: State Guard - Backup /etc/login.defs (present)
+      copy:
+        src: "/etc/login.defs"
+        dest: "{{ state_guard_dir }}/login.defs.present"
+        remote_src: true
+      when: _sg_login_defs_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+
+    - name: Req 1 - Capture /etc/login.defs before modification
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/login.defs | grep -i "PASS_WARN_AGE" || true
+      args:
+        executable: /bin/bash
+      register: result_1_before
+      ignore_errors: true
+
+    - name: Req 1 - Apply PASS_WARN_AGE configuration in /etc/login.defs
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE 7/' /etc/login.defs
+        echo "=== AFTER ==="
+        cat /etc/login.defs | grep -i "PASS_WARN_AGE" || true
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Apply PASS_WARN_AGE configuration in /etc/login.defs"
+        task_1_cmd: "sed -i 's/^PASS_WARN_AGE.*/PASS_WARN_AGE 7/' /etc/login.defs && cat /etc/login.defs | grep -i 'PASS_WARN_AGE'"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: |
+          {{ ('BEFORE:\n' + result_1_before.stdout + '\nAFTER:\n' + result_1.stdout) | default('') | trim }}
+        status_1: >-
+          {% set before = result_1_before.stdout | default('') | trim %}
+          {% set after = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and 'PASS_WARN_AGE 7' in after %}
+            APPLIED
+          {% elif result_1.rc | default(-1) != 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set before = result_1_before.stdout | default('') | trim %}
+          {% set after = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and 'PASS_WARN_AGE 7' in after %}
+            APPLIED: PASS_WARN_AGE successfully configured to 7 days
+          {% elif result_1.rc | default(-1) != 0 %}
+            FAILED: sed command failed with exit code {{ result_1.rc | default(-1) }}
+          {% else %}
+            FAILED: PASS_WARN_AGE not set to 7 days in /etc/login.defs
+          {% endif %}
+
+    - name: Req 2 - Apply password warning days for all users
+      shell: |
+        awk -F: '($2~/^\$.+\$/) {if($6 < 7)system ("chage --warndays 7 " $1)}' /etc/shadow
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply password warning days for all existing users"
+        task_2_cmd: |
+          awk -F: '($2~/^\$.+\$/) {if($6 < 7)system (\"chage --warndays 7 \" $1)}' /etc/shadow
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: User password warning days updated to at least 7 days' if result_2.rc | default(-1) == 0 else 'FAILED: awk command failed with exit code ' + (result_2.rc | default(-1) | string)) | trim }}"
+
+    - name: Req 3 - Verify audit check
+      shell: |
+        # Check /etc/login.defs
+        login_defs_check=$(grep -i '^PASS_WARN_AGE\s' /etc/login.defs 2>/dev/null | awk '{print $2}' | head -1)
+        
+        # Check users in /etc/shadow
+        shadow_check=$(awk -F: '($2~/^\$.+\$/) {if($6 != "" && $6 < 7) print $1 ":" $6}' /etc/shadow 2>/dev/null | head -5)
+        
+        if [ -n "$login_defs_check" ] && [ "$login_defs_check" -ge 7 ]; then
+          echo "PASS: PASS_WARN_AGE is $login_defs_check (>=7) in /etc/login.defs"
+        else
+          echo "FAIL: PASS_WARN_AGE is $login_defs_check (should be >=7) in /etc/login.defs"
+        fi
+        
+        if [ -z "$shadow_check" ]; then
+          echo "PASS: All users with passwords have at least 7 days warning"
+        else
+          echo "FAIL: Users with less than 7 days warning:"
+          echo "$shadow_check"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify audit check for password expiration warning days"
+        task_3_cmd: "Check /etc/login.defs and /etc/shadow for compliance"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if 'PASS:' in output and 'FAIL:' not in output %}
+            APPLIED
+          {% elif result_3.rc | default(-1) != 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if 'PASS:' in output and 'FAIL:' not in output %}
+            APPLIED: System is compliant with CIS 5.4.1.3
+          {% elif result_3.rc | default(-1) != 0 %}
+            FAILED: Audit check failed with exit code {{ result_3.rc | default(-1) }}
+          {% else %}
+            FAILED: System is not compliant with CIS 5.4.1.3
+          {% endif %}
+
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'FAILED' or status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' %}
+            All remediation steps applied successfully. System is compliant with CIS 5.4.1.3.
+          {% elif status_1 | trim == 'FAILED' or status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' %}
+            One or more remediation steps failed. Check individual requirement statuses for details.
+          {% else %}
+            Could not determine overall remediation status.
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.4.1.3"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('') | trim }}"
+          - "========================================================"

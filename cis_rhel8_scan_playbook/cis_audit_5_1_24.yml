@@ -1,77 +1,94 @@
 ---
-- name: Data Collection for CIS 5.1.24
+- name: Data Collection for CIS Checkpoint 5.1.24
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.24"
-    req_1: "Run the following script to verify sshd UsePAM is enabled"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.24"
+    req_1: "Run the provided CIS audit script to verify UsePAM is set to yes"
     req_2: "OVERALL Verify: Ensure sshd UsePAM is enabled"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Run the following script to verify sshd UsePAM is enabled
-    - name: "Req 1 - Create temporary audit script"
+    # Requirement 1: Run the provided CIS audit script to verify UsePAM is set to yes
+    - name: Req 1 - Execute CIS audit script for UsePAM check
       copy:
         dest: "/tmp/cis_audit_5.1.24.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
-          {
-             source /etc/crypto-policies/back-ends/opensshserver.config
-             source /etc/sysconfig/sshd
-             sshd -T  $OPTIONS $CRYPTO_POLICY | grep -i usepam
-          }
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T  $OPTIONS $CRYPTO_POLICY | grep -i usepam
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
       ignore_errors: true
-      changed_when: false
 
-    - name: "Req 1 - Execute audit script"
+    - name: Req 1 - Execute the audit script
       shell: "/tmp/cis_audit_5.1.24.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
         path: "/tmp/cis_audit_5.1.24.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute CIS audit script for UsePAM"
-        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i usepam"
+        task_1_name: "Execute CIS audit script for UsePAM check"
+        task_1_cmd: "bash /tmp/cis_audit_5.1.24.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'usepam yes') else 'FAIL') | trim }}"
-        rationale_1: "PASS when script output is 'usepam yes', FAIL otherwise"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output | lower == 'usepam yes' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output | lower == 'usepam yes' %}
+            PASS: Script output shows "usepam yes" which indicates compliance
+          {% else %}
+            FAIL: Expected output "usepam yes" but got "{{ output }}"
+          {% endif %}
 
     # Requirement 2: OVERALL Verify: Ensure sshd UsePAM is enabled
-    - name: "Req 2 - Determine overall compliance"
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A - Based on requirement 1 result"
-        task_2_rc: 0
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Overall verification of requirement 1"
+        task_2_cmd: "N/A - Based on requirement 1 status"
+        task_2_rc: "{{ task_1_rc | default(-1) }}"
+        data_2: "{{ data_1 | default('') }}"
+        status_2: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS: Overall compliance achieved because requirement 1 is PASS
+          {% else %}
+            FAIL: Overall compliance failed because requirement 1 is FAIL
+          {% endif %}
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
@@ -100,5 +117,5 @@
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Rationale: Overall compliance based on requirement 1 status. PASS when requirement 1 is PASS, FAIL otherwise."
           - "========================================================"

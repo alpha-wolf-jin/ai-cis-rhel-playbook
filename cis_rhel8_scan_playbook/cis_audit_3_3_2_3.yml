@@ -1,42 +1,13 @@
 ---
-- name: Data Collection for CIS 3.3.2.3
+- name: Data Collection for CIS Benchmark 3.3.2.3
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.2.3"
-    req_1: "Check if IPv6 is enabled on the system"
-    req_2: "Verify net.ipv6.conf.all.accept_redirects in the running configuration"
-    req_3: "Verify net.ipv6.conf.all.accept_redirects = 0 is set in a persistent configuration file"
-    req_4: "OVERALL Verify: Ensure net.ipv6.conf.all.accept_redirects is configured"
-    audit_script: |
-      {% raw %}
-      #!/usr/bin/env bash
-      {
-         l_parameter_name="net.ipv6.conf.all.accept_redirects"
-         l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
-         l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
-         || readlink -e /usr/lib/systemd/systemd-sysctl)"
-         l_ufw_file="$([ -f /etc/default/ufw ] && \
-         awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
-         [ -f "$(readlink -e "$l_ufw_file")" ] && \
-         a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
-         while IFS= read -r l_fname; do
-            l_file="$(readlink -e "${l_fname//# /}")"
-            [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
-            <<< "${a_files[*]}" && a_files+=("$l_file")
-         done < <("$l_systemdsysctl" --cat-config | tac | \
-         grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
-         for l_file in "${a_files[@]}"; do
-            l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n 1)"
-            l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
-            [ -n "$l_option_value" ] && \
-            a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
-            "    \"$l_file\"")
-         done
-         [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
-      }
-      {% endraw %}
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.3"
+    req_1: "Run sysctl command to verify net.ipv6.conf.all.accept_redirects is set to 0 in the running configuration"
+    req_2: "Run script to verify net.ipv6.conf.all.accept_redirects = 0 is set in a file being used by systemd sysctl"
+    req_3: "OVERALL Verify: Ensure net.ipv6.conf.all.accept_redirects is configured"
 
   tasks:
     - name: Initialize data variables
@@ -50,127 +21,189 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
+        ipv6_enabled: false
 
-    - name: "Req 1 - Check if IPv6 is enabled on the system"
+    - name: Check if IPv6 is enabled on the system
       shell: |
         # Check if IPv6 is enabled
-        if ip -6 addr show 2>/dev/null | grep -q "inet6"; then
-          echo "IPv6: enabled"
+        if [ -f /proc/net/if_inet6 ] || ip -6 addr show | grep -q inet6 || sysctl -a 2>/dev/null | grep -q ipv6; then
+          echo "enabled"
         else
-          echo "IPv6: disabled"
+          echo "disabled"
         fi
+      args:
+        executable: /bin/bash
+      register: ipv6_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set IPv6 enabled fact
+      set_fact:
+        ipv6_enabled: "{{ 'enabled' in ipv6_check.stdout | default('') }}"
+      when: ipv6_check is defined
+
+    # Requirement 1: Run sysctl command - ONLY if IPv6 is enabled
+    - name: Req 1 - Check running configuration
+      shell: sysctl net.ipv6.conf.all.accept_redirects
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
+      when: ipv6_enabled | bool
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check IPv6 status"
-        task_1_cmd: "Check if IPv6 is enabled on the system"
+        task_1_name: "Check running configuration"
+        task_1_cmd: "sysctl net.ipv6.conf.all.accept_redirects"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output is search('IPv6: enabled') %}
-            PASS
-          {% elif output is search('IPv6: disabled') %}
-            NA
+          {% if ipv6_enabled | bool %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if output == 'net.ipv6.conf.all.accept_redirects = 0' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
-            FAIL
+            NA
           {% endif %}
-        rationale_1: "PASS when IPv6 enabled, NA when IPv6 disabled, FAIL otherwise."
+        rationale_1: >-
+          {% if ipv6_enabled | bool %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if output == 'net.ipv6.conf.all.accept_redirects = 0' %}
+              PASS when output is exactly "net.ipv6.conf.all.accept_redirects = 0", FAIL otherwise
+            {% else %}
+              FAIL: Expected "net.ipv6.conf.all.accept_redirects = 0", got "{{ output }}"
+            {% endif %}
+          {% else %}
+            NA: IPv6 is not enabled on the system
+          {% endif %}
+      when: ipv6_enabled is defined
 
-    - name: "Req 2 - Check running sysctl configuration"
-      shell: sysctl net.ipv6.conf.all.accept_redirects
+    # Requirement 2: Run CIS audit script - ONLY if IPv6 is enabled
+    - name: Req 2 - Create CIS audit script
+      copy:
+        dest: "/tmp/cis_audit_3.3.2.3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          {
+             l_parameter_name="net.ipv6.conf.all.accept_redirects"
+             l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
+             l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
+             || readlink -e /usr/lib/systemd/systemd-sysctl)"
+             l_ufw_file="$([ -f /etc/default/ufw ] && \
+             awk -F= '/^\s*IPT_SYSCTL=/ {print $2}' /etc/default/ufw)"
+             [ -f "$(readlink -e "$l_ufw_file")" ] && \
+             a_files+=("$l_ufw_file"); a_files+=("/etc/sysctl.conf")
+             while IFS= read -r l_fname; do
+                l_file="$(readlink -e "${l_fname//# /}")"
+                [ -n "$l_file" ] && ! grep -Psiq -- '(^|\h+)'"$l_file"'\b' \
+                <<< "${a_files[*]}" && a_files+=("$l_file")
+             done < <("$l_systemdsysctl" --cat-config | tac | \
+             grep -Pio '^\h*#\h*\/[^#\n\r\h]+\.conf\b')
+             for l_file in "${a_files[@]}"; do
+                l_opt="$(grep -Poi '^\h*'"$l_grep"'\h*=\h*\H+\b' "$l_file" | tail -n 1)"
+                l_option_value="$(cut -d= -f2 <<< "$l_opt" | xargs)"
+                [ -n "$l_option_value" ] && \
+                a_output+=(" - \"$l_parameter_name = $l_option_value\" is set in:" \
+                "    \"$l_file\"")
+             done
+             [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
+          }
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: ipv6_enabled | bool
+
+    - name: Req 2 - Execute CIS audit script
+      shell: "/tmp/cis_audit_3.3.2.3.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
       changed_when: false
-      when: "'IPv6: enabled' in data_1"
+      when: ipv6_enabled | bool
+
+    - name: Req 2 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_3.3.2.3.sh"
+        state: absent
+      ignore_errors: true
+      when: ipv6_enabled | bool
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check running sysctl value"
-        task_2_cmd: "sysctl net.ipv6.conf.all.accept_redirects"
+        task_2_name: "Execute CIS audit script for configuration files"
+        task_2_cmd: "Execute /tmp/cis_audit_3.3.2.3.sh"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output == 'net.ipv6.conf.all.accept_redirects = 0' %}
-            PASS
+          {% if ipv6_enabled | bool %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output is search('"net.ipv6.conf.all.accept_redirects = 0" is set in:') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
-            FAIL
+            NA
           {% endif %}
-        rationale_2: "PASS when output is exactly 'net.ipv6.conf.all.accept_redirects = 0', FAIL otherwise"
-      when: "'IPv6: enabled' in data_1"
+        rationale_2: >-
+          {% if ipv6_enabled | bool %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output is search('"net.ipv6.conf.all.accept_redirects = 0" is set in:') %}
+              PASS when script output shows setting is configured in sysctl files, FAIL otherwise
+            {% else %}
+              FAIL: Script output does not show setting is configured: {{ output[:100] }}{% if output|length > 100 %}...{% endif %}
+            {% endif %}
+          {% else %}
+            NA: IPv6 is not enabled on the system
+          {% endif %}
+      when: ipv6_enabled is defined
 
-    - name: "Req 3 - Create temporary audit script"
-      copy:
-        dest: "/tmp/cis_audit_script.sh"
-        mode: '0700'
-        content: "{{ audit_script }}"
-      when: "'IPv6: enabled' in data_1"
-
-    - name: "Req 3 - Execute audit script"
-      shell: "/tmp/cis_audit_script.sh"
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      changed_when: false
-      when: "'IPv6: enabled' in data_1"
-
-    - name: "Req 3 - Remove temporary audit script"
-      file:
-        path: "/tmp/cis_audit_script.sh"
-        state: absent
-      when: "'IPv6: enabled' in data_1"
-
+    # Requirement 3: Overall verification
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check persistent configuration"
-        task_3_cmd: "CIS audit script for persistent config"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A - Calculated from requirement 1 and 2"
+        task_3_rc: 0
+        data_3: "Requirement 1 status: {{ status_1 | default('UNKNOWN') }}, Requirement 2 status: {{ status_2 | default('UNKNOWN') }}, IPv6 enabled: {{ ipv6_enabled | default('UNKNOWN') }}"
         status_3: >-
-          {% set output = result_3.stdout | default('') | trim %}
-          {% if output is search('net.ipv6.conf.all.accept_redirects = 0') %}
-            PASS
+          {% if ipv6_enabled | bool %}
+            {% if (status_1 | default('UNKNOWN') | trim == 'PASS') and (status_2 | default('UNKNOWN') | trim == 'PASS') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
           {% else %}
-            FAIL
+            NA
           {% endif %}
-        rationale_3: "PASS when script output shows 'net.ipv6.conf.all.accept_redirects = 0' in a file, FAIL otherwise"
-      when: "'IPv6: enabled' in data_1"
-
-    - name: Store requirement 4 details
-      set_fact:
-        task_4_name: "Overall compliance check"
-        task_4_cmd: "N/A - calculated from previous results"
-        task_4_rc: 0
-        data_4: "N/A"
-        status_4: >-
-          {% if status_1 | trim == 'NA' %}
-            PASS
-          {% elif (status_1 | trim == 'PASS') and (status_2 | trim == 'PASS') and (status_3 | trim == 'PASS') %}
-            PASS
+        rationale_3: >-
+          {% if ipv6_enabled | bool %}
+            {% if (status_1 | default('UNKNOWN') | trim == 'PASS') and (status_2 | default('UNKNOWN') | trim == 'PASS') %}
+              PASS when req_1=PASS and req_2=PASS, FAIL otherwise
+            {% else %}
+              FAIL: req_1={{ status_1 | default('UNKNOWN') }}, req_2={{ status_2 | default('UNKNOWN') }}
+            {% endif %}
           {% else %}
-            FAIL
+            NA: IPv6 is not enabled on the system
           {% endif %}
-        rationale_4: "PASS when req_1=NA (IPv6 disabled) OR (req_1=PASS AND req_2=PASS AND req_3=PASS), FAIL otherwise."
+      when: ipv6_enabled is defined
 
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.2.3"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
+          - "IPv6 Status: {% if ipv6_enabled | bool %}ENABLED{% else %}DISABLED{% endif %}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -197,16 +230,8 @@
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

@@ -1,0 +1,323 @@
+---
+- name: Remediation for CIS 5.4.2.3
+  hosts: all
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_4_2_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.3"
+    req_1: "Apply change to set root group's GID to 0 using command: groupmod -g 0 root. Expected result: The root group's GID is set to 0."
+    req_2: |
+      Apply change to remove or reassign any other groups with GID 0 using command: awk -F: '($3 == 0 && $1 != \"root\") {print $1}' /etc/group | while read -r group; do groupmod -g <new_gid> \"$group\"; done. Expected result: Any group other than root with GID 0 is assigned a new, non-zero GID.
+    req_3: "VERIFY: Run audit check to confirm Ensure group root is the only GID 0 group is properly configured using command: awk -F: '($3 == 0) {print $1}' /etc/group. Expected result: Output shows only 'root'."
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      become: no
+
+    - name: State Guard - Restore /etc/group from backup
+      copy:
+        src: "{{ state_guard_dir }}/group.present"
+        dest: "/etc/group"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+      become: no
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      become: no
+
+    - name: State Guard - Check if /etc/group exists
+      stat:
+        path: "/etc/group"
+      register: _sg_group_stat
+
+    - name: State Guard - Backup /etc/group (present)
+      copy:
+        src: "/etc/group"
+        dest: "{{ state_guard_dir }}/group.present"
+        remote_src: true
+      when: _sg_group_stat.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      become: no
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+      become: no
+
+    - name: Req 1 - Capture /etc/group before remediation
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/group
+      args:
+        executable: /bin/bash
+      register: before_group
+      changed_when: false
+      ignore_errors: true
+
+    # Requirement 1: Set root group's GID to 0
+    - name: Req 1 - Set root group GID to 0
+      shell: |
+        echo "=== APPLYING REQUIREMENT 1 ==="
+        groupmod -g 0 root
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Req 1 - Capture /etc/group after requirement 1
+      shell: |
+        echo "=== AFTER REQUIREMENT 1 ==="
+        cat /etc/group
+      args:
+        executable: /bin/bash
+      register: after_req1
+      changed_when: false
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Set root group GID to 0"
+        task_1_cmd: "groupmod -g 0 root"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: >-
+          {{ before_group.stdout | default('') | trim + '
+          
+          ' + after_req1.stdout | default('') | trim }}
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED: root group GID successfully set to 0
+          {% else %}
+            FAILED: groupmod command failed with exit code {{ rc }}
+          {% endif %}
+      become: no
+
+    # Requirement 2: Reassign other groups with GID 0 to new GIDs
+    - name: Req 2 - Find available GID starting from 10000
+      shell: |
+        awk -F: '($3 == 0 && $1 != "root") {print $1}' /etc/group
+      args:
+        executable: /bin/bash
+      register: groups_with_gid0
+      changed_when: false
+      ignore_errors: true
+
+    - name: Req 2 - Reassign GID for non-root groups with GID 0
+      shell: |
+        echo "=== APPLYING REQUIREMENT 2 ==="
+        {% raw %}
+        awk -F: '($3 == 0 && $1 != "root") {print $1}' /etc/group | while read -r group; do
+          # Find next available GID starting from 10000
+          new_gid=10000
+          while getent group "$new_gid" >/dev/null 2>&1; do
+            new_gid=$((new_gid + 1))
+          done
+          echo "Reassigning group $group from GID 0 to GID $new_gid"
+          groupmod -g "$new_gid" "$group"
+        done
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: groups_with_gid0.stdout | default('') | trim != ''
+
+    - name: Req 2 - Skip if no non-root groups with GID 0
+      set_fact:
+        task_2_name: "Reassign GID for non-root groups with GID 0"
+        task_2_cmd: "Skipped - no non-root groups with GID 0 found"
+        task_2_rc: 0
+        data_2: "No non-root groups with GID 0 found to reassign"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: No non-root groups with GID 0 found, nothing to reassign"
+      when: groups_with_gid0.stdout | default('') | trim == ''
+      become: no
+
+    - name: Req 2 - Capture /etc/group after requirement 2
+      shell: |
+        echo "=== AFTER REQUIREMENT 2 ==="
+        cat /etc/group
+      args:
+        executable: /bin/bash
+      register: after_req2
+      changed_when: false
+      ignore_errors: true
+      when: groups_with_gid0.stdout | default('') | trim != ''
+
+    - name: Req 2 - Store requirement 2 details (when applied)
+      set_fact:
+        task_2_name: "Reassign GID for non-root groups with GID 0"
+        task_2_cmd: |
+          awk -F: '($3 == 0 && $1 != \"root\") {print $1}' /etc/group | while read -r group; do new_gid=10000; while getent group \"\$new_gid\" >/dev/null 2>&1; do new_gid=\$((new_gid + 1)); done; groupmod -g \"\$new_gid\" \"\$group\"; done
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: >-
+          {{ after_req1.stdout | default('') | trim + '
+          
+          ' + after_req2.stdout | default('') | trim }}
+        status_2: >-
+          {% set rc = result_2.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set rc = result_2.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED: non-root groups with GID 0 reassigned to new GIDs
+          {% else %}
+            FAILED: groupmod reassignment failed with exit code {{ rc }}
+          {% endif %}
+      when: groups_with_gid0.stdout | default('') | trim != ''
+      become: no
+
+    # Requirement 3: Verify remediation
+    - name: Req 3 - Verify only root has GID 0
+      shell: |
+        echo "=== VERIFICATION ==="
+        awk -F: '($3 == 0) {print $1}' /etc/group
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify only root has GID 0"
+        task_3_cmd: "awk -F: '($3 == 0) {print $1}' /etc/group"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output == 'root' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output == 'root' %}
+            APPLIED: Verification passed - only root group has GID 0
+          {% else %}
+            FAILED: Verification failed - found groups with GID 0: {{ output }}
+          {% endif %}
+      become: no
+
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_3 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_1 | trim == 'FAILED' or status_2 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_2 | trim == 'SKIPPED' and status_1 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if status_3 | trim == 'APPLIED' %}
+            Successfully remediated - root is the only group with GID 0
+          {% elif status_3 | trim == 'FAILED' %}
+            Remediation failed - verification shows groups with GID 0: {{ data_3 | default('') | trim }}
+          {% elif status_1 | trim == 'FAILED' %}
+            Remediation failed - could not set root group GID to 0
+          {% elif status_2 | trim == 'FAILED' %}
+            Remediation failed - could not reassign non-root groups with GID 0
+          {% elif status_2 | trim == 'SKIPPED' and status_1 | trim == 'APPLIED' %}
+            Partially applied - root group GID set to 0, no non-root groups found with GID 0
+          {% else %}
+            Remediation status unknown
+          {% endif %}
+      become: no
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.4.2.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"
+      become: no

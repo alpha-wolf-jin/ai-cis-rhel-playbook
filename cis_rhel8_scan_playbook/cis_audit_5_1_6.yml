@@ -2,163 +2,166 @@
 - name: Data Collection for CIS 5.1.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.6"
-    test_user: "sshuser"
-    req_1: "Verify at least one of AllowUsers, AllowGroups, DenyUsers, or DenyGroups is configured in the effective sshd configuration"
-    req_2: "If Match blocks are used, verify access control settings are not incorrectly overridden for a specific user"
-    req_3: "OVERALL Verify: Ensure sshd access is configured"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.6"
+    req_1: "Run the provided CIS audit script to verify Ensure sshd access is configured"
+    req_2: "OVERALL Verify: Ensure sshd access is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        match_blocks_used: false
-        req_2_applicable: "NA"
 
-    # Check if Match blocks are used in sshd configuration
-    - name: Check for Match blocks in sshd configuration
-      shell: |
-        grep -q '^Match' /etc/ssh/sshd_config 2>/dev/null || echo "No Match blocks found"
-      args:
-        executable: /bin/bash
-      register: match_check
+    # Requirement 1: Execute CIS audit script for general sshd access configuration
+    - name: Req 1 - Execute CIS audit script for general sshd access configuration
+      copy:
+        dest: "/tmp/cis_audit_5.1.6_general.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+          {% endraw %}
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
-      changed_when: false
 
-    - name: Set match_blocks_used flag
-      set_fact:
-        match_blocks_used: "{{ 'true' if match_check.stdout | default('') | trim != 'No Match blocks found' else 'false' }}"
-
-    # Requirement 1: Check for access control settings in effective sshd config
-    - name: Req 1 - Check sshd access control settings
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.6_general.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.6_general.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check sshd access control settings"
-        task_1_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+        task_1_name: "Execute CIS audit script for general sshd access configuration"
+        task_1_cmd: "Run script: /tmp/cis_audit_5.1.6_general.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if result_1.stdout | default('') | trim | length > 0 else 'FAIL') | trim }}"
-        rationale_1: "PASS when the output matches at least one line containing 'allowusers <userlist>', 'allowgroups <grouplist>', 'denyusers <userlist>', or 'denygroups <grouplist>', FAIL when no lines are matched"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and (output is regex('^\s*allowusers\s+') or 
+                                  output is regex('^\s*allowgroups\s+') or 
+                                  output is regex('^\s*denyusers\s+') or 
+                                  output is regex('^\s*denygroups\s+')) %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when script output shows at least one allowusers, allowgroups, denyusers, or denygroups line; FAIL when no lines found"
 
-    # Requirement 2: Conditional check for Match blocks (only if match blocks exist)
-    - name: Req 2 - Check sshd config with user parameter for Match blocks
+    # Check for Match blocks in sshd_config as per CIS procedure
+    - name: Check if sshd config has Match blocks
       shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ test_user }} 2>/dev/null | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+        grep -q '^Match' /etc/ssh/sshd_config && echo "MATCH_BLOCKS_EXIST" || echo "NO_MATCH_BLOCKS"
+      register: match_check
+      ignore_errors: true
+      changed_when: false
+
+    # Requirement for match block auditing (conditional)
+    - name: Req 1b - Audit match blocks for sshuser example (if Match blocks exist)
+      copy:
+        dest: "/tmp/cis_audit_5.1.6_match.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
+          {% endraw %}
+      register: script_create_match
+      ignore_errors: true
+      when: match_check.stdout == "MATCH_BLOCKS_EXIST"
+
+    - name: Req 1b - Execute the match block audit script
+      shell: "/tmp/cis_audit_5.1.6_match.sh"
       args:
         executable: /bin/bash
-      register: result_2
+      register: result_match
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: match_blocks_used == 'true'
+      when: match_check.stdout == "MATCH_BLOCKS_EXIST"
 
-    - name: Store requirement 2 details and determine status (when applicable)
+    - name: Req 1b - Remove temporary match audit script
+      file:
+        path: "/tmp/cis_audit_5.1.6_match.sh"
+        state: absent
+      ignore_errors: true
+      when: match_check.stdout == "MATCH_BLOCKS_EXIST"
+
+    - name: Store match block audit details
       set_fact:
-        task_2_name: "Check sshd config with user parameter for Match blocks"
-        task_2_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ test_user }} | grep -Pi -- '^\h*(allow|deny)(users|groups)\h+\H+'
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        req_2_applicable: "{{ 'true' if match_blocks_used == 'true' else 'false' }}"
-        status_2: >
-          {{ (
-            'NA' if match_blocks_used == 'false' else
-            'REVIEW' if result_2.stdout | default('') | trim | length > 0 else
-            'PASS'
-          ) | trim }}
-        rationale_2: >
-          {{ (
-            'Not applicable - No Match blocks found in sshd configuration' if match_blocks_used == 'false' else
-            'Output requires manual review to confirm access control settings are correctly applied for the specified connection parameters' if result_2.stdout | default('') | trim | length > 0 else
-            'No access control settings found in Match blocks for test user'
-          ) | trim }}
-      when: match_blocks_used == 'true'
+        match_audit_data: "{{ result_match.stdout | default('') | trim }}"
+        match_blocks_exist: "{{ match_check.stdout == 'MATCH_BLOCKS_EXIST' }}"
+      when: match_check.stdout == "MATCH_BLOCKS_EXIST"
 
-    - name: Set requirement 2 as NA when not applicable
+    # Requirement 2: OVERALL Verify
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sshd config with user parameter for Match blocks"
-        task_2_cmd: "N/A - Match blocks not used"
-        task_2_rc: -1
-        data_2: "Match blocks not found in sshd configuration"
-        req_2_applicable: "false"
-        status_2: "NA"
-        rationale_2: "Not applicable - No Match blocks found in sshd configuration"
-      when: match_blocks_used == 'false'
+        task_2_name: "OVERALL Verify: Ensure sshd access is configured"
+        task_2_cmd: "Evaluate overall compliance based on requirement 1"
+        task_2_rc: 0
+        data_2: "Based on requirement 1 result"
+        status_2: "{{ status_1 | default('UNKNOWN') | trim }}"
+        rationale_2: "PASS when req_1 shows at least one allow/deny line for users or groups, FAIL otherwise"
 
-    # Requirement 3: Overall verification
-    - name: Determine overall compliance status
+    # Build report message
+    - name: Build compliance report message
       set_fact:
-        status_3: >
-          {{ (
-            'PASS' if 
-            status_1 | trim == 'PASS' and 
-            (req_2_applicable == 'false' or status_2 | trim == 'PASS' or status_2 | trim == 'REVIEW')
-            else 'FAIL'
-          ) | trim }}
-        rationale_3: >
-          {{ (
-            'PASS when req_1=PASS AND (req_2 is not applicable OR req_2=PASS/REVIEW), FAIL otherwise' if 
-            status_1 | trim == 'PASS' and 
-            (req_2_applicable == 'false' or status_2 | trim == 'PASS' or status_2 | trim == 'REVIEW')
-            else 'FAIL when req_1=FAIL OR (req_2 is applicable AND req_2=FAIL)'
-          ) | trim }}
+        report_message: |
+          ========================================================
+                  COMPLIANCE REPORT - CIS 5.1.6
+          ========================================================
+          Reference: {{ cis_checkpoint }}
+          ========================================================
 
-    # Final compliance report
+          REQUIREMENT 1 - {{ req_1 }}:
+            Task: {{ task_1_name }}
+            Command: {{ task_1_cmd }}
+            Exit code: {{ task_1_rc }}
+            Data: {{ data_1 | default('') | trim }}
+            Status: {{ status_1 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
+
+          REQUIREMENT 2 - {{ req_2 }}:
+            Task: {{ task_2_name }}
+            Command: {{ task_2_cmd }}
+            Exit code: {{ task_2_rc }}
+            Data: {{ data_2 | default('') | trim }}
+            Status: {{ status_2 | default('UNKNOWN') | trim }}
+            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
+
+          {% if match_blocks_exist is defined and match_blocks_exist %}
+          MATCH BLOCK AUDIT (Conditional):
+            Match blocks detected in /etc/ssh/sshd_config
+            Match block audit output for user=sshuser: {{ match_audit_data | default('') | trim }}
+
+          {% endif %}
+          ========================================================
+          OVERALL COMPLIANCE:
+            Result: {{ status_2 | default('UNKNOWN') | trim }}
+            Rationale: PASS when req_1 shows at least one allow/deny line for users or groups, FAIL otherwise
+          ========================================================
+
+    # Final report
     - name: Generate compliance report
       debug:
-        msg:
-          - "========================================================"
-          - "        COMPLIANCE REPORT - CIS 5.1.6"
-          - "========================================================"
-          - "Reference: {{ cis_reference }}"
-          - "========================================================"
-          - ""
-          - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
-          - "========================================================"
-          - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - "========================================================"
+        msg: "{{ report_message }}"

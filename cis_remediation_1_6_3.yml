@@ -1,0 +1,400 @@
+---
+- name: Remediation for CIS 1.6.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_6_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.3"
+    req_1: "Check if crypto-policies package is installed"
+    req_2: "Create or edit NO-SHA1.pmod module file with required content"
+    req_3: "Update active system-wide cryptographic policy to include NO-SHA1 subpolicy"
+    req_4: "Reboot system to apply new cryptographic settings"
+    req_5: "Verify system-wide crypto policy disables SHA1 hash and signature support"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Restore original NO-SHA1.pmod file if it existed before remediation
+    - name: State Guard - Restore /etc/crypto-policies/policies/modules/NO-SHA1.pmod from backup
+      copy:
+        src: "{{ state_guard_dir }}/NO-SHA1.pmod.present"
+        dest: "/etc/crypto-policies/policies/modules/NO-SHA1.pmod"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Delete NO-SHA1.pmod file if it was created by previous remediation (marked as absent)
+    - name: State Guard - Delete NO-SHA1.pmod (created by remediation)
+      file:
+        path: "/etc/crypto-policies/policies/modules/NO-SHA1.pmod"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Restore original crypto policy from backup
+    - name: State Guard - Restore original crypto policy
+      shell: |
+        # Read original policy from backup file and set it back
+        if [ -f "{{ state_guard_dir }}/original_policy.txt" ]; then
+          original_policy=$(cat "{{ state_guard_dir }}/original_policy.txt" | tr -d '\n')
+          if [ -n "$original_policy" ]; then
+            update-crypto-policies --set "$original_policy"
+          fi
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if NO-SHA1.pmod exists before deciding backup suffix
+    - name: State Guard - Check if NO-SHA1.pmod exists
+      stat:
+        path: "/etc/crypto-policies/policies/modules/NO-SHA1.pmod"
+      register: _sg_no_sha1_stat
+
+    # Backup existing NO-SHA1.pmod with .present suffix
+    - name: State Guard - Backup NO-SHA1.pmod (present)
+      copy:
+        src: "/etc/crypto-policies/policies/modules/NO-SHA1.pmod"
+        dest: "{{ state_guard_dir }}/NO-SHA1.pmod.present"
+        remote_src: true
+      when: _sg_no_sha1_stat.stat.exists
+      ignore_errors: true
+
+    # Mark non-existing NO-SHA1.pmod with .absent suffix
+    - name: State Guard - Mark NO-SHA1.pmod as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/NO-SHA1.pmod.absent"
+      when: not _sg_no_sha1_stat.stat.exists
+      ignore_errors: true
+
+    # Capture current crypto policy before remediation
+    - name: State Guard - Backup current crypto policy
+      shell: update-crypto-policies --show
+      args:
+        executable: /bin/bash
+      register: _sg_original_policy
+      ignore_errors: true
+
+    - name: State Guard - Save original crypto policy
+      copy:
+        content: "{{ _sg_original_policy.stdout | default('') | trim }}"
+        dest: "{{ state_guard_dir }}/original_policy.txt"
+      when: _sg_original_policy.stdout is defined
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if crypto-policies package is installed
+    - name: Req 1 - Check crypto-policies package
+      shell: rpm -q crypto-policies
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if crypto-policies package is installed"
+        task_1_cmd: "rpm -q crypto-policies"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: crypto-policies package is installed on this server
+          {% else %}
+            SKIPPED: Remediation not applicable - crypto-policies is not installed on this server
+          {% endif %}
+
+    # Requirement 2: Create or edit NO-SHA1.pmod module file with required content
+    # First capture file contents before modification
+    - name: Req 2 - Capture current NO-SHA1.pmod file contents before modification
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/crypto-policies/policies/modules/NO-SHA1.pmod ]; then
+          cat /etc/crypto-policies/policies/modules/NO-SHA1.pmod
+        else
+          echo "File does not exist"
+        fi
+      args:
+        executable: /bin/bash
+      register: _before_file
+      when: "status_1 | trim == 'APPLIED'"
+      ignore_errors: true
+
+    - name: Req 2 - Create or edit NO-SHA1.pmod file with exact content
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        mkdir -p /etc/crypto-policies/policies/modules/
+        printf '%s\n' '# This is a subpolicy dropping the SHA1 hash and signature support' 'hash = -SHA1' 'sign = -*-SHA1' 'sha1_in_certs = 0' >> /etc/crypto-policies/policies/modules/NO-SHA1.pmod
+        echo "=== AFTER ==="
+        cat /etc/crypto-policies/policies/modules/NO-SHA1.pmod
+      args:
+        executable: /bin/bash
+      register: result_2
+      when: "status_1 | trim == 'APPLIED'"
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Create or edit NO-SHA1.pmod file with required content"
+        task_2_cmd: |
+          printf '%s\n' '# This is a subpolicy dropping the SHA1 hash and signature support' 'hash = -SHA1' 'sign = -*-SHA1' 'sha1_in_certs = 0' >> /etc/crypto-policies/policies/modules/NO-SHA1.pmod
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: >-
+          {% if _before_file is defined %}
+            {{ _before_file.stdout | default('') | trim }}
+            {{ result_2.stdout | default('') | trim }}
+          {% else %}
+            {{ result_2.stdout | default('') | trim }}
+          {% endif %}
+        status_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED: crypto-policies package not installed, skipping file creation
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: File /etc/crypto-policies/policies/modules/NO-SHA1.pmod created or updated with correct configuration
+          {% else %}
+            FAILED: Could not create or update NO-SHA1.pmod file
+          {% endif %}
+
+    # Requirement 3: Update active system-wide cryptographic policy to include NO-SHA1 subpolicy
+    # First check if NO-SHA1 is already in policy for idempotency
+    - name: Req 3 - Check if NO-SHA1 already in policy
+      shell: update-crypto-policies --show | grep -q ':NO-SHA1\|^NO-SHA1$'
+      args:
+        executable: /bin/bash
+      register: no_sha1_already_in_policy
+      when: "status_2 | trim == 'APPLIED'"
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 3 - Update crypto policy with NO-SHA1 subpolicy
+      shell: update-crypto-policies --set DEFAULT:NO-SHA1
+      args:
+        executable: /bin/bash
+      register: result_3
+      when: "status_2 | trim == 'APPLIED' and not no_sha1_already_in_policy.rc == 0"
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Update crypto policy to include NO-SHA1"
+        task_3_cmd: "update-crypto-policies --set DEFAULT:NO-SHA1"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_2 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif no_sha1_already_in_policy.rc == 0 %}
+            APPLIED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if status_2 | trim != 'APPLIED' %}
+            SKIPPED: NO-SHA1.pmod file not created, skipping policy update
+          {% elif no_sha1_already_in_policy.rc == 0 %}
+            APPLIED: System-wide crypto policy already includes NO-SHA1 subpolicy
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: System-wide crypto policy updated to include NO-SHA1 subpolicy
+          {% else %}
+            FAILED: Could not update crypto policy
+          {% endif %}
+
+    # Requirement 4: Reboot system to apply new cryptographic settings
+    - name: Req 4 - Reboot system to apply crypto settings
+      reboot:
+        reboot_timeout: 180
+      register: result_4
+      when: "status_3 | trim == 'APPLIED'"
+      ignore_errors: true
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Reboot system to apply crypto settings"
+        task_4_cmd: "reboot module"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_3 | trim != 'APPLIED' %}
+            SKIPPED
+          {% else %}
+            APPLIED
+          {% endif %}
+        rationale_4: >-
+          {% if status_3 | trim != 'APPLIED' %}
+            SKIPPED: Policy not updated, skipping reboot
+          {% else %}
+            APPLIED: System rebooted to apply new cryptographic settings
+          {% endif %}
+
+    # Requirement 5: Verify system-wide crypto policy disables SHA1 hash and signature support
+    - name: Req 5 - Verify crypto policy
+      shell: update-crypto-policies --show
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify crypto policy disables SHA1"
+        task_5_cmd: "update-crypto-policies --show"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if ':NO-SHA1' in output or output == 'NO-SHA1' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if ':NO-SHA1' in output or output == 'NO-SHA1' %}
+            APPLIED: Crypto policy includes NO-SHA1 subpolicy
+          {% else %}
+            FAILED: Crypto policy does not include NO-SHA1 subpolicy
+          {% endif %}
+
+    # Compute overall remediation status
+    - name: Compute overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_5 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_5 | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: crypto-policies package not installed
+          {% elif status_5 | trim == 'APPLIED' %}
+            APPLIED: Crypto policy successfully updated to disable SHA1
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_5 | trim == 'FAILED' %}
+            PARTIALLY APPLIED: Policy updated but verification failed
+          {% else %}
+            FAILED: Remediation not fully applied
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.6.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

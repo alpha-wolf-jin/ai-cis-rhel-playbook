@@ -1,0 +1,311 @@
+---
+- name: Remediation for CIS 5.1.19 - Ensure sshd PermitEmptyPasswords is disabled
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_19"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19"
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Check if sshd is installed using command: rpm -q openssh-server. Expected result: openssh-server package is installed. If not, SKIP all subsequent steps with status: 'SKIPPED - Remediation not applicable - openssh-server is not installed on this server'."
+    req_2: "Apply configuration change to disable empty passwords in sshd_config using command: sed -i '/^[[:space:]]*PermitEmptyPasswords[[:space:]]/Id' /etc/ssh/sshd_config && echo 'PermitEmptyPasswords no' >> /etc/ssh/sshd_config. Expected result: The 'PermitEmptyPasswords' line is set to 'no' at the end of the file, ensuring it takes precedence."
+    req_3: "VERIFY: Run audit check to confirm Ensure sshd PermitEmptyPasswords is disabled is properly configured using command: sshd -T -C user=root -C host='$(hostname)' -C addr='$(grep $(hostname) /etc/hosts | awk '{print $1}')' | grep -i permitemptypasswords. Expected result: Output is 'permitemptypasswords no'."
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/ssh/sshd_config from backup"
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if /etc/ssh/sshd_config exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/ssh/sshd_config exists"
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/ssh/sshd_config (present)"
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/ssh/sshd_config as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/sshd_config.absent"
+      when: not _sg_sshd_config_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    # Requirement 1: Check if sshd is installed using command: rpm -q openssh-server. Expected result: openssh-server package is installed. If not, SKIP all subsequent steps with status: 'SKIPPED - Remediation not applicable - openssh-server is not installed on this server'.
+    - name: "Req 1 - Check if openssh-server package is installed"
+      shell: rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if openssh-server package is installed"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if rc == 0 and 'openssh-server' in output %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if rc == 0 and 'openssh-server' in output %}
+            APPLIED: openssh-server package is installed
+          {% else %}
+            SKIPPED - Remediation not applicable - openssh-server is not installed on this server
+          {% endif %}
+        openssh_installed: "{{ (result_1.rc | default(-1) == 0 and 'openssh-server' in (result_1.stdout | default('') | trim)) | bool }}"
+
+    # Requirement 2: Apply configuration change to disable empty passwords in sshd_config following CIS procedure.
+    # CIS requires setting "PermitEmptyPasswords no" above any Include and Match entries.
+    - name: "Req 2 - Apply configuration change to disable empty passwords in sshd_config (CIS compliant)"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/ssh/sshd_config 2>/dev/null || echo "File not found"
+        echo "=== APPLYING CHANGE ==="
+        # Remove existing PermitEmptyPasswords lines
+        sed -i '/^[[:space:]]*PermitEmptyPasswords[[:space:]]/Id' /etc/ssh/sshd_config
+        
+        # Find the first Include or Match line (if any)
+        first_include_match_line=$(grep -n -E '^[[:space:]]*(Include|Match)' /etc/ssh/sshd_config | head -1 | cut -d: -f1)
+        
+        if [ -n "$first_include_match_line" ]; then
+          # Insert before the first Include or Match line
+          sed -i "${first_include_match_line}i PermitEmptyPasswords no" /etc/ssh/sshd_config
+        else
+          # No Include or Match lines, append to the end
+          echo 'PermitEmptyPasswords no' >> /etc/ssh/sshd_config
+        fi
+        
+        echo "=== AFTER ==="
+        cat /etc/ssh/sshd_config 2>/dev/null || echo "File not found"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "openssh_installed | default(false)"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply configuration change to disable empty passwords in sshd_config (CIS compliant)"
+        task_2_cmd: |
+          sed -i '/^[[:space:]]*PermitEmptyPasswords[[:space:]]/Id' /etc/ssh/sshd_config
+          first_line=$(grep -n -E '^[[:space:]]*(Include|Match)' /etc/ssh/sshd_config | head -1 | cut -d: -f1)
+          if [ -n "$first_line" ]; then sed -i "${first_line}i PermitEmptyPasswords no" /etc/ssh/sshd_config; else echo 'PermitEmptyPasswords no' >> /etc/ssh/sshd_config; fi
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set rc = result_2.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set rc = result_2.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED: Configuration change applied following CIS procedure - PermitEmptyPasswords no set above any Include or Match entries
+          {% else %}
+            FAILED: change could not be applied
+          {% endif %}
+      when: "openssh_installed | default(false)"
+
+    - name: Store requirement 2 as SKIPPED if openssh not installed
+      set_fact:
+        task_2_name: "Apply configuration change to disable empty passwords in sshd_config"
+        task_2_cmd: "N/A - skipped"
+        task_2_rc: -1
+        data_2: "Not applicable - openssh-server not installed"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED - Remediation not applicable - openssh-server is not installed on this server"
+      when: "not (openssh_installed | default(false))"
+
+    # Requirement 3: VERIFY: Run audit check to confirm Ensure sshd PermitEmptyPasswords is disabled is properly configured using command: sshd -T -C user=root -C host='$(hostname)' -C addr='$(grep $(hostname) /etc/hosts | awk '{print $1}')' | grep -i permitemptypasswords. Expected result: Output is 'permitemptypasswords no'.
+    - name: "Req 3 - Verify sshd PermitEmptyPasswords is disabled"
+      shell: |
+        sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | grep -i permitemptypasswords
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "openssh_installed | default(false)"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify sshd PermitEmptyPasswords is disabled"
+        task_3_cmd: |
+          sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | grep -i permitemptypasswords
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output|lower == 'permitemptypasswords no' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output|lower == 'permitemptypasswords no' %}
+            APPLIED: sshd configuration verified, PermitEmptyPasswords is disabled
+          {% else %}
+            FAILED: Expected permitemptypasswords no, got {{ output }}
+          {% endif %}
+      when: "openssh_installed | default(false)"
+
+    - name: Store requirement 3 as SKIPPED if openssh not installed
+      set_fact:
+        task_3_name: "Verify sshd PermitEmptyPasswords is disabled"
+        task_3_cmd: "N/A - skipped"
+        task_3_rc: -1
+        data_3: "Not applicable - openssh-server not installed"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED - Remediation not applicable - openssh-server is not installed on this server"
+      when: "not (openssh_installed | default(false))"
+
+    # Overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s2 == 'APPLIED' and s3 == 'APPLIED' %}
+            APPLIED
+          {% elif s2 == 'APPLIED' or s3 == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% elif s2 == 'FAILED' or s3 == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set r1 = rationale_1 | default('') | trim %}
+          {% set r2 = rationale_2 | default('') | trim %}
+          {% set r3 = rationale_3 | default('') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            {{ r1 }}
+          {% elif s2 == 'APPLIED' and s3 == 'APPLIED' %}
+            All requirements applied successfully. sshd PermitEmptyPasswords is disabled following CIS procedure.
+          {% elif s2 == 'APPLIED' and s3 != 'APPLIED' %}
+            Configuration change applied but verification failed: {{ r3 }}
+          {% elif s2 != 'APPLIED' and s3 == 'APPLIED' %}
+            Verification passed but configuration change may have failed: {{ r2 }}
+          {% elif s2 == 'FAILED' %}
+            Configuration change failed: {{ r2 }}
+          {% elif s3 == 'FAILED' %}
+            Verification failed: {{ r3 }}
+          {% else %}
+            Unknown status for requirements: s1={{ s1 }}, s2={{ s2 }}, s3={{ s3 }}
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.19"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

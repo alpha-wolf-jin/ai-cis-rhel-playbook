@@ -1,0 +1,375 @@
+---
+- name: Remediation for CIS 2.4.1.8 - Ensure crontab is restricted to authorized users
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_4_1_8"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.8"
+    req_1: "Run provided script to create /etc/cron.allow and set ownership and permissions"
+    req_2: "Set ownership and permissions on /etc/cron.deny if it exists"
+    req_3: "Verify the remediation by running the audit check"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE
+    - name: State Guard - Restore /etc/cron.allow from backup
+      copy:
+        src: "{{ state_guard_dir }}/cron.allow.present"
+        dest: "/etc/cron.allow"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Delete /etc/cron.allow (if it was absent before)
+      file:
+        path: "/etc/cron.allow"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restore /etc/cron.deny from backup
+      copy:
+        src: "{{ state_guard_dir }}/cron.deny.present"
+        dest: "/etc/cron.deny"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Delete /etc/cron.deny (if it was absent before)
+      file:
+        path: "/etc/cron.deny"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/cron.allow exists
+      stat:
+        path: "/etc/cron.allow"
+      register: _sg_cron_allow_stat
+
+    - name: State Guard - Check if /etc/cron.deny exists
+      stat:
+        path: "/etc/cron.deny"
+      register: _sg_cron_deny_stat
+
+    - name: State Guard - Backup /etc/cron.allow (present)
+      copy:
+        src: "/etc/cron.allow"
+        dest: "{{ state_guard_dir }}/cron.allow.present"
+        remote_src: true
+      when: _sg_cron_allow_stat.stat.exists
+
+    - name: State Guard - Mark /etc/cron.allow as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/cron.allow.absent"
+      when: not _sg_cron_allow_stat.stat.exists
+
+    - name: State Guard - Backup /etc/cron.deny (present)
+      copy:
+        src: "/etc/cron.deny"
+        dest: "{{ state_guard_dir }}/cron.deny.present"
+        remote_src: true
+      when: _sg_cron_deny_stat.stat.exists
+
+    - name: State Guard - Mark /etc/cron.deny as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/cron.deny.absent"
+      when: not _sg_cron_deny_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Check if cron is installed (prerequisite)
+    - name: Check if cron is installed
+      shell: |
+        rpm -q cronie || rpm -q vixie-cron || which crond || exit 1
+      args:
+        executable: /bin/bash
+      register: cron_check
+      changed_when: false
+      ignore_errors: true
+
+    # Requirement 1: Run script for /etc/cron.allow (only if cron is installed)
+    - name: Req 1 - Run CIS remediation script for cron.allow
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/cron.allow ]; then
+          ls -la /etc/cron.allow
+          stat -c 'Access: %a Owner: %U:%G' /etc/cron.allow
+        else
+          echo "/etc/cron.allow does not exist"
+        fi
+        echo "=== APPLYING CHANGE ==="
+        {
+          [ ! -e "/etc/cron.allow" ] && touch /etc/cron.allow
+          chown root:root /etc/cron.allow
+          chmod u-x,g-wx,o-rwx /etc/cron.allow
+        }
+        echo "=== AFTER ==="
+        if [ -f /etc/cron.allow ]; then
+          ls -la /etc/cron.allow
+          stat -c 'Access: %a Owner: %U:%G' /etc/cron.allow
+        else
+          echo "/etc/cron.allow does not exist (unexpected)"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when: cron_check.rc == 0
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Run CIS remediation script for cron.allow"
+        task_1_cmd: "Bash script to create/configure /etc/cron.allow"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED: cron package is not installed, remediation not applicable
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: Script executed successfully to create/configure /etc/cron.allow
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Set permissions on /etc/cron.deny if it exists (only if cron is installed)
+    - name: Req 2 - Set permissions on /etc/cron.deny if it exists
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/cron.deny ]; then
+          ls -la /etc/cron.deny
+          stat -c 'Access: %a Owner: %U:%G' /etc/cron.deny
+          echo "=== APPLYING CHANGE ==="
+          chown root:root /etc/cron.deny
+          chmod u-x,g-wx,o-rwx /etc/cron.deny
+          echo "=== AFTER ==="
+          ls -la /etc/cron.deny
+          stat -c 'Access: %a Owner: %U:%G' /etc/cron.deny
+        else
+          echo "/etc/cron.deny does not exist, skipping"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: cron_check.rc == 0
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Set permissions on /etc/cron.deny if it exists"
+        task_2_cmd: "chown root:root /etc/cron.deny; chmod u-x,g-wx,o-rwx /etc/cron.deny"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED
+          {% elif result_2.stdout is defined and '/etc/cron.deny does not exist' in result_2.stdout %}
+            APPLIED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED: cron package is not installed, remediation not applicable
+          {% elif result_2.stdout is defined and '/etc/cron.deny does not exist' in result_2.stdout %}
+            APPLIED: /etc/cron.deny does not exist, nothing to do
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Successfully set permissions on /etc/cron.deny
+          {% else %}
+            FAILED: Failed to set permissions on /etc/cron.deny
+          {% endif %}
+
+    # Requirement 3: Verify remediation by running audit check
+    - name: Req 3 - Verify remediation with CIS audit
+      shell: |
+        echo "=== AUDIT CHECK ==="
+        echo "Checking /etc/cron.allow:"
+        if [ -f /etc/cron.allow ]; then
+          cron_allow_owner=$(stat -c %U:%G /etc/cron.allow 2>/dev/null)
+          cron_allow_perm=$(stat -c %a /etc/cron.allow 2>/dev/null)
+          echo "  Owner: $cron_allow_owner"
+          echo "  Permissions: $cron_allow_perm"
+          if [ "$cron_allow_owner" = "root:root" ] && [ $((cron_allow_perm & 0177)) -eq 0 ]; then
+            echo "  Result: PASS - Owner and permissions are correct"
+          else
+            echo "  Result: FAIL - Owner or permissions incorrect"
+          fi
+        else
+          echo "  Result: FAIL - /etc/cron.allow does not exist"
+        fi
+        
+        echo ""
+        echo "Checking /etc/cron.deny (if exists):"
+        if [ -f /etc/cron.deny ]; then
+          cron_deny_owner=$(stat -c %U:%G /etc/cron.deny 2>/dev/null)
+          cron_deny_perm=$(stat -c %a /etc/cron.deny 2>/dev/null)
+          echo "  Owner: $cron_deny_owner"
+          echo "  Permissions: $cron_deny_perm"
+          if [ "$cron_deny_owner" = "root:root" ] && [ $((cron_deny_perm & 0177)) -eq 0 ]; then
+            echo "  Result: PASS - Owner and permissions are correct"
+          else
+            echo "  Result: FAIL - Owner or permissions incorrect"
+          fi
+        else
+          echo "  Result: N/A - /etc/cron.deny does not exist (acceptable)"
+        fi
+        
+        # Overall compliance check
+        if [ -f /etc/cron.allow ] && [ "$cron_allow_owner" = "root:root" ] && [ $((cron_allow_perm & 0177)) -eq 0 ]; then
+          echo ""
+          echo "OVERALL: COMPLIANT"
+          exit 0
+        else
+          echo ""
+          echo "OVERALL: NON-COMPLIANT"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: cron_check.rc == 0
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify remediation with CIS audit"
+        task_3_cmd: "Audit script to check /etc/cron.allow and /etc/cron.deny"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED: cron package is not installed, verification not applicable
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: System is compliant after remediation
+          {% else %}
+            FAILED: System is not compliant after remediation
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED
+          {% elif status_3 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'SKIPPED' and status_2 | trim == 'SKIPPED' and status_3 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'APPLIED' or status_2 | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+
+    # Set overall remediation details
+    - name: Set overall remediation details
+      set_fact:
+        overall_details: >-
+          {% if cron_check.rc != 0 %}
+            SKIPPED: cron package is not installed, remediation not applicable
+          {% elif overall_status | trim == 'APPLIED' %}
+            All remediation tasks completed successfully and system is compliant
+          {% elif overall_status | trim == 'PARTIALLY APPLIED' %}
+            Some remediation tasks succeeded but system may not be fully compliant
+          {% elif overall_status | trim == 'FAILED' %}
+            Remediation failed or system is not compliant
+          {% else %}
+            Could not determine overall status
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.4.1.8"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.8"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

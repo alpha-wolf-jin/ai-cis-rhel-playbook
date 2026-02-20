@@ -1,107 +1,61 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0, checkpoint 5.4.2.6
 - name: Data Collection for CIS 5.4.2.6
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.4.2.6"
-    req_1: "Verify the root user's .bash_profile does NOT contain a umask setting less restrictive than 0027"
-    req_2: "Verify the root user's .bashrc does NOT contain a umask setting less restrictive than 0027"
-    req_3: "OVERALL Verify: Ensure root user umask is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.6"
+    req_1: "Check for non-compliant umask settings in /root/.bash_profile and /root/.bashrc"
+    req_2: "OVERALL Verify: Ensure root user umask is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Verify the root user's .bash_profile does NOT contain a umask setting less restrictive than 0027
-    - name: Req 1 - Check root .bash_profile for permissive umask
-      shell: >
-        grep -Psi -- '^\h*umask\h+((\d{1,2}(\d[^7]|[^2-7]\d)\b)|(u=[rwx]{1,3},)?(((g=[rx]?[rx]?w[rx]?[rx]?\b)(,o=[rwx]{1,3})?)|((g=[wrx]{1,3},)?o=[wrx]{1,3}\b)))' /root/.bash_profile
+    # Requirement 1: Check for non-compliant umask settings in /root/.bash_profile and /root/.bashrc
+    - name: Req 1 - Check for non-compliant umask settings
+      shell: |
+        grep -Psi -- '^\h*umask\h+((\d{1,2}(\d[^7]|[^2-7]\d)\b)|(u=[rwx]{1,3},)?(((g=[rx]?[rx]?w[rx]?[rx]?\b)(,o=[rwx]{1,3})?)|((g=[ wrx]{1,3},)?o=[wrx]{1,3}\b)))' /root/.bash_profile /root/.bashrc
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check root .bash_profile for permissive umask"
+        task_1_name: "Check for non-compliant umask settings in root shell config files"
         task_1_cmd: |
-          grep -Psi -- '^\h*umask\h+((\d{1,2}(\d[^7]|[^2-7]\d)\b)|(u=[rwx]{1,3},)?(((g=[rx]?[rx]?w[rx]?[rx]?\b)(,o=[rwx]{1,3})?)|((g=[wrx]{1,3},)?o=[wrx]{1,3}\b)))' /root/.bash_profile
+          grep -Psi -- '^\h*umask\h+((\d{1,2}(\d[^7]|[^2-7]\d)\b)|(u=[rwx]{1,3},)?(((g=[rx]?[rx]?w[rx]?[rx]?\b)(,o=[rwx]{1,3})?)|((g=[ wrx]{1,3},)?o=[wrx]{1,3}\b)))' /root/.bash_profile /root/.bashrc
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns no output (empty), FAIL when it returns a matching line"
+        rationale_1: "{{ ('PASS: No non-compliant umask settings found' if (result_1.stdout | default('') | trim == '') else 'FAIL: Found non-compliant umask settings') | trim }}"
 
-    # Requirement 2: Verify the root user's .bashrc does NOT contain a umask setting less restrictive than 0027
-    - name: Req 2 - Check root .bashrc for permissive umask
-      shell: >
-        grep -Psi -- '^\h*umask\h+((\d{1,2}(\d[^7]|[^2-7]\d)\b)|(u=[rwx]{1,3},)?(((g=[rx]?[rx]?w[rx]?[rx]?\b)(,o=[rwx]{1,3})?)|((g=[wrx]{1,3},)?o=[wrx]{1,3}\b)))' /root/.bashrc
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: status_1 | trim == 'PASS'
-
-    - name: Store requirement 2 details and determine status
+    # Requirement 2: OVERALL Verify - Ensure root user umask is configured
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check root .bashrc for permissive umask"
-        task_2_cmd: |
-          grep -Psi -- '^\h*umask\h+((\d{1,2}(\d[^7]|[^2-7]\d)\b)|(u=[rwx]{1,3},)?(((g=[rx]?[rx]?w[rx]?[rx]?\b)(,o=[rwx]{1,3})?)|((g=[wrx]{1,3},)?o=[wrx]{1,3}\b)))' /root/.bashrc
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns no output (empty), FAIL when it returns a matching line"
-      when: status_1 | trim == 'PASS'
+        task_2_name: "Overall verification of root umask configuration"
+        task_2_cmd: "N/A (evaluated based on requirement 1)"
+        task_2_rc: 0
+        data_2: "{{ status_1 | default('UNKNOWN') }}"
+        status_2: "{{ status_1 | default('UNKNOWN') }}"
+        rationale_2: "{{ ('PASS: Root user umask is properly configured' if (status_1 | default('UNKNOWN') | trim == 'PASS') else 'FAIL: Root user umask is not properly configured') | trim }}"
 
-    - name: Set requirement 2 as NA when requirement 1 fails
-      set_fact:
-        task_2_name: "Check root .bashrc for permissive umask"
-        task_2_cmd: "N/A - Skipped due to requirement 1 failure"
-        task_2_rc: -1
-        data_2: "Not collected - Skipped due to requirement 1 failure"
-        status_2: "NA"
-        rationale_2: "Skipped because requirement 1 failed (audit procedure: 'If nothing is returned, no further audit steps are required')"
-      when: status_1 | trim != 'PASS'
-
-    # Requirement 3: OVERALL Verify: Ensure root user umask is configured
-    - name: Store requirement 3 details and determine overall status
-      set_fact:
-        status_3: >
-          {{
-            ('PASS' if (
-              (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') or
-              (status_1 | trim == 'PASS' and status_2 | trim == 'NA')
-            ) else 'FAIL') | trim
-          }}
-        rationale_3: "PASS when req_1=PASS AND (req_2=PASS or req_2=NA), FAIL otherwise"
-      when: status_1 | trim == 'PASS'
-
-    - name: Set requirement 3 as FAIL when requirement 1 fails
-      set_fact:
-        status_3: "FAIL"
-        rationale_3: "FAIL because requirement 1 failed"
-      when: status_1 | trim != 'PASS'
-
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.4.2.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -120,12 +74,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ ('PASS when req_1=PASS (no non-compliant umask found), FAIL otherwise' if (status_2 | default('UNKNOWN') | trim == 'PASS') else 'FAIL: Found non-compliant umask settings in root shell configuration files.') | trim }}"
           - "========================================================"

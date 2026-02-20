@@ -2,113 +2,88 @@
 - name: Data Collection for CIS 5.3.3.2.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.3.2.6"
-    req_1: "Verify the dictcheck option is not set to 0 in any pwquality.conf file"
-    req_2: "Verify the dictcheck option is not set to 0 as a module argument in the PAM files"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.6"
+    req_1: "Check that dictcheck is not set to 0 in pwquality.conf files"
+    req_2: "Check that dictcheck is not set to 0 as a module argument in PAM files"
     req_3: "OVERALL Verify: Ensure password dictionary check is enabled"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_1: "UNKNOWN"
-        status_2: "NA"
-        status_3: "UNKNOWN"
-        rationale_1: "Not evaluated"
-        rationale_2: "Task not executed - Requirement 1 passed (no dictcheck=0 found in pwquality.conf)"
-        rationale_3: "Not evaluated"
 
-    # Requirement 1: Verify the dictcheck option is not set to 0 in any pwquality.conf file
-    - name: Req 1 - Check pwquality.conf for dictcheck=0
-      shell: >
+    # Requirement 1: Check that dictcheck is not set to 0 in pwquality.conf files
+    - name: "Req 1 - Check dictcheck in pwquality.conf files"
+      shell: |
+        {% raw %}
         grep -Psi -- '^\h*dictcheck\h*=\h*0\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check pwquality.conf for dictcheck=0"
+        task_1_name: "Check dictcheck in pwquality.conf files"
         task_1_cmd: |
           grep -Psi -- '^\h*dictcheck\h*=\h*0\b' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the command returns no output (empty), FAIL when any line matching dictcheck=0 is found"
+        rationale_1: "{{ ('PASS when command returns no output (dictcheck is not disabled), FAIL when any line matching dictcheck=0 is found' if (result_1.stdout | default('') | trim == '') else 'FAIL: dictcheck is disabled (set to 0) in pwquality.conf files') | trim }}"
 
-    # Requirement 2: Verify the dictcheck option is not set to 0 as a module argument in the PAM files
-    # Only execute if Requirement 1 found dictcheck=0 (CIS procedure: if Requirement 1 returns output, continue checking)
-    - name: Req 2 - Check PAM files for dictcheck=0
-      shell: >
+    # Requirement 2: Check that dictcheck is not set to 0 as a module argument in PAM files
+    - name: "Req 2 - Check dictcheck in PAM module arguments"
+      shell: |
+        {% raw %}
         grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?dictcheck\h*=\h*0\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim | length > 0
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check PAM files for dictcheck=0"
+        task_2_name: "Check dictcheck in PAM module arguments"
         task_2_cmd: |
           grep -Psi -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwquality\.so\h+([^#\n\r]+\h+)?dictcheck\h*=\h*0\b' /etc/pam.d/system-auth /etc/pam.d/password-auth
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when the command returns no output (empty), FAIL when any pam_pwquality.so line with dictcheck=0 is found"
-      when: data_1 | trim | length > 0
+        rationale_2: "{{ ('PASS when command returns no output (dictcheck is not disabled via PAM arguments), FAIL when any line matching dictcheck=0 is found' if (result_2.stdout | default('') | trim == '') else 'FAIL: dictcheck is disabled (set to 0) in PAM module arguments') | trim }}"
 
     # Requirement 3: OVERALL Verify: Ensure password dictionary check is enabled
-    - name: Store requirement 3 details and determine overall status
+    - name: "Req 3 - Overall verification"
       set_fact:
         task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
+        task_3_cmd: "N/A (evaluated from previous checks)"
         task_3_rc: 0
-        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
-        status_3: >
-          {{
-            (
-              'PASS' if
-              (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') or
-              (status_1 | trim == 'PASS' and status_2 | trim == 'NA')
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_3: >
-          {{
-            (
-              'PASS when req_1=PASS AND (req_2=PASS or req_2=NA), FAIL otherwise. ' +
-              'Note: req_2=NA when req_1 passes (no dictcheck=0 found in pwquality.conf) - ' +
-              'per CIS procedure, no further audit steps are required when req_1 returns empty output.'
-            ) | trim
-          }}
+        data_3: "Requirement 1: {{ status_1 }}, Requirement 2: {{ status_2 }}"
+        status_3: "{{ ('PASS' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL') | trim }}"
+        rationale_3: "{{ ('PASS when both requirement 1 and 2 pass (dictcheck is not disabled in any configuration file or PAM argument)' if (status_1 == 'PASS' and status_2 == 'PASS') else 'FAIL: dictcheck is disabled in one or more configuration sources') | trim }}"
 
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.3.3.2.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.6"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -124,7 +99,7 @@
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"

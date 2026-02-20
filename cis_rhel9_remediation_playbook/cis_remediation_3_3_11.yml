@@ -1,0 +1,266 @@
+---
+- name: Remediation for CIS 3.3.11
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_3_3_11"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.11"
+    req_1: "Check if IPv6 is enabled on the system"
+    req_2: "Run the provided CIS remediation script to fix Ensure ipv6 router advertisements are not accepted"
+    req_3: "Verify the remediation by running the audit check for Ensure ipv6 router advertisements are not accepted"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Restore /etc/sysctl.d/60-netipv6_sysctl.conf from backup
+      copy:
+        src: "{{ state_guard_dir }}/60-netipv6_sysctl.conf.present"
+        dest: "/etc/sysctl.d/60-netipv6_sysctl.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Delete /etc/sysctl.d/60-netipv6_sysctl.conf if created
+      file:
+        path: "/etc/sysctl.d/60-netipv6_sysctl.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/sysctl.d/60-netipv6_sysctl.conf exists
+      stat:
+        path: "/etc/sysctl.d/60-netipv6_sysctl.conf"
+      register: _sg_conf_stat
+
+    - name: State Guard - Backup /etc/sysctl.d/60-netipv6_sysctl.conf if present
+      copy:
+        src: "/etc/sysctl.d/60-netipv6_sysctl.conf"
+        dest: "{{ state_guard_dir }}/60-netipv6_sysctl.conf.present"
+        remote_src: true
+      when: _sg_conf_stat.stat.exists
+
+    - name: State Guard - Mark /etc/sysctl.d/60-netipv6_sysctl.conf as absent if not exist
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/60-netipv6_sysctl.conf.absent"
+      when: not _sg_conf_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    - name: "Req 1 - Check if IPv6 is enabled"
+      shell: |
+        # Simple check: if any IPv6 interface exists
+        if [ -d /proc/sys/net/ipv6 ] && ls /proc/sys/net/ipv6/conf/*/accept_ra 2>/dev/null | grep -q .; then
+          echo "IPv6 is enabled"
+          exit 0
+        else
+          echo "IPv6 is not enabled or not fully configured"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if IPv6 is enabled on system"
+        task_1_cmd: "Check if /proc/sys/net/ipv6/conf/*/accept_ra files exist"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc == 1 else 'APPLIED' if result_1.rc == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('IPv6 not enabled, skipping remediation' if result_1.rc == 1 else 'IPv6 is enabled, proceeding with remediation' if result_1.rc == 0 else 'Failed to determine IPv6 status') | trim }}"
+
+    - name: "Req 2 - Capture current sysctl configuration before remediation"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/sysctl.d/60-netipv6_sysctl.conf 2>/dev/null || echo "File does not exist"
+        echo ""
+        echo "=== CURRENT SYSCTL VALUES ==="
+        sysctl net.ipv6.conf.all.accept_ra net.ipv6.conf.default.accept_ra 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: before_config
+      when: result_1.rc == 0
+      ignore_errors: true
+
+    - name: "Req 2 - Create configuration file with required settings"
+      shell: |
+        printf '%s\n' "net.ipv6.conf.all.accept_ra = 0" >> /etc/sysctl.d/60-netipv6_sysctl.conf
+        printf '%s\n' "net.ipv6.conf.default.accept_ra = 0" >> /etc/sysctl.d/60-netipv6_sysctl.conf
+      args:
+        executable: /bin/bash
+      when: result_1.rc == 0
+      ignore_errors: true
+
+    - name: "Req 2 - Execute CIS remediation script"
+      shell: |
+        {% raw %}
+        #!/usr/bin/env bash
+        {
+           sysctl -w net.ipv6.conf.all.accept_ra=0
+           sysctl -w net.ipv6.conf.default.accept_ra=0
+           sysctl -w net.ipv6.route.flush=1
+        }
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: script_result
+      when: result_1.rc == 0
+      ignore_errors: true
+
+    - name: "Req 2 - Capture after configuration"
+      shell: |
+        echo "=== AFTER ==="
+        cat /etc/sysctl.d/60-netipv6_sysctl.conf 2>/dev/null || echo "File does not exist"
+        echo ""
+        echo "=== UPDATED SYSCTL VALUES ==="
+        sysctl net.ipv6.conf.all.accept_ra net.ipv6.conf.default.accept_ra 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: after_config
+      when: result_1.rc == 0
+      ignore_errors: true
+
+    - name: "Req 2 - Combine data for report"
+      set_fact:
+        combined_data_2: |
+          {{ before_config.stdout | default('') | trim }}
+          {{ after_config.stdout | default('') | trim }}
+          Script output: {{ script_result.stdout | default('') | trim }}
+      when: result_1.rc == 0
+
+    - name: Store requirement 2 details when IPv6 enabled
+      set_fact:
+        task_2_name: "Apply CIS remediation script and configuration"
+        task_2_cmd: "Append settings to /etc/sysctl.d/60-netipv6_sysctl.conf and run sysctl commands"
+        task_2_rc: "{{ script_result.rc | default(-1) }}"
+        data_2: "{{ combined_data_2 | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if script_result.rc == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('Configuration updated and sysctl values set successfully' if script_result.rc == 0 else 'Failed to apply configuration or set sysctl values') | trim }}"
+      when: result_1.rc == 0
+
+    - name: Store requirement 2 details when IPv6 disabled
+      set_fact:
+        task_2_name: "Apply CIS remediation script and configuration"
+        task_2_cmd: "N/A - IPv6 not enabled"
+        task_2_rc: 0
+        data_2: "IPv6 not enabled - remediation not applicable"
+        status_2: "SKIPPED"
+        rationale_2: "IPv6 is not enabled on the system, skipping remediation"
+      when: result_1.rc == 1
+
+    - name: "Req 3 - Verify remediation by checking current sysctl values"
+      shell: |
+        sysctl net.ipv6.conf.all.accept_ra net.ipv6.conf.default.accept_ra 2>/dev/null || echo "Cannot read sysctl values"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify sysctl parameters are set to 0"
+        task_3_cmd: "sysctl net.ipv6.conf.all.accept_ra net.ipv6.conf.default.accept_ra"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output is search('net.ipv6.conf.all.accept_ra = 0') and output is search('net.ipv6.conf.default.accept_ra = 0') %}
+            APPLIED
+          {% elif result_1.rc == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output is search('net.ipv6.conf.all.accept_ra = 0') and output is search('net.ipv6.conf.default.accept_ra = 0') %}
+            Verification passed: both parameters are set to 0
+          {% elif result_1.rc == 1 %}
+            IPv6 not enabled - verification not applicable
+          {% else %}
+            Verification failed: one or both parameters are not set to 0
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 3.3.11"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.11"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

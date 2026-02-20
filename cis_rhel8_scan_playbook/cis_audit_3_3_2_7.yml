@@ -1,57 +1,91 @@
 ---
-- name: Data Collection for CIS checkpoint 3.3.2.7
+- name: Data Collection for CIS 3.3.2.7 - Ensure net.ipv6.conf.all.accept_ra is configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.2.7"
-    req_1: "Verify net.ipv6.conf.all.accept_ra is set to 0 in the running configuration using command: sysctl net.ipv6.conf.all.accept_ra"
-    req_2: "Run script to verify net.ipv6.conf.all.accept_ra = 0 is set in a file being used by systemd sysctl"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.7"
+    req_1: "Run the following command to verify net.ipv6.conf.all.accept_ra is set to 0 in the running configuration"
+    req_2: "Run the following script to verify net.ipv6.conf.all.accept_ra = 0 is set in a file being used by systemd sysctl to configure net.ipv6.conf.all.accept_ra"
     req_3: "OVERALL Verify: Ensure net.ipv6.conf.all.accept_ra is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        ipv6_enabled: false
 
-    # Requirement 1: Verify net.ipv6.conf.all.accept_ra is set to 0 in the running configuration
-    - name: "Req 1 - Check running sysctl value"
+    # Check if IPv6 is enabled on the system
+    - name: Check if IPv6 is enabled on the system
+      shell: |
+        # Check if IPv6 is disabled at the system level
+        if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
+          cat /proc/sys/net/ipv6/conf/all/disable_ipv6
+        else
+          echo "1"
+        fi
+      args:
+        executable: /bin/bash
+      register: ipv6_status_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set IPv6 enabled status
+      set_fact:
+        ipv6_enabled: "{{ (ipv6_status_check.stdout | default('1') | trim == '0') }}"
+        ipv6_status_output: "{{ ipv6_status_check.stdout | default('') | trim }}"
+
+    # Requirement 1: Check running configuration - ONLY if IPv6 is enabled
+    - name: "Req 1 - Check running configuration for net.ipv6.conf.all.accept_ra"
       shell: sysctl net.ipv6.conf.all.accept_ra
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: ipv6_enabled
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl value"
+        task_1_name: "Check running configuration for net.ipv6.conf.all.accept_ra"
         task_1_cmd: "sysctl net.ipv6.conf.all.accept_ra"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv6.conf.all.accept_ra = 0') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'net.ipv6.conf.all.accept_ra = 0', FAIL otherwise"
+        status_1: >-
+          {% if not ipv6_enabled %}
+            NA
+          {% else %}
+            {% set output = result_1.stdout | default('') | trim %}
+            {% if output == 'net.ipv6.conf.all.accept_ra = 0' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% if not ipv6_enabled %}
+            IPv6 is not enabled on the system
+          {% else %}
+            PASS when output is exactly 'net.ipv6.conf.all.accept_ra = 0', FAIL otherwise
+          {% endif %}
 
-    # Requirement 2: Run script to verify net.ipv6.conf.all.accept_ra = 0 is set in sysctl config files
-    - name: "Req 2 - Create temporary audit script"
+    # Requirement 2: Execute CIS audit script for configuration files - ONLY if IPv6 is enabled
+    - name: "Req 2 - Execute CIS audit script for net.ipv6.conf.all.accept_ra configuration files"
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_3.3.2.7.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
              l_parameter_name="net.ipv6.conf.all.accept_ra"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
@@ -77,41 +111,84 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
+      register: script_create_2
+      ignore_errors: true
+      when: ipv6_enabled
 
-    - name: "Req 2 - Execute audit script"
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: "Req 2 - Execute the audit script"
+      shell: "/tmp/cis_audit_3.3.2.7.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
+      when: ipv6_enabled
 
     - name: "Req 2 - Remove temporary audit script"
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_3.3.2.7.sh"
         state: absent
       ignore_errors: true
+      when: ipv6_enabled
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sysctl configuration files"
-        task_2_cmd: "Complex bash script (see audit procedure)"
+        task_2_name: "Execute CIS audit script for net.ipv6.conf.all.accept_ra configuration files"
+        task_2_cmd: "Execute the provided bash script"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim != '' and 'net.ipv6.conf.all.accept_ra = 0' in result_2.stdout) else 'FAIL') | trim }}"
-        rationale_2: "PASS when the script outputs that 'net.ipv6.conf.all.accept_ra = 0' is set in at least one sysctl configuration file, FAIL if it outputs a different value or finds no configuration"
+        status_2: >-
+          {% if not ipv6_enabled %}
+            NA
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if output == '' %}
+              FAIL
+            {% else %}
+              {% set lines = output.split('\n') %}
+              {% set first_line = '' %}
+              {% for line in lines %}
+                {% if 'net.ipv6.conf.all.accept_ra' in line and line.strip() and first_line == '' %}
+                  {% set first_line = line %}
+                {% endif %}
+              {% endfor %}
+              {% if '"net.ipv6.conf.all.accept_ra = 0"' in first_line %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if not ipv6_enabled %}
+            IPv6 is not enabled on the system
+          {% else %}
+            PASS when script output shows net.ipv6.conf.all.accept_ra = 0 is set in the first returned file (systemd sysctl precedence), FAIL otherwise
+          {% endif %}
 
-    # Requirement 3: OVERALL Verify
-    - name: Store requirement 3 details and determine overall status
+    # Requirement 3: Overall verify - FIXED: When IPv6 is disabled, system is COMPLIANT (PASS)
+    - name: "Req 3 - Overall verify net.ipv6.conf.all.accept_ra is configured"
       set_fact:
-        task_3_name: "Overall verification"
-        task_3_cmd: "N/A - Combined check"
+        task_3_name: "Overall verify net.ipv6.conf.all.accept_ra is configured"
+        task_3_cmd: "N/A"
         task_3_rc: 0
-        data_3: "Combined results from req_1 and req_2"
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+        data_3: "Combined result of req_1 and req_2"
+        status_3: >-
+          {% if not ipv6_enabled %}
+            PASS
+          {% else %}
+            {% if (status_1 | trim == 'PASS') and (status_2 | trim == 'PASS') %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if not ipv6_enabled %}
+            System is compliant because IPv6 is disabled - control only applies when IPv6 is enabled
+          {% else %}
+            PASS when both req_1 and req_2 are PASS, FAIL otherwise
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -120,8 +197,9 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.2.7"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.7"
           - "========================================================"
+          - "IPv6 Status: {{ 'Enabled' if ipv6_enabled else 'Disabled' }} (disable_ipv6={{ ipv6_status_output | default('Not checked') }})"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
           - "  Task: {{ task_1_name | default('Task not recorded') }}"

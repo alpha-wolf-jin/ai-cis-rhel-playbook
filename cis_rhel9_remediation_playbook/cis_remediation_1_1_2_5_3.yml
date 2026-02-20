@@ -1,0 +1,338 @@
+---
+- name: Remediation for CIS 1.1.2.5.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_5_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.5.3"
+    req_1: "Check if /var/tmp is a separate partition by examining /etc/fstab. Expected result: Determine if a dedicated mount point for /var/tmp exists."
+    req_2: "IF a separate partition for /var/tmp exists in /etc/fstab, edit the /etc/fstab file and add 'nosuid' to the fourth field (mount options) for the /var/tmp partition line. Expected result: The /var/tmp partition line in /etc/fstab includes the 'nosuid' option."
+    req_3: "IF the /etc/fstab was modified, remount the /var/tmp partition using command: mount -o remount /var/tmp. Expected result: The /var/tmp partition is remounted with the updated options including 'nosuid'."
+    req_4: "VERIFY: Confirm the 'nosuid' option is set on the /var/tmp mount using command: mount | grep ' /var/tmp '. Expected result: The output shows the /var/tmp mount includes the 'nosuid' option."
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remount /var/tmp to undo previous changes"
+      shell: mount -o remount /var/tmp
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    - name: "Req 1 - Check if /var/tmp is a separate partition"
+      shell: |
+        grep -E '^[^#].*[[:space:]]+/var/tmp[[:space:]]+' /etc/fstab || echo "No separate /var/tmp partition found in /etc/fstab"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check for /var/tmp partition in /etc/fstab"
+        task_1_cmd: "grep -E '^[^#].*[[:space:]]+/var/tmp[[:space:]]+' /etc/fstab || echo 'No separate /var/tmp partition found in /etc/fstab'"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and 'No separate' not in output %}
+            APPLIED
+          {% elif output != '' and 'No separate' in output %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and 'No separate' not in output %}
+            APPLIED: Found /var/tmp partition in /etc/fstab
+          {% elif output != '' and 'No separate' in output %}
+            SKIPPED: No separate partition for /var/tmp exists in /etc/fstab
+          {% else %}
+            FAILED: Could not check /etc/fstab
+          {% endif %}
+        _tmp_partition_line: "{{ result_1.stdout | default('') | trim }}"
+        _has_separate_partition: "{{ ('No separate' not in result_1.stdout and result_1.stdout | default('') | trim != '') | string | lower }}"
+
+    - name: "Req 2 - Add nosuid option to /var/tmp partition in /etc/fstab"
+      shell: |
+        {% raw %}
+        echo "=== BEFORE ==="
+        cat /etc/fstab
+        echo "=== APPLYING CHANGE ==="
+        # Check if /var/tmp line exists and doesnt already have nosuid
+        if grep -E '^[^#].*[[:space:]]+/var/tmp[[:space:]]+' /etc/fstab | grep -q 'nosuid'; then
+          echo "nosuid option already present, no change needed"
+        else
+          # Backup current fstab
+          cp /etc/fstab /etc/fstab.cis_backup
+          # Add nosuid option to the /var/tmp line
+          awk '$0 ~ /^[^#].*[[:space:]]+\/var\/tmp[[:space:]]+/ { 
+            split($0, parts, /[[:space:]]+/);
+            opts = parts[4];
+            if (opts !~ /nosuid/) {
+              if (opts ~ /defaults/) {
+                sub(/defaults/, "defaults,nosuid", opts);
+              } else {
+                opts = opts ",nosuid";
+              }
+              parts[4] = opts;
+              $0 = sprintf("%s\t%s\t%s\t%s\t%s\t%s", parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]);
+            }
+          } { print }' /etc/fstab > /etc/fstab.new
+          if diff -u /etc/fstab /etc/fstab.new > /dev/null 2>&1; then
+            echo "No changes made to /etc/fstab"
+            rm -f /etc/fstab.new
+          else
+            mv /etc/fstab.new /etc/fstab
+            echo "Updated /etc/fstab with nosuid option for /var/tmp"
+          fi
+        fi
+        echo "=== AFTER ==="
+        cat /etc/fstab
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "_has_separate_partition == 'true'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Add nosuid option to /var/tmp mount in /etc/fstab"
+        task_2_cmd: "Update /etc/fstab with nosuid option for /var/tmp partition line"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim if result_2 is defined else 'SKIPPED: No separate /var/tmp partition' }}"
+        status_2: >-
+          {% if result_2 is not defined or result_2.rc is not defined %}
+            SKIPPED
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if 'Updated /etc/fstab' in output or 'nosuid option already present' in output %}
+              APPLIED
+            {% elif 'No changes made' in output %}
+              FAILED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if result_2 is not defined or result_2.rc is not defined %}
+            SKIPPED: No separate /var/tmp partition exists in /etc/fstab
+          {% else %}
+            {% set output = result_2.stdout | default('') | trim %}
+            {% if 'Updated /etc/fstab' in output %}
+              APPLIED: Added nosuid option to /var/tmp mount in /etc/fstab
+            {% elif 'nosuid option already present' in output %}
+              APPLIED: nosuid option already present, no change needed
+            {% elif 'No changes made' in output %}
+              FAILED: Could not add nosuid option to /etc/fstab
+            {% else %}
+              FAILED: Error updating /etc/fstab
+            {% endif %}
+          {% endif %}
+        _fstab_changed: "{{ 'Updated /etc/fstab' in result_2.stdout | default('') }}"
+
+    - name: "Req 3 - Remount /var/tmp with updated options"
+      shell: |
+        {% raw %}
+        echo "Remounting /var/tmp..."
+        mount -o remount /var/tmp
+        echo "Exit code: $?"
+        echo "Current mount:"
+        mount | grep ' /var/tmp ' || echo "No /var/tmp mount found"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "_has_separate_partition == 'true' and _fstab_changed == 'true'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remount /var/tmp partition"
+        task_3_cmd: "mount -o remount /var/tmp"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim if result_3 is defined else 'SKIPPED: No /etc/fstab change needed' }}"
+        status_3: >-
+          {% if result_3 is not defined or result_3.rc is not defined %}
+            SKIPPED
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if result_3 is not defined or result_3.rc is not defined %}
+            SKIPPED: No change to /etc/fstab was needed
+          {% else %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED: Successfully remounted /var/tmp with updated options
+            {% else %}
+              FAILED: Could not remount /var/tmp
+            {% endif %}
+          {% endif %}
+
+    - name: "Req 4 - Verify nosuid option is set on /var/tmp mount"
+      shell: |
+        {% raw %}
+        mount | grep ' /var/tmp ' || echo "No /var/tmp mount found"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify nosuid option on /var/tmp mount"
+        task_4_cmd: "mount | grep ' /var/tmp '"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif output != '' and 'nosuid' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: No separate /var/tmp partition exists
+          {% elif output != '' and 'nosuid' in output %}
+            APPLIED: /var/tmp mount includes nosuid option
+          {% else %}
+            FAILED: /var/tmp mount does not include nosuid option or could not verify
+          {% endif %}
+
+    - name: Set overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            No separate /var/tmp partition exists - remediation not applicable
+          {% elif status_4 | trim == 'APPLIED' %}
+            /var/tmp mount includes nosuid option as required
+          {% else %}
+            Failed to apply or verify nosuid option on /var/tmp mount
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.5.3"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

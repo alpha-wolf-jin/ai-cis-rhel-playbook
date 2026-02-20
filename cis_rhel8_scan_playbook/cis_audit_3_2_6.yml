@@ -1,28 +1,23 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.2.6 - Ensure tipc kernel module is not available
-# Note: All audit tasks use ignore_errors: true and failed_when: false to ensure all checks complete
-
-- name: Data Collection for CIS checkpoint 3.2.6
+- name: Data Collection for CIS 3.2.6 - Ensure tipc kernel module is not available
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.2.6"
-    req_1: "Run the following script to verify the tipc kernel module does NOT exist in the filesystem"
-    req_2: "If the script in req_1 returns output (module exists in filesystem), verify the tipc kernel module is NOT loaded using command: lsmod | grep 'tipc'"
-    req_3: |
-      If the script in req_1 returns output (module exists in filesystem), verify the tipc kernel module is blacklisted using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
-    req_4: |
-      If the script in req_1 returns output (module exists in filesystem), verify the tipc kernel module is configured to fail installation using command: modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
-    req_5: "OVERALL Verify: Ensure tipc kernel module is not available"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.2.6"
+    req_1: "Run the provided CIS audit script to determine if tipc kernel module is available"
+    req_2: "Verify tipc kernel module is not loaded and not loadable"
+    req_3: "OVERALL VERIFY - Ensure tipc kernel module is not available"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
-        data_2: "Not collected yet"
-        data_3: "Not collected yet"
-        data_4: "Not collected yet"
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
@@ -32,14 +27,11 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
 
-    # Requirement 1: Run the following script to verify the tipc kernel module does NOT exist in the filesystem
-    - name: Req 1 - Create temporary audit script for tipc module check
+    # Requirement 1: Run the provided CIS audit script
+    - name: Req 1 - Create CIS audit script for tipc module check
       copy:
-        dest: "/tmp/cis_audit_script_1.sh"
+        dest: "/tmp/cis_tipc_module_check.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -55,114 +47,128 @@
              || readlink -e /lib/modules/**/kernel/$l_mod_type)
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
+      ignore_errors: true
 
-    - name: Req 1 - Execute audit script for tipc module check
-      shell: "/tmp/cis_audit_script_1.sh"
+    - name: Req 1 - Execute the CIS audit script
+      shell: "/tmp/cis_tipc_module_check.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_1.sh"
+        path: "/tmp/cis_tipc_module_check.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if tipc kernel module exists in filesystem"
-        task_1_cmd: "Script to search for tipc module in /usr/lib/modules and /lib/modules"
+        task_1_name: "Execute CIS audit script for tipc module availability"
+        task_1_cmd: "Complete bash script from CIS benchmark"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when script returns no output (module not found) OR the system includes tipc as part of the kernel (built-in), FAIL when script returns output indicating the module exists in the filesystem"
+        status_1: "{{ ('FAIL' if (result_1.stdout | default('') | trim != '') else 'PASS') | trim }}"
+        rationale_1: "{{ ('FAIL: tipc module appears to be available as a kernel module' if (result_1.stdout | default('') | trim != '') else 'PASS: tipc module not available on the system') | trim }}"
 
-    # Requirement 2: If the script in req_1 returns output (module exists in filesystem), verify the tipc kernel module is NOT loaded
-    - name: Req 2 - Check if tipc module is loaded
+    # Requirement 2: Verify module not loaded and not loadable (only if req_1 found module)
+    - name: Req 2 - Check if tipc module is loaded and loadable
       shell: |
-        lsmod | grep 'tipc'
+        # Run the two checks
+        echo "=== lsmod output ==="
+        lsmod | grep 'tipc' || echo "No output"
+        echo "=== modprobe config output ==="
+        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b' || echo "No output"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: data_1 | trim != ''
+      when: data_1 | trim != ""
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details when executed
       set_fact:
-        task_2_name: "Check if tipc kernel module is loaded"
-        task_2_cmd: "lsmod | grep 'tipc'"
+        task_2_name: "Verify tipc module not loaded and not loadable"
+        task_2_cmd: |
+          lsmod | grep 'tipc'; modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when command returns no output, FAIL when output is returned"
-      when: data_1 | trim != ''
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lsmod_output = output.split('=== lsmod output ===')[1].split('=== modprobe config output ===')[0] | trim if '=== lsmod output ===' in output else '' %}
+            {% set modprobe_output = output.split('=== modprobe config output ===')[1] | trim if '=== modprobe config output ===' in output else '' %}
+            {% if lsmod_output == 'No output' and ('blacklist tipc' in modprobe_output) and ('install tipc /bin/false' in modprobe_output or 'install tipc /bin/true' in modprobe_output) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set lsmod_output = output.split('=== lsmod output ===')[1].split('=== modprobe config output ===')[0] | trim if '=== lsmod output ===' in output else '' %}
+            {% set modprobe_output = output.split('=== modprobe config output ===')[1] | trim if '=== modprobe config output ===' in output else '' %}
+            {% if lsmod_output == 'No output' and ('blacklist tipc' in modprobe_output) and ('install tipc /bin/false' in modprobe_output or 'install tipc /bin/true' in modprobe_output) %}
+              PASS: Module not loaded and properly blacklisted/disabled
+            {% else %}
+              FAIL: Module is either loaded or not properly disabled (expected: lsmod empty, blacklist tipc, and install tipc /bin/false or /bin/true)
+            {% endif %}
+          {% else %}
+            NA: Requirement not executed because module not found in step 1
+          {% endif %}
+      when: data_1 | trim != ""
 
-    # Requirement 3: If the script in req_1 returns output (module exists in filesystem), verify the tipc kernel module is blacklisted
-    - name: Req 3 - Check if tipc module is blacklisted
-      shell: |
-        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
-      args:
-        executable: /bin/bash
-      register: result_3
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim != ''
-
-    - name: Store requirement 3 details and determine status
+    - name: Set default status for requirement 2 when not executed
       set_fact:
-        task_3_name: "Check if tipc kernel module is blacklisted"
-        task_3_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim | length > 0 and 'blacklist tipc' in result_3.stdout) else 'FAIL') | trim }}"
-        rationale_3: "PASS when output includes 'blacklist tipc', FAIL otherwise"
-      when: data_1 | trim != ''
+        task_2_name: "Verify tipc module not loaded and not loadable"
+        task_2_cmd: "N/A - Not executed (module not available)"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "NA"
+        rationale_2: "NA: Requirement not executed because module not found in step 1"
+      when: data_1 | trim == ""
 
-    # Requirement 4: If the script in req_1 returns output (module exists in filesystem), verify the tipc kernel module is configured to fail installation
-    - name: Req 4 - Check if tipc module is configured to fail installation
-      shell: |
-        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
-      args:
-        executable: /bin/bash
-      register: result_4
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-      when: data_1 | trim != ''
-
-    - name: Store requirement 4 details and determine status
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_4_name: "Check if tipc kernel module is configured to fail installation"
-        task_4_cmd: |
-          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+tipc\b'
-        task_4_rc: "{{ result_4.rc | default(-1) }}"
-        data_4: "{{ result_4.stdout | default('') | trim }}"
-        status_4: "{{ ('PASS' if (result_4.stdout | default('') | trim | length > 0 and ('install tipc /bin/false' in result_4.stdout or 'install tipc /bin/true' in result_4.stdout)) else 'FAIL') | trim }}"
-        rationale_4: "PASS when output includes 'install tipc /bin/false' OR 'install tipc /bin/true', FAIL otherwise"
-      when: data_1 | trim != ''
+        task_3_name: "Overall compliance verification"
+        task_3_cmd: "N/A - Derived from requirements 1 and 2"
+        task_3_rc: 0
+        data_3: ""
+        status_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS: tipc module not available on the system
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' %}
+            PASS: tipc module available but properly disabled (not loaded and blacklisted)
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'FAIL' %}
+            FAIL: tipc module available and not properly disabled
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim == 'NA' %}
+            FAIL: tipc module available but requirement 2 was not executed properly
+          {% else %}
+            UNKNOWN: Cannot determine overall compliance status
+          {% endif %}
 
-    # Requirement 5: OVERALL Verify: Ensure tipc kernel module is not available
-    - name: Store requirement 5 details and determine overall status
-      set_fact:
-        status_5: "{{ ('PASS' if (status_1 | trim == 'PASS') or (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' and status_4 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_5: "PASS when (req_1=PASS) OR (req_1=FAIL AND req_2=PASS AND req_3=PASS AND req_4=PASS), FAIL otherwise"
-
-    # Final report
+    # Final compliance report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.2.6"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -174,35 +180,23 @@
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Task: {{ task_2_name | default('Task not executed') }}"
           - "  Command: {{ task_2_cmd | default('N/A') }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Task skipped - req_1 returned no output') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Task: {{ task_3_name | default('Task not executed') }}"
           - "  Command: {{ task_3_cmd | default('N/A') }}"
           - "  Exit code: {{ task_3_rc | default(-1) }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Task skipped - req_1 returned no output') | trim }}"
-          - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('NA') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Task skipped - req_1 returned no output') | trim }}"
-          - ""
-          - "REQUIREMENT 5 - {{ req_5 }}:"
-          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

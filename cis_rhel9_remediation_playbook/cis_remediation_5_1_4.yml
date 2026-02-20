@@ -1,0 +1,415 @@
+---
+- name: Remediation for CIS 5.1.4 - Ensure sshd Ciphers are configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.4"
+    req_1: "Check if openssh-server is installed"
+    req_2: "Apply system-wide crypto policy to disable weak SSH ciphers by creating or editing a policy module file"
+    req_3: "Update the active system-wide cryptographic policy to include the new module"
+    req_4: "Reload the SSH service to apply the new cryptographic settings"
+    req_5: "Verify the remediation by running audit check"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore policy module file if previously backed up"
+      copy:
+        src: "{{ state_guard_dir }}/NO-SSHWEAKCIPHERS.pmod.present"
+        dest: "/etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete policy module file if it was created"
+      file:
+        path: "/etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore crypto policy config file from backup"
+      copy:
+        src: "{{ state_guard_dir }}/config.present"
+        dest: "/etc/crypto-policies/config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Apply restored crypto policy"
+      shell: |
+        if [ -f /etc/crypto-policies/config ] && [ -s /etc/crypto-policies/config ]; then
+          update-crypto-policies --set $(cat /etc/crypto-policies/config)
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if policy module file exists"
+      stat:
+        path: "/etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod"
+      register: _sg_pmod_stat
+
+    - name: "State Guard - Backup policy module file if present"
+      copy:
+        src: "/etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod"
+        dest: "{{ state_guard_dir }}/NO-SSHWEAKCIPHERS.pmod.present"
+        remote_src: true
+      when: _sg_pmod_stat.stat.exists
+
+    - name: "State Guard - Mark policy module file as absent if not present"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/NO-SSHWEAKCIPHERS.pmod.absent"
+      when: not _sg_pmod_stat.stat.exists
+
+    - name: "State Guard - Check if crypto policy config file exists"
+      stat:
+        path: "/etc/crypto-policies/config"
+      register: _sg_config_stat
+
+    - name: "State Guard - Backup crypto policy config file if present"
+      copy:
+        src: "/etc/crypto-policies/config"
+        dest: "{{ state_guard_dir }}/config.present"
+        remote_src: true
+      when: _sg_config_stat.stat.exists
+
+    - name: "State Guard - Mark crypto policy config file as absent if not present"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/config.absent"
+      when: not _sg_config_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    - name: "Req 1 - Check if openssh-server is installed"
+      shell: rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check openssh-server installation"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: openssh-server is installed
+          {% else %}
+            SKIPPED: openssh-server is not installed on this server, remediation not applicable
+          {% endif %}
+
+    - name: Set skip flag if openssh-server is not installed
+      set_fact:
+        skip_remaining: true
+      when: "result_1.rc | default(-1) != 0"
+
+    - name: "Req 2 - Create or edit policy module file with weak cipher exclusions"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        printf '%s\n' '# This is a subpolicy to disable weak ciphers' '# for the SSH protocol (libssh and OpenSSH)' 'cipher@SSH = -3DES-CBC -AES-128-CBC -AES-192-CBC -AES-256-CBC -CHACHA20-POLY1305' >> /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod
+        echo "=== AFTER ==="
+        cat /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod
+      args:
+        executable: /bin/bash
+      when: "skip_remaining is not defined"
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Create/update policy module file"
+        task_2_cmd: |
+          printf '%s\n' '# This is a subpolicy to disable weak ciphers' '# for the SSH protocol (libssh and OpenSSH)' 'cipher@SSH = -3DES-CBC -AES-128-CBC -AES-192-CBC -AES-256-CBC -CHACHA20-POLY1305' >> /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: policy module file updated' if result_2.rc | default(-1) == 0 else 'FAILED: could not update policy module file') | trim }}"
+      when: "skip_remaining is not defined"
+
+    - name: "Req 3 - Check for available crypto policy modules and update policy"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/crypto-policies/config 2>/dev/null || echo "Config file does not exist"
+        
+        echo "=== CHECKING AVAILABLE MODULES ==="
+        # Check which modules exist
+        modules="DEFAULT"
+        if [ -f /etc/crypto-policies/policies/modules/NO-SHA1.pmod ]; then
+          echo "Found NO-SHA1.pmod"
+          modules="${modules}:NO-SHA1"
+        else
+          echo "Module NO-SHA1.pmod not found, skipping"
+        fi
+        
+        if [ -f /etc/crypto-policies/policies/modules/NO-WEAKMAC.pmod ]; then
+          echo "Found NO-WEAKMAC.pmod"
+          modules="${modules}:NO-WEAKMAC"
+        else
+          echo "Module NO-WEAKMAC.pmod not found, skipping"
+        fi
+        
+        if [ -f /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod ]; then
+          echo "Found NO-SSHCBC.pmod"
+          modules="${modules}:NO-SSHCBC"
+        else
+          echo "Module NO-SSHCBC.pmod not found, skipping"
+        fi
+        
+        if [ -f /etc/crypto-policies/policies/modules/NO-SSHCHACHA20.pmod ]; then
+          echo "Found NO-SSHCHACHA20.pmod"
+          modules="${modules}:NO-SSHCHACHA20"
+        else
+          echo "Module NO-SSHCHACHA20.pmod not found, skipping (this is expected if not available)"
+        fi
+        
+        if [ -f /etc/crypto-policies/policies/modules/NO-SSHWEAKCIPHERS.pmod ]; then
+          echo "Found NO-SSHWEAKCIPHERS.pmod (our module)"
+          modules="${modules}:NO-SSHWEAKCIPHERS"
+        else
+          echo "Module NO-SSHWEAKCIPHERS.pmod not found - should have been created in previous step"
+        fi
+        
+        echo "=== APPLYING CHANGE WITH MODULES: ${modules} ==="
+        update-crypto-policies --set "$modules"
+        
+        echo "=== AFTER ==="
+        cat /etc/crypto-policies/config 2>/dev/null || echo "Config file does not exist"
+      args:
+        executable: /bin/bash
+      when: "skip_remaining is not defined"
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Update crypto policy with available modules"
+        task_3_cmd: "Check for available modules and update crypto policy dynamically"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 and 'APPLYING CHANGE WITH MODULES:' in output and 'NO-SSHWEAKCIPHERS' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 and 'APPLYING CHANGE WITH MODULES:' in output and 'NO-SSHWEAKCIPHERS' in output %}
+            APPLIED: crypto policy updated with available modules including NO-SSHWEAKCIPHERS
+          {% elif result_3.rc | default(-1) != 0 %}
+            FAILED: update-crypto-policies command failed
+          {% else %}
+            FAILED: crypto policy update did not include NO-SSHWEAKCIPHERS module
+          {% endif %}
+      when: "skip_remaining is not defined"
+
+    - name: "Req 4 - Reload SSH service"
+      shell: systemctl reload-or-restart sshd
+      args:
+        executable: /bin/bash
+      when: "skip_remaining is not defined"
+      register: result_4
+      ignore_errors: true
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Reload SSH service"
+        task_4_cmd: "systemctl reload-or-restart sshd"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('APPLIED' if result_4.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_4: "{{ ('APPLIED: SSH service reloaded' if result_4.rc | default(-1) == 0 else 'FAILED: could not reload SSH service') | trim }}"
+      when: "skip_remaining is not defined"
+
+    - name: "Req 5 - Verify remediation by checking SSH ciphers"
+      shell: |
+        sshd -T | grep -i ciphers
+      args:
+        executable: /bin/bash
+      when: "skip_remaining is not defined"
+      register: result_5
+      ignore_errors: true
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify SSH ciphers"
+        task_5_cmd: "sshd -T | grep -i ciphers"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% set output = result_5.stdout | default('') | trim | lower %}
+          {% if '3des-cbc' not in output and 'aes128-cbc' not in output and 'aes192-cbc' not in output and 'aes256-cbc' not in output and 'chacha20-poly1305' not in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% set output = result_5.stdout | default('') | trim | lower %}
+          {% if '3des-cbc' not in output and 'aes128-cbc' not in output and 'aes192-cbc' not in output and 'aes256-cbc' not in output and 'chacha20-poly1305' not in output %}
+            APPLIED: Weak ciphers (3des-cbc, aes128-cbc, aes192-cbc, aes256-cbc, chacha20-poly1305) are not in the SSH cipher list
+          {% else %}
+            FAILED: One or more weak ciphers are still present in the SSH cipher list
+          {% endif %}
+      when: "skip_remaining is not defined"
+
+    - name: Set skipped status for remaining requirements when openssh-server not installed
+      set_fact:
+        task_2_name: "Create/update policy module file"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: openssh-server not installed, remediation not applicable"
+        task_3_name: "Update crypto policy"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: openssh-server not installed, remediation not applicable"
+        task_4_name: "Reload SSH service"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_4: ""
+        status_4: "SKIPPED"
+        rationale_4: "SKIPPED: openssh-server not installed, remediation not applicable"
+        task_5_name: "Verify SSH ciphers"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        data_5: ""
+        status_5: "SKIPPED"
+        rationale_5: "SKIPPED: openssh-server not installed, remediation not applicable"
+      when: "skip_remaining is defined"
+
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1|default('UNKNOWN')|trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_2|default('UNKNOWN')|trim == 'FAILED' or status_3|default('UNKNOWN')|trim == 'FAILED' or status_4|default('UNKNOWN')|trim == 'FAILED' or status_5|default('UNKNOWN')|trim == 'FAILED' %}
+            FAILED
+          {% elif status_2|default('UNKNOWN')|trim == 'APPLIED' and status_3|default('UNKNOWN')|trim == 'APPLIED' and status_4|default('UNKNOWN')|trim == 'APPLIED' and status_5|default('UNKNOWN')|trim == 'APPLIED' %}
+            APPLIED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1|default('UNKNOWN')|trim == 'SKIPPED' %}
+            SKIPPED: openssh-server not installed, remediation not applicable
+          {% elif status_2|default('UNKNOWN')|trim == 'FAILED' or status_3|default('UNKNOWN')|trim == 'FAILED' or status_4|default('UNKNOWN')|trim == 'FAILED' or status_5|default('UNKNOWN')|trim == 'FAILED' %}
+            FAILED: One or more remediation steps failed
+          {% elif status_2|default('UNKNOWN')|trim == 'APPLIED' and status_3|default('UNKNOWN')|trim == 'APPLIED' and status_4|default('UNKNOWN')|trim == 'APPLIED' and status_5|default('UNKNOWN')|trim == 'APPLIED' %}
+            APPLIED: All remediation steps applied successfully
+          {% else %}
+            UNKNOWN: Could not determine overall status
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

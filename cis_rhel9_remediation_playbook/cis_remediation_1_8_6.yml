@@ -1,0 +1,450 @@
+---
+- name: Remediation for CIS checkpoint 1.8.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_8_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.6"
+    
+    # Requirement texts - quoted strings
+    req_1: "Run script to disable automatic mounting of media for all GNOME users"
+    req_2: "Verify GDM automatic mounting of removable media is disabled"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore dconf profile user from backup"
+      copy:
+        src: "{{ state_guard_dir }}/user.present"
+        dest: "/etc/dconf/profile/user"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore dconf profile user2 from backup"
+      copy:
+        src: "{{ state_guard_dir }}/user2.present"
+        dest: "/etc/dconf/profile/user2"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore 00-media-automount file from backup"
+      shell: |
+        find {{ state_guard_dir }} -name "*.present" | grep -E '00-media-automount' | while read file; do
+          dest_file=$(echo "$file" | sed 's/\.present$//' | sed "s|{{ state_guard_dir }}||")
+          mkdir -p "$(dirname "/etc/dconf/db/$dest_file")"
+          cp "$file" "/etc/dconf/db/$dest_file" 2>/dev/null || true
+        done
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete 00-media-automount file (if created by remediation)"
+      shell: |
+        find /etc/dconf/db -name "*00-media-automount*" 2>/dev/null | while read file; do
+          rm -f "$file"
+        done
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if dconf profile files exist before deciding backup suffix
+    - name: "State Guard - Check if /etc/dconf/profile/user exists"
+      stat:
+        path: "/etc/dconf/profile/user"
+      register: _sg_user_stat
+
+    - name: "State Guard - Check if /etc/dconf/profile/user2 exists"
+      stat:
+        path: "/etc/dconf/profile/user2"
+      register: _sg_user2_stat
+
+    - name: "State Guard - Find existing 00-media-automount files"
+      shell: |
+        find /etc/dconf/db -name "*00-media-automount*" 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: _sg_media_files
+      changed_when: false
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/dconf/profile/user (present)"
+      copy:
+        src: "/etc/dconf/profile/user"
+        dest: "{{ state_guard_dir }}/user.present"
+        remote_src: true
+      when: _sg_user_stat.stat.exists
+
+    - name: "State Guard - Backup /etc/dconf/profile/user2 (present)"
+      copy:
+        src: "/etc/dconf/profile/user2"
+        dest: "{{ state_guard_dir }}/user2.present"
+        remote_src: true
+      when: _sg_user2_stat.stat.exists
+
+    # Backup existing 00-media-automount files
+    - name: "State Guard - Backup existing 00-media-automount files"
+      shell: |
+        {% raw %}
+        for file in $(find /etc/dconf/db -name "*00-media-automount*" 2>/dev/null); do
+          rel_path="${file#/etc/dconf/db/}"
+          dest_dir="{{ state_guard_dir }}/$(dirname "$rel_path")"
+          mkdir -p "$dest_dir"
+          cp "$file" "$dest_dir/$(basename "$file").present"
+        done
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_media_files.stdout != ""
+      ignore_errors: true
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/dconf/profile/user as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/user.absent"
+      when: not _sg_user_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/dconf/profile/user2 as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/user2.absent"
+      when: not _sg_user2_stat.stat.exists
+
+    - name: "State Guard - Mark 00-media-automount files as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/00-media-automount.absent"
+      when: _sg_media_files.stdout == ""
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run script to disable automatic mounting of media for all GNOME users
+    - name: "Req 1 - Execute CIS remediation script for GDM automatic mounting"
+      copy:
+        dest: "/tmp/cis_remediation_1_8_6.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pkgoutput=""
+             l_gpname="local" # Set to desired dconf profile name (default is local)
+             # Check if GNOME Desktop Manager is installed.  If package isn't installed, recommendation is Not Applicable\n
+             # determine system's package manager
+             if command -v dpkg-query > /dev/null 2>&1; then
+                l_pq="dpkg-query -W"
+             elif command -v rpm > /dev/null 2>&1; then
+                l_pq="rpm -q"
+             fi
+             # Check if GDM is installed
+             l_pcl="gdm gdm3" # Space separated list of packages to check
+             for l_pn in $l_pcl; do
+                $l_pq "$l_pn" > /dev/null 2>&1 && l_pkgoutput="$l_pkgoutput\n - Package: \"$l_pn\" exists on the system\n - checking configuration"
+             done
+             # Check configuration (If applicable)
+             if [ -n "$l_pkgoutput" ]; then
+                echo -e "$l_pkgoutput"
+                # Look for existing settings and set variables if they exist
+                l_kfile="$(grep -Prils -- '^\h*automount\b' /etc/dconf/db/*.d)"
+                l_kfile2="$(grep -Prils -- '^\h*automount-open\b' /etc/dconf/db/*.d)"
+                # Set profile name based on dconf db directory ({PROFILE_NAME}.d)
+                if [ -f "$l_kfile" ]; then
+                   l_gpname="$(awk -F\/ '{split($(NF-1),a,".");print a[1]}' <<< "$l_kfile")"
+                   echo " - updating dconf profile name to \"$l_gpname\""
+                elif [ -f "$l_kfile2" ]; then
+                   l_gpname="$(awk -F\/ '{split($(NF-1),a,".");print a[1]}' <<< "$l_kfile2")"
+                   echo " - updating dconf profile name to \"$l_gpname\""
+                fi
+                # check for consistency (Clean up configuration if needed)
+                if [ -f "$l_kfile" ] && [ "$(awk -F\/ '{split($(NF-1),a,".");print a[1]}' <<< "$l_kfile")" != "$l_gpname" ]; then
+                   sed -ri "/^\s*automount\s*=/s/^/# /" "$l_kfile"
+                   l_kfile="/etc/dconf/db/$l_gpname.d/00-media-automount"
+                fi
+                if [ -f "$l_kfile2" ] && [ "$(awk -F\/ '{split($(NF-1),a,".");print a[1]}' <<< "$l_kfile2")" != "$l_gpname" ]; then
+                   sed -ri "/^\s*automount-open\s*=/s/^/# /" "$l_kfile2"
+                fi
+                [ -z "$l_kfile" ] && l_kfile="/etc/dconf/db/$l_gpname.d/00-media- automount"
+                # Check if profile file exists
+                if grep -Pq -- "^\h*system-db:$l_gpname\b" /etc/dconf/profile/*; then
+                   echo -e "\n - dconf database profile exists in: \"$(grep -Pl -- "^\h*system-db:$l_gpname\b" /etc/dconf/profile/*)\""
+                else
+                   if [ ! -f "/etc/dconf/profile/user" ]; then
+                      l_gpfile="/etc/dconf/profile/user"
+                   else
+                      l_gpfile="/etc/dconf/profile/user2"
+                   fi
+                   echo -e " - creating dconf database profile"
+                   {
+                      echo -e "\nuser-db:user"
+                      echo "system-db:$l_gpname"
+                   } >> "$l_gpfile"
+                fi
+                # create dconf directory if it doesn't exists
+                l_gpdir="/etc/dconf/db/$l_gpname.d"
+                if [ -d "$l_gpdir" ]; then
+                   echo " - The dconf database directory \"$l_gpdir\" exists"
+                else
+                   echo " - creating dconf database directory \"$l_gpdir\""
+                   mkdir "$l_gpdir"
+                fi
+                # check automount-open setting
+                if grep -Pqs -- '^\h*automount-open\h*=\h*false\b' "$l_kfile"; then
+                   echo " - \"automount-open\" is set to false in: \"$l_kfile\""
+                else
+                   echo " - creating \"automount-open\" entry in \"$l_kfile\""
+                   ! grep -Psq -- '\^\h*\[org\/gnome\/desktop\/media-handling\]\b' "$l_kfile" && echo '[org/gnome/desktop/media-handling]' >> "$l_kfile"
+                   sed -ri '/^\s*\[org\/gnome\/desktop\/media-handling\]/a \\nautomount-open=false' "$l_kfile"
+                fi
+                # check automount setting
+                if grep -Pqs -- '^\h*automount\h*=\h*false\b' "$l_kfile"; then
+                   echo " - \"automount\" is set to false in: \"$l_kfile\""
+                else
+                   echo " - creating \"automount\" entry in \"$l_kfile\""
+                   ! grep -Psq -- '\^\h*\[org\/gnome\/desktop\/media-handling\]\b' "$l_kfile" && echo '[org/gnome/desktop/media-handling]' >> "$l_kfile"
+                   sed -ri '/^\s*\[org\/gnome\/desktop\/media-handling\]/a \\nautomount=false' "$l_kfile"
+                fi
+                # update dconf database
+                dconf update
+             else
+                echo -e "\n - GNOME Desktop Manager package is not installed on the system\n  - Recommendation is not applicable"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Execute the remediation script"
+      shell: "/tmp/cis_remediation_1_8_6.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_1_8_6.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script for GDM automatic mounting"
+        task_1_cmd: "/tmp/cis_remediation_1_8_6.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'GNOME Desktop Manager package is not installed on the system' in output %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'GNOME Desktop Manager package is not installed on the system' in output %}
+            SKIPPED: GDM not installed, remediation not applicable
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: Script executed successfully
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Verify GDM automatic mounting of removable media is disabled
+    - name: "Req 2 - Verify GDM automatic mounting settings"
+      shell: |
+        {% raw %}
+        # Check if GDM is installed
+        if command -v dpkg-query > /dev/null 2>&1; then
+          dpkg-query -W gdm gdm3 2>/dev/null | head -1
+        elif command -v rpm > /dev/null 2>&1; then
+          rpm -q gdm gdm3 2>/dev/null | head -1
+        else
+          echo "No package manager found"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: check_gdm
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Req 2 - Check dconf settings"
+      shell: |
+        {% raw %}
+        # Check if any dconf files exist with automount settings
+        echo "=== Checking dconf database files ==="
+        find /etc/dconf/db -name "*" -type f 2>/dev/null | xargs grep -l 'automount' 2>/dev/null || echo "No files with automount setting found"
+        
+        echo "=== Checking automount settings ==="
+        found_files=""
+        for file in $(find /etc/dconf/db -name "*" -type f 2>/dev/null); do
+          if grep -q 'automount' "$file"; then
+            echo "File: $file"
+            grep -E '^\s*(automount|automount-open)\s*=' "$file" || echo "  No active automount settings found"
+            found_files="yes"
+          fi
+        done
+        
+        if [ -z "$found_files" ]; then
+          echo "No automount settings found in dconf database"
+        fi
+        
+        # Check gsettings for gdm user if possible
+        echo "=== Checking gsettings (if accessible) ==="
+        if command -v gsettings > /dev/null 2>&1 && [ -d /run/gdm ]; then
+          for user_dir in /run/gdm/*; do
+            if [ -d "$user_dir" ]; then
+              user_xauth=$(find "$user_dir" -name ".Xauthority" 2>/dev/null | head -1)
+              if [ -n "$user_xauth" ]; then
+                export XAUTHORITY="$user_xauth"
+                export DISPLAY=:0
+                sudo -u gdm dbus-launch gsettings get org.gnome.desktop.media-handling automount 2>/dev/null || true
+                sudo -u gdm dbus-launch gsettings get org.gnome.desktop.media-handling automount-open 2>/dev/null || true
+              fi
+            fi
+          done
+        else
+          echo "gsettings check not available"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify GDM automatic mounting settings"
+        task_2_cmd: "Check dconf and gsettings for automount settings"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set gdm_check = check_gdm.stdout | default('') | trim %}
+          {% if gdm_check == '' or 'is not installed' in gdm_check or 'No package' in gdm_check %}
+            SKIPPED
+          {% elif 'automount=false' in output or 'automount-open=false' in output or 'false' in output %}
+            APPLIED
+          {% elif 'No automount settings found' in output %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set gdm_check = check_gdm.stdout | default('') | trim %}
+          {% if gdm_check == '' or 'is not installed' in gdm_check or 'No package' in gdm_check %}
+            SKIPPED: GDM not installed, verification not applicable
+          {% elif 'automount=false' in output or 'automount-open=false' in output or 'false' in output %}
+            APPLIED: Settings confirmed as disabled
+          {% elif 'No automount settings found' in output %}
+            FAILED: No automount settings found in dconf
+          {% else %}
+            UNKNOWN: Could not determine verification status
+          {% endif %}
+
+    # Compute overall remediation status and rationale
+    # FIXED: Correct overall status calculation to return SKIPPED when both requirements are SKIPPED
+    - name: Compute overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | default('') | trim %}
+          {% set s2 = status_2 | default('') | trim %}
+          {% if s1 == 'SKIPPED' and s2 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s1 == 'APPLIED' and s2 == 'APPLIED' %}
+            APPLIED
+          {% elif s1 == 'APPLIED' or s2 == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% set s1 = status_1 | default('') | trim %}
+          {% set s2 = status_2 | default('') | trim %}
+          {% if s1 == 'SKIPPED' and s2 == 'SKIPPED' %}
+            SKIPPED: GDM not installed, remediation not applicable
+          {% elif s1 == 'APPLIED' and s2 == 'APPLIED' %}
+            APPLIED: GDM automatic mounting successfully disabled
+          {% elif s1 == 'APPLIED' and s2 != 'APPLIED' and s2 != 'SKIPPED' %}
+            PARTIALLY APPLIED: Remediation applied but verification inconclusive
+          {% elif s1 != 'APPLIED' and s1 != 'SKIPPED' %}
+            FAILED: Remediation could not be applied
+          {% else %}
+            PARTIALLY APPLIED: Mixed statuses - check individual requirements
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.8.6"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.6"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

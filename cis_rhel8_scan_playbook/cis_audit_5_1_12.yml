@@ -1,13 +1,14 @@
 ---
-- name: Data Collection for CIS 5.1.12
+- name: Data Collection for CIS checkpoint 5.1.12
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.12"
-    req_1: "Run primary audit script for sshd HostbasedAuthentication"
-    req_2: "If Match blocks exist, audit for specific users"
-    req_3: "OVERALL Verify: Ensure sshd HostbasedAuthentication is disabled"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.12"
+    req_1: "Run the provided CIS audit script to verify HostbasedAuthentication is set to no"
+    req_2: "OVERALL Verify: Ensure sshd HostbasedAuthentication is disabled"
+    req_3: "Additional audit for match blocks if they exist"
+    match_block_user: "root"
 
   tasks:
     - name: Initialize data variables
@@ -21,219 +22,169 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        # Initialize status variables to UNKNOWN in case OS check fails
-        status_1: "UNKNOWN"
-        status_2: "UNKNOWN"
-        status_3: "UNKNOWN"
-        rationale_1: "OS version mismatch - unable to audit"
-        rationale_2: "OS version mismatch - unable to audit"
-        rationale_3: "OS version mismatch - unable to audit"
+        match_blocks_exist: false
 
-    # Check OS compatibility before proceeding
-    - name: Check OS compatibility
+    # Check if Match blocks exist in SSH configuration
+    - name: Check for Match blocks in sshd configuration
       shell: |
-        #!/usr/bin/env bash
-        if [ -f /etc/redhat-release ]; then
-          grep -i "release 8" /etc/redhat-release
-        else
-          echo "Not RHEL 8"
-        fi
-      args:
-        executable: /bin/bash
-      register: os_check
+        grep -r "^\s*Match" /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null | head -1
+      register: match_blocks_check
       ignore_errors: true
       changed_when: false
 
-    # Requirement 1: Primary audit (only execute if OS is compatible)
-    - name: "Req 1 - Check sshd HostbasedAuthentication setting"
-      shell: |
-        #!/usr/bin/env bash
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i hostbasedauthentication || true
+    - name: Set match_blocks_exist fact
+      set_fact:
+        match_blocks_exist: "{{ match_blocks_check.stdout | trim | length > 0 }}"
+
+    # Requirement 1: Run the provided CIS audit script to verify HostbasedAuthentication is set to no
+    - name: Req 1 - Execute CIS audit script for HostbasedAuthentication
+      copy:
+        dest: "/tmp/cis_audit_5.1.12_main.sh"
+        mode: '0700'
+        content: |
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -i hostbasedauthentication
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the main audit script
+      shell: "/tmp/cis_audit_5.1.12_main.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
-      when: os_check.stdout | trim != '' and 'Not RHEL 8' not in os_check.stdout
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.12_main.sh"
+        state: absent
+      ignore_errors: true
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check sshd HostbasedAuthentication setting"
+        task_1_name: "Execute CIS audit script for HostbasedAuthentication"
         task_1_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY | grep -i hostbasedauthentication"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            UNKNOWN
-          {% else %}
-            {{ ('PASS' if (result_1.stdout | default('') | trim == 'hostbasedauthentication no') else 'FAIL') | trim }}
-          {% endif %}
-        rationale_1: >-
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            OS version mismatch - unable to audit
-          {% else %}
-            PASS when the output is exactly 'hostbasedauthentication no', FAIL otherwise
-          {% endif %}
-      when: os_check.stdout is defined
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim | lower == 'hostbasedauthentication no') else 'FAIL') | trim }}"
+        rationale_1: 'PASS when script output shows "hostbasedauthentication no", FAIL otherwise'
 
-    # Requirement 2: Check for Match blocks and audit if they exist (only execute if OS is compatible)
-    - name: "Req 2 - Check for Match blocks in sshd_config"
-      shell: |
-        #!/usr/bin/env bash
-        if [ -f /etc/ssh/sshd_config ]; then
-          grep -i "^Match" /etc/ssh/sshd_config | head -1
-        fi
-      args:
-        executable: /bin/bash
-      register: match_check
-      ignore_errors: true
-      changed_when: false
-      when: os_check.stdout | trim != '' and 'Not RHEL 8' not in os_check.stdout
-
-    - name: "Req 2 - Extract users from Match blocks if they exist"
-      shell: |
-        #!/usr/bin/env bash
-        if [ -f /etc/ssh/sshd_config ]; then
-          # Extract users from Match blocks (simplified - in real scenario would need more complex parsing)
-          grep -A5 "^Match" /etc/ssh/sshd_config | grep -i "user" | sed 's/.*[Uu]ser\s*//' | head -3
-        fi
-      args:
-        executable: /bin/bash
-      register: match_users
-      when: os_check.stdout | trim != '' and 'Not RHEL 8' not in os_check.stdout and match_check.stdout | trim != ''
-      ignore_errors: true
-      changed_when: false
-
-    - name: "Req 2 - Audit Match blocks for each user found"
-      shell: |
-        #!/usr/bin/env bash
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ item }} 2>/dev/null | grep -i hostbasedauthentication || true
-      args:
-        executable: /bin/bash
-      register: result_2
-      loop: "{{ match_users.stdout_lines | default([]) }}"
-      when: os_check.stdout | trim != '' and 'Not RHEL 8' not in os_check.stdout and match_check.stdout | trim != '' and match_users.stdout_lines | length > 0
-      ignore_errors: true
-      changed_when: false
-
+    # Requirement 2: OVERALL Verify: Ensure sshd HostbasedAuthentication is disabled
+    # This is a logical check based on Requirement 1's result
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Audit Match blocks for specific users"
-        task_2_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY -C user=<user> | grep -i hostbasedauthentication"
-        task_2_rc: "{{ result_2.results[0].rc if result_2 is defined and result_2.results else -1 | default(-1) }}"
-        data_2: |
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            OS version mismatch - unable to audit
-          {% elif match_check.stdout | trim == '' %}
-            No Match blocks found in sshd_config
-          {% elif match_users.stdout_lines | length == 0 %}
-            Match blocks exist but no users specified
-          {% elif result_2 is defined and result_2.results %}
-            {% for item in result_2.results %}
-            User: {{ item.item }} - Output: {{ item.stdout | default('') | trim }}
-            {% endfor %}
-          {% else %}
-            Match block check not executed
-          {% endif %}
-        status_2: >-
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            UNKNOWN
-          {% elif match_check.stdout | trim == '' %}
-            NA
-          {% elif match_users.stdout_lines | length == 0 %}
-            NA
-          {% elif result_2 is defined and result_2.results %}
-            {% set all_pass = true %}
-            {% for item in result_2.results %}
-              {% if item.stdout | default('') | trim != 'hostbasedauthentication no' %}
-                {% set all_pass = false %}
-              {% endif %}
-            {% endfor %}
-            {% if all_pass %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            UNKNOWN
-          {% endif %}
-        rationale_2: >-
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            OS version mismatch - unable to audit
-          {% else %}
-            PASS when Match blocks don't exist OR when all user-specific checks output 'hostbasedauthentication no', FAIL otherwise
-          {% endif %}
-      when: os_check.stdout is defined
+        task_2_name: "Overall verification check"
+        task_2_cmd: "Logical check based on Requirement 1 result"
+        task_2_rc: "0"
+        data_2: "Main audit result: {{ status_1 | default('UNKNOWN') }}"
+        status_2: "{{ status_1 | default('FAIL') }}"
+        rationale_2: 'PASS when req_1=PASS, FAIL otherwise'
 
-    # Requirement 3: Overall verification (always execute to provide report)
+    # Requirement 3: Additional audit for match blocks if they exist
+    # Only run if match blocks exist in SSH configuration
+    - name: Req 3 - Execute CIS audit script for Match blocks (user={{ match_block_user }})
+      copy:
+        dest: "/tmp/cis_audit_5.1.12_match.sh"
+        mode: '0700'
+        content: |
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ match_block_user }} | grep -i hostbasedauthentication
+      register: script_create_3
+      ignore_errors: true
+      when: match_blocks_exist | bool
+
+    - name: Req 3 - Execute the match block audit script
+      shell: "/tmp/cis_audit_5.1.12_match.sh"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: match_blocks_exist | bool
+
+    - name: Req 3 - Remove temporary match block audit script
+      file:
+        path: "/tmp/cis_audit_5.1.12_match.sh"
+        state: absent
+      ignore_errors: true
+      when: match_blocks_exist | bool
+
     - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification of sshd HostbasedAuthentication"
-        task_3_cmd: "N/A - Calculated from previous results"
-        task_3_rc: 0
-        data_3: "Primary check: {{ data_1 | default('Not collected') }}, Match block check: {{ status_2 | default('UNKNOWN') }}"
+        task_3_name: "Execute CIS audit script for Match blocks (user={{ match_block_user }})"
+        task_3_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ match_block_user }} | grep -i hostbasedauthentication"
+        task_3_rc: "{{ result_3.rc | default(-1) if match_blocks_exist else -1 }}"
+        data_3: "{{ result_3.stdout | default('') | trim if match_blocks_exist else 'Not executed - No match blocks found' }}"
         status_3: >-
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            UNKNOWN
-          {% elif status_1 | trim == 'PASS' %}
-            {% if match_check.stdout | trim == '' %}
-              PASS
-            {% elif status_2 | trim == 'PASS' or status_2 | trim == 'NA' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+          {% if match_blocks_exist %}
+            {{ ('PASS' if (result_3.stdout | default('') | trim | lower == 'hostbasedauthentication no') else 'FAIL') | trim }}
           {% else %}
-            FAIL
+            NA
           {% endif %}
         rationale_3: >-
-          {% if os_check.stdout | trim == '' or 'Not RHEL 8' in os_check.stdout %}
-            OS version mismatch - unable to audit
+          {% if match_blocks_exist %}
+            PASS when script output shows "hostbasedauthentication no", FAIL otherwise
           {% else %}
-            PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS for all applicable users/connection parameters), FAIL otherwise
+            Not executed - No match blocks found in SSH configuration
           {% endif %}
-      when: os_check.stdout is defined
 
-    # Final report (always execute)
+    # Calculate overall compliance based on both main and match block audits
+    - name: Calculate overall compliance status
+      set_fact:
+        overall_status: >-
+          {% if match_blocks_exist %}
+            {{ 'PASS' if (status_1 | trim == 'PASS' and status_3 | trim == 'PASS') else 'FAIL' }}
+          {% else %}
+            {{ 'PASS' if (status_1 | trim == 'PASS') else 'FAIL' }}
+          {% endif %}
+        overall_rationale: >-
+          {% if match_blocks_exist %}
+            PASS when both main audit (req_1) and match block audit (req_3) show 'hostbasedauthentication no', FAIL otherwise
+          {% else %}
+            PASS when main audit (req_1) shows 'hostbasedauthentication no', FAIL otherwise
+          {% endif %}
+
+    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.12"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name }}"
-          - "  Command: {{ task_1_cmd }}"
-          - "  Exit code: {{ task_1_rc }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name }}"
-          - "  Command: {{ task_2_cmd }}"
-          - "  Exit code: {{ task_2_rc }}"
-          - "  Data: {{ data_2 | trim }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name }}"
-          - "  Command: {{ task_3_cmd }}"
-          - "  Exit code: {{ task_3_rc }}"
-          - "  Data: {{ data_3 | trim }}"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ overall_rationale | default('Not evaluated') | trim }}"
           - "========================================================"

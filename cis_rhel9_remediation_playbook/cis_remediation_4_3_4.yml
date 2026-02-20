@@ -1,0 +1,243 @@
+---
+- name: Remediation for CIS checkpoint 4.3.4 - Ensure nftables loopback traffic is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_4_3_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.3.4"
+    req_1: "Run script to apply nftables loopback traffic configuration"
+    req_2: "Verify nftables loopback traffic is configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # Restore nftables ruleset from backup if it exists
+    - name: "State Guard - Restore nftables ruleset from backup"
+      copy:
+        src: "{{ state_guard_dir }}/nftables.rules.present"
+        dest: "/etc/sysconfig/nftables.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current nftables ruleset
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if nftables config exists"
+      stat:
+        path: "/etc/sysconfig/nftables.conf"
+      register: _sg_nftables_stat
+
+    - name: "State Guard - Backup nftables config (present)"
+      copy:
+        src: "/etc/sysconfig/nftables.conf"
+        dest: "{{ state_guard_dir }}/nftables.rules.present"
+        remote_src: true
+      when: _sg_nftables_stat.stat.exists
+
+    - name: "State Guard - Mark nftables config as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/nftables.rules.absent"
+      when: not _sg_nftables_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run script to apply nftables loopback traffic configuration
+    - name: "Req 1 - Execute CIS remediation script for nftables loopback configuration"
+      copy:
+        dest: "/tmp/cis_remediation_4_3_4.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+            l_hbfw=""
+            if systemctl is-enabled firewalld.service 2>/dev/null | grep -q 'enabled'; then
+                echo -e "\n - FirewallD is in use on the system\n - Recommendation is NA \n - Remediation Complete" && l_hbfw="fwd"
+            elif systemctl is-enabled nftables.service | grep -q 'enabled'; then
+                l_hbfw="nft"
+            fi
+            if [ "$l_hbfw" = "nft" ]; then
+                l_ipsaddr="$(nft list ruleset | awk '/filter_IN_public_deny|hook\s+input\s+/,/\}\s*(#.*)?$/' | grep -P -- 'ip\h+saddr')"
+                if ! nft list ruleset | awk '/hook\s+input\s+/,/\}\s*(#.*)?$/' | grep -Pq -- '\H+\h+"lo"\h+accept'; then
+                    echo -e "\n - Enabling input to accept for loopback address"
+                    nft add rule inet filter input iif lo accept
+                else
+                    echo -e "\n -nftables input correctly configured to accept for loopback address"
+                fi
+                if ! grep -Pq -- 'ip\h+saddr\h+127\.0\.0\.0\/8\h+(counter\h+packets\h+\d+\h+bytes\h+\d+\h+)?dr op' <<< "$l_ipsaddr" && ! grep -Pq -- 'ip\h+daddr\h+\!\=\h+127\.0\.0\.1\h+ip\h+saddr\h+127\.0\.0\.1\h+drop' <<< "$l_ipsaddr"; then
+                    echo -e "\n - Setting IPv4 network traffic from loopback address to drop"
+                    nft add rule inet filter input ip saddr 127.0.0.0/8 counter drop
+                else
+                    echo -e "\n -nftables correctly configured IPv4 network traffic from loopback address to drop"
+                fi
+                if grep -Pq -- '^\h*0\h*$' /sys/module/ipv6/parameters/disable; then
+                    l_ip6saddr="$(nft list ruleset | awk '/filter_IN_public_deny|hook input/,/}/' | grep 'ip6 saddr')"
+                    if ! grep -Pq 'ip6\h+saddr\h+::1\h+(counter\h+packets\h+\d+\h+bytes\h+\d+\h+)?drop' <<< "$l_ip6saddr" && ! grep -Pq -- 'ip6\h+daddr\h+\!=\h+::1\h+ip6\h+saddr\h+::1\h+drop' <<< "$l_ip6saddr"; then
+                        echo -e "\n - Setting IPv6 network traffic from loopback address to drop"
+                        nft add rule inet filter input ip6 saddr ::1 counter drop
+                    else
+                        echo -e "\n - nftables IPv6 network traffic from loopback address to drop"
+                    fi
+                fi
+            fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Execute the remediation script"
+      shell: "/tmp/cis_remediation_4_3_4.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_4_3_4.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script for nftables loopback configuration"
+        task_1_cmd: "/tmp/cis_remediation_4_3_4.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if "FirewallD is in use" in output %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            {% if "correctly configured" in output or "Enabling" in output or "Setting" in output %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: "{{ ('APPLIED: Script executed successfully and applied required nftables rules' if (status_1 | default('') | trim == 'APPLIED') else ('SKIPPED: FirewallD is in use, nftables not applicable' if (status_1 | default('') | trim == 'SKIPPED') else 'FAILED: Script execution failed or did not produce expected output')) | trim }}"
+
+    # Requirement 2: Verify nftables loopback traffic is configured
+    - name: "Req 2 - Verify nftables loopback configuration"
+      shell: |
+        {% raw %}
+        # Check if nftables is enabled and active
+        if systemctl is-enabled nftables.service 2>/dev/null | grep -q 'enabled'; then
+            echo "=== nftables service is enabled ==="
+            nft list ruleset
+        else
+            echo "=== nftables service is NOT enabled ==="
+            echo "Checkpoint not applicable - using FirewallD or no firewall service"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify nftables loopback traffic is configured"
+        task_2_cmd: "Check nftables service status and list ruleset"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if "nftables service is NOT enabled" in output %}
+            SKIPPED
+          {% elif "iif lo accept" in output and "ip saddr 127.0.0.0/8 drop" in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: "{{ ('APPLIED: nftables loopback rules are properly configured' if (status_2 | default('') | trim == 'APPLIED') else ('SKIPPED: nftables service not enabled, checkpoint not applicable' if (status_2 | default('') | trim == 'SKIPPED') else 'FAILED: nftables loopback rules not found or incorrectly configured')) | trim }}"
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_2 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('') | trim == 'SKIPPED' or status_2 | default('') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | default('') | trim == 'FAILED' or status_2 | default('') | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_details: >-
+          {% if overall_status | default('') | trim == 'APPLIED' %}
+            Successfully applied nftables loopback traffic configuration
+          {% elif overall_status | default('') | trim == 'SKIPPED' %}
+            FirewallD is in use or nftables service not enabled - remediation not applicable
+          {% elif overall_status | default('') | trim == 'FAILED' %}
+            Failed to apply nftables loopback configuration - manual intervention required
+          {% else %}
+            Partial application - some configuration may be incomplete
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 4.3.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 4.3.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('') | trim }}"
+          - "========================================================"

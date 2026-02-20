@@ -1,0 +1,199 @@
+---
+- name: Remediation for CIS 6.2.2.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_6_2_2_1_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.1.1"
+    
+    # Requirement text
+    req_1: "Apply installation of systemd-journal-remote"
+    req_2: "Verify systemd-journal-remote is installed"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    # Note: State Guard tasks run without become since they work in /tmp
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      become: false  # No need for sudo to check /tmp
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+      become: false  # No need for sudo to remove from /tmp
+
+    # --- CAPTURE PHASE: Backup current pristine state before remediation ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      become: false  # No need for sudo to create in /tmp
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      become: false  # No need for sudo to write to /tmp
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Apply installation of systemd-journal-remote
+    - name: "Req 1 - Check if systemd-journal-remote is already installed"
+      shell: |
+        rpm -q systemd-journal-remote
+      args:
+        executable: /bin/bash
+      register: check_install
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Req 1 - Install systemd-journal-remote package"
+      shell: |
+        dnf install -y systemd-journal-remote
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when: "check_install.rc != 0"
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Install systemd-journal-remote package"
+        task_1_cmd: "dnf install -y systemd-journal-remote"
+        task_1_rc: "{{ result_1.rc | default(check_install.rc) }}"
+        data_1: >-
+          {% if check_install.rc == 0 %}
+            {{ check_install.stdout | default('') | trim }}
+          {% else %}
+            {{ result_1.stdout | default('') | trim }}
+          {% endif %}
+        status_1: >-
+          {% if check_install.rc == 0 %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_1.rc | default(-1) != 0 and 'No match for argument' in (result_1.stdout | default('') + result_1.stderr | default('')) %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if check_install.rc == 0 %}
+            APPLIED: systemd-journal-remote package was already installed
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: systemd-journal-remote package was successfully installed
+          {% elif result_1.rc | default(-1) != 0 and 'No match for argument' in (result_1.stdout | default('') + result_1.stderr | default('')) %}
+            SKIPPED: systemd-journal-remote package is not available in repositories for this server
+          {% else %}
+            FAILED: Could not install systemd-journal-remote package - exit code {{ result_1.rc | default('unknown') }}
+          {% endif %}
+
+    # Requirement 2: Verify systemd-journal-remote is installed
+    - name: "Req 2 - Verify systemd-journal-remote package installation"
+      shell: |
+        rpm -q systemd-journal-remote
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: "status_1 | default('') | trim != 'SKIPPED'"  # Skip verification if installation was skipped
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify systemd-journal-remote package installation"
+        task_2_cmd: "rpm -q systemd-journal-remote"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 and result_2.stdout | default('') | trim != '' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' %}
+            SKIPPED: Package was not available for installation, verification not applicable
+          {% elif result_2.rc | default(-1) == 0 and result_2.stdout | default('') | trim != '' %}
+            APPLIED: systemd-journal-remote is installed - version: {{ result_2.stdout | default('') | trim }}
+          {% else %}
+            FAILED: systemd-journal-remote is not installed
+          {% endif %}
+
+    # Determine overall status
+    - name: Set overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'SKIPPED' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' %}
+            SKIPPED: systemd-journal-remote package is not available in repositories for this server
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'APPLIED' %}
+            APPLIED: systemd-journal-remote package was successfully installed and verified
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'FAILED' %}
+            PARTIALLY APPLIED: Package installation appeared successful but verification failed
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'SKIPPED' %}
+            APPLIED: systemd-journal-remote package was already installed
+          {% else %}
+            FAILED: Could not install systemd-journal-remote package
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 6.2.2.1.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('No details') | trim }}"
+          - "========================================================"

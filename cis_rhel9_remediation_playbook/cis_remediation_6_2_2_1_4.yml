@@ -1,0 +1,303 @@
+---
+- name: Remediation for CIS 6.2.2.1.4
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_6_2_2_1_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.1.4"
+    
+    # Requirement definitions - CORRECTED: All req_ variables MUST be quoted strings
+    req_1: "Check if systemd-journal-remote package is installed"
+    req_2: "Stop systemd-journal-remote.socket and systemd-journal-remote.service"
+    req_3: "Mask systemd-journal-remote.socket and systemd-journal-remote.service"
+    req_4: "Verify systemd-journal-remote services are stopped and masked"
+
+  pre_tasks:
+    # === SIMPLIFIED STATE GUARD ===
+    # For this remediation (only systemctl operations), we use a minimal State Guard
+    # that doesn't require complex service state capture
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      ignore_errors: true
+
+    # --- RESTORE PHASE: Minimal undo for systemctl operations ---
+    - name: "State Guard - Unmask services if checkpoint exists"
+      shell: |
+        systemctl unmask systemd-journal-remote.socket 2>/dev/null || true
+        systemctl unmask systemd-journal-remote.service 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      when: "_sg_flag is not failed and _sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag is not failed and _sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    # --- CAPTURE PHASE: Minimal backup ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      ignore_errors: true
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if systemd-journal-remote package is installed
+    - name: "Req 1 - Check if systemd-journal-remote package is installed"
+      shell: |
+        rpm -q systemd-journal-remote 2>&1
+      args:
+        executable: /bin/bash
+      register: result_1
+      failed_when: false
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check package installation"
+        task_1_cmd: "rpm -q systemd-journal-remote 2>&1"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ (result_1.stdout ~ result_1.stderr) | default('') | trim }}"
+        package_installed: "{{ result_1.rc | default(-1) == 0 }}"
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED
+          {% elif rc == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED: Package is installed, remediation is applicable
+          {% elif rc == 1 %}
+            SKIPPED - Remediation not applicable - systemd-journal-remote is not installed on this server
+          {% else %}
+            FAILED: Could not determine package installation status (exit code {{ rc }}): {{ (result_1.stdout ~ result_1.stderr) | default('') | trim }}
+          {% endif %}
+
+    # Requirement 2: Stop systemd-journal-remote.socket and systemd-journal-remote.service
+    - name: "Req 2 - Stop systemd-journal-remote services"
+      shell: |
+        systemctl stop systemd-journal-remote.socket systemd-journal-remote.service
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "package_installed | default(false)"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Stop systemd-journal-remote services"
+        task_2_cmd: "systemctl stop systemd-journal-remote.socket systemd-journal-remote.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ (result_2.stdout ~ result_2.stderr) | default('') | trim }}"
+        status_2: >-
+          {% if not (package_installed | default(false)) %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if not (package_installed | default(false)) %}
+            SKIPPED: Package not installed, no services to stop
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Both services were stopped successfully
+          {% else %}
+            FAILED: Could not stop one or both services: {{ (result_2.stdout ~ result_2.stderr) | default('') | trim }}
+          {% endif %}
+
+    # Requirement 3: Mask systemd-journal-remote.socket and systemd-journal-remote.service
+    - name: "Req 3 - Mask systemd-journal-remote services"
+      shell: |
+        systemctl mask systemd-journal-remote.socket systemd-journal-remote.service
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "package_installed | default(false)"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Mask systemd-journal-remote services"
+        task_3_cmd: "systemctl mask systemd-journal-remote.socket systemd-journal-remote.service"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ (result_3.stdout ~ result_3.stderr) | default('') | trim }}"
+        status_3: >-
+          {% if not (package_installed | default(false)) %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if not (package_installed | default(false)) %}
+            SKIPPED: Package not installed, no services to mask
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: Both services were masked successfully
+          {% else %}
+            FAILED: Could not mask one or both services: {{ (result_3.stdout ~ result_3.stderr) | default('') | trim }}
+          {% endif %}
+
+    # Requirement 4: Verify systemd-journal-remote services are stopped and masked
+    - name: "Req 4 - Verify services are stopped and masked"
+      shell: |
+        systemctl is-active systemd-journal-remote.socket systemd-journal-remote.service && systemctl is-enabled systemd-journal-remote.socket systemd-journal-remote.service 2>&1
+      args:
+        executable: /bin/bash
+      register: result_4
+      failed_when: false
+      when: "package_installed | default(false)"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify services are stopped and masked"
+        task_4_cmd: "systemctl is-active systemd-journal-remote.socket systemd-journal-remote.service && systemctl is-enabled systemd-journal-remote.socket systemd-journal-remote.service 2>&1"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ (result_4.stdout ~ result_4.stderr) | default('') | trim }}"
+        status_4: >-
+          {% if not (package_installed | default(false)) %}
+            SKIPPED
+          {% else %}
+            {% set output = (result_4.stdout ~ result_4.stderr) | default('') | trim %}
+            {% set lines = output.split('\n') %}
+            {% if lines|length >= 4 and lines[0] == 'inactive' and lines[1] == 'inactive' and lines[2] == 'masked' and lines[3] == 'masked' %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_4: >-
+          {% if not (package_installed | default(false)) %}
+            SKIPPED: Package not installed, no verification needed
+          {% else %}
+            {% set output = (result_4.stdout ~ result_4.stderr) | default('') | trim %}
+            {% set lines = output.split('\n') %}
+            {% if lines|length >= 4 and lines[0] == 'inactive' and lines[1] == 'inactive' and lines[2] == 'masked' and lines[3] == 'masked' %}
+              APPLIED: Verification passed - services are inactive and masked
+            {% else %}
+              FAILED: Verification failed - expected 4 lines with 'inactive' (first two) and 'masked' (last two), got: {{ output }}
+            {% endif %}
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set status1 = status_1 | trim %}
+          {% set status2 = status_2 | default('SKIPPED') | trim %}
+          {% set status3 = status_3 | default('SKIPPED') | trim %}
+          {% set status4 = status_4 | default('SKIPPED') | trim %}
+          
+          {% if status1 == 'SKIPPED' %}
+            SKIPPED
+          {% elif status2 == 'APPLIED' and status3 == 'APPLIED' and status4 == 'APPLIED' %}
+            APPLIED
+          {% elif status2 == 'FAILED' or status3 == 'FAILED' or status4 == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+
+    - name: Determine overall remediation details
+      set_fact:
+        overall_details: >-
+          {% set status1 = status_1 | trim %}
+          {% if status1 == 'SKIPPED' %}
+            Remediation not applicable: systemd-journal-remote package is not installed
+          {% elif overall_status | trim == 'APPLIED' %}
+            All remediation steps applied successfully: services stopped and masked
+          {% elif overall_status | trim == 'FAILED' %}
+            One or more remediation steps failed to apply
+          {% elif overall_status | trim == 'PARTIALLY APPLIED' %}
+            Some remediation steps applied successfully but not all
+          {% else %}
+            Could not determine overall remediation status
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 6.2.2.1.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.2.1.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

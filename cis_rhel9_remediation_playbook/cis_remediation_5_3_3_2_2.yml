@@ -1,0 +1,503 @@
+---
+- name: Remediation for CIS 5.3.3.2.2 - Ensure password length is configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_2_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.2"
+    
+    # Requirement definitions - CRITICAL: Use exact requirement text
+    req_1: "Create or modify pwquality configuration to set password length of 14 or more characters"
+    req_2: "Run CIS remediation script to remove minlen setting from pam_pwquality.so in PAM files"
+    req_3: "Verify password length is configured correctly"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE ---
+    # Restore /etc/security/pwquality.conf if it existed
+    - name: "State Guard - Restore /etc/security/pwquality.conf from backup"
+      copy:
+        src: "{{ state_guard_dir }}/pwquality.conf.present"
+        dest: "/etc/security/pwquality.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Delete the .d directory file if it was created by remediation
+    - name: "State Guard - Delete /etc/security/pwquality.conf.d/50-pwlength.conf (created by remediation)"
+      file:
+        path: "/etc/security/pwquality.conf.d/50-pwlength.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Restore authselect custom files if they existed
+    - name: "State Guard - Get authselect custom directory for restore"
+      shell: head -1 /etc/authselect/authselect.conf | grep 'custom/' || echo ""
+      args:
+        executable: /bin/bash
+      register: _sg_authselect_custom_dir_restore
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore system-auth file from backup"
+      copy:
+        src: "{{ state_guard_dir }}/system-auth.present"
+        dest: "/etc/authselect/{{ _sg_authselect_custom_dir_restore.stdout | default('') | trim }}/system-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and "_sg_authselect_custom_dir_restore.stdout" is defined and "_sg_authselect_custom_dir_restore.stdout" | trim != ""
+      ignore_errors: true
+
+    - name: "State Guard - Restore password-auth file from backup"
+      copy:
+        src: "{{ state_guard_dir }}/password-auth.present"
+        dest: "/etc/authselect/{{ _sg_authselect_custom_dir_restore.stdout | default('') | trim }}/password-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and "_sg_authselect_custom_dir_restore.stdout" is defined and "_sg_authselect_custom_dir_restore.stdout" | trim != ""
+      ignore_errors: true
+
+    - name: "State Guard - Apply authselect changes if needed"
+      shell: |
+        if [ -f /etc/authselect/authselect.conf ]; then
+          authselect apply-changes 2>/dev/null || echo "authselect apply-changes failed (may be expected if no changes)"
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists and "_sg_authselect_custom_dir_restore.stdout" is defined and "_sg_authselect_custom_dir_restore.stdout" | trim != ""
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check and backup /etc/security/pwquality.conf
+    - name: "State Guard - Check if /etc/security/pwquality.conf exists"
+      stat:
+        path: "/etc/security/pwquality.conf"
+      register: _sg_pwquality_stat
+
+    - name: "State Guard - Backup /etc/security/pwquality.conf (present)"
+      copy:
+        src: "/etc/security/pwquality.conf"
+        dest: "{{ state_guard_dir }}/pwquality.conf.present"
+        remote_src: true
+      when: _sg_pwquality_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/security/pwquality.conf.d/50-pwlength.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/50-pwlength.conf.absent"
+      when: not _sg_pwquality_stat.stat.exists
+
+    # Check and backup authselect custom PAM files
+    - name: "State Guard - Get authselect custom directory"
+      shell: head -1 /etc/authselect/authselect.conf | grep 'custom/' || echo ""
+      args:
+        executable: /bin/bash
+      register: _sg_authselect_custom_dir
+      ignore_errors: true
+
+    - name: "State Guard - Check if system-auth file exists"
+      stat:
+        path: "/etc/authselect/{{ _sg_authselect_custom_dir.stdout | default('') | trim }}/system-auth"
+      register: _sg_system_auth_stat
+      when: "_sg_authselect_custom_dir.stdout | trim != ''"
+      ignore_errors: true
+
+    - name: "State Guard - Check if password-auth file exists"
+      stat:
+        path: "/etc/authselect/{{ _sg_authselect_custom_dir.stdout | default('') | trim }}/password-auth"
+      register: _sg_password_auth_stat
+      when: "_sg_authselect_custom_dir.stdout | trim != ''"
+      ignore_errors: true
+
+    - name: "State Guard - Backup system-auth file (present)"
+      copy:
+        src: "/etc/authselect/{{ _sg_authselect_custom_dir.stdout | default('') | trim }}/system-auth"
+        dest: "{{ state_guard_dir }}/system-auth.present"
+        remote_src: true
+      when: _sg_system_auth_stat.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Backup password-auth file (present)"
+      copy:
+        src: "/etc/authselect/{{ _sg_authselect_custom_dir.stdout | default('') | trim }}/password-auth"
+        dest: "{{ state_guard_dir }}/password-auth.present"
+        remote_src: true
+      when: _sg_password_auth_stat.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Set password length in pwquality configuration
+    - name: "Req 1 - Set password length in pwquality configuration"
+      shell: |
+        echo "=== BEFORE pwquality.conf ==="
+        cat /etc/security/pwquality.conf 2>/dev/null || echo "File does not exist"
+        echo "=== BEFORE .d directory ==="
+        ls -la /etc/security/pwquality.conf.d/ 2>/dev/null || echo "Directory does not exist"
+        echo "=== APPLYING CHANGES ==="
+        # Run EXACT commands from remediation procedure
+        # 1. Comment existing minlen in main file (if it exists)
+        sed -ri 's/^\s*minlen\s*=/# &/' /etc/security/pwquality.conf 2>/dev/null || echo "No existing minlen to comment in main file"
+        # 2. Create .d directory and add minlen=14
+        mkdir -p /etc/security/pwquality.conf.d/
+        printf '\n%s' "minlen = 14" >> /etc/security/pwquality.conf.d/50-pwlength.conf
+        echo "=== AFTER pwquality.conf ==="
+        cat /etc/security/pwquality.conf 2>/dev/null || echo "File does not exist"
+        echo "=== AFTER .d directory ==="
+        ls -la /etc/security/pwquality.conf.d/ 2>/dev/null || echo "Directory does not exist"
+        echo "=== NEW FILE CONTENTS ==="
+        cat /etc/security/pwquality.conf.d/50-pwlength.conf 2>/dev/null || echo "File does not exist"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Set password length in pwquality configuration"
+        task_1_cmd: |
+          sed -ri 's/^\s*minlen\s*=/# &/' /etc/security/pwquality.conf
+          mkdir -p /etc/security/pwquality.conf.d/
+          printf '\n%s' "minlen = 14" >> /etc/security/pwquality.conf.d/50-pwlength.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        details_1: "{{ ('APPLIED: Password length set to 14 in .d file and existing minlen commented in main file' if result_1.rc | default(-1) == 0 else 'FAILED: Could not set password length in pwquality configuration') | trim }}"
+
+    # Requirement 2: Execute CIS remediation script for PAM files
+    # Check if authselect is being used on the system AND PAM files are managed by authselect
+    - name: "Req 2 - Check if authselect is being used and managing PAM files"
+      shell: |
+        # Check if authselect is installed and configured
+        if [ -f /etc/authselect/authselect.conf ]; then
+          if head -1 /etc/authselect/authselect.conf | grep -q 'custom/'; then
+            # Get custom directory
+            custom_dir="$(head -1 /etc/authselect/authselect.conf | grep 'custom/')"
+            
+            # Check if PAM files in /etc/pam.d/ are symlinks to authselect custom directory
+            # This indicates authselect is actually managing the PAM configuration
+            if [ -L "/etc/pam.d/system-auth" ] && [ -L "/etc/pam.d/password-auth" ]; then
+              system_auth_target="$(readlink -f /etc/pam.d/system-auth 2>/dev/null || echo '')"
+              password_auth_target="$(readlink -f /etc/pam.d/password-auth 2>/dev/null || echo '')"
+              
+              if [[ "$system_auth_target" == */authselect/* ]] && [[ "$password_auth_target" == */authselect/* ]]; then
+                echo "authselect_managing_pam=true"
+              else
+                echo "authselect_managing_pam=false"
+                echo "system_auth_target: $system_auth_target"
+                echo "password_auth_target: $password_auth_target"
+              fi
+            else
+              echo "authselect_managing_pam=false"
+              echo "PAM files are not symlinks"
+            fi
+          else
+            echo "authselect_managing_pam=false"
+            echo "No custom authselect profile found"
+          fi
+        else
+          echo "authselect_managing_pam=false"
+          echo "authselect.conf not found"
+        fi
+      args:
+        executable: /bin/bash
+      register: authselect_check
+      ignore_errors: true
+
+    - name: "Req 2 - Execute CIS remediation script for PAM files (when authselect managing PAM)"
+      copy:
+        dest: "/tmp/cis_remediation_pam.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             for l_pam_file in system-auth password-auth; do
+               l_authselect_file="/etc/authselect/$(head -1 /etc/authselect/authselect.conf | grep 'custom/')/$l_pam_file"
+               sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*)(\s+ minlen\s*=\s*[0-9]+)(.*$)/\1\4/' "$l_authselect_file"
+             done
+             authselect apply-changes
+          }
+          {% endraw %}
+      register: script_create_2
+      when: "'authselect_managing_pam=true' in authselect_check.stdout"
+      ignore_errors: true
+
+    - name: "Req 2 - Execute the remediation script (when authselect managing PAM)"
+      shell: /tmp/cis_remediation_pam.sh
+      args:
+        executable: /bin/bash
+      register: result_2
+      when: "'authselect_managing_pam=true' in authselect_check.stdout"
+      ignore_errors: true
+
+    - name: "Req 2 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_pam.sh"
+        state: absent
+      when: "'authselect_managing_pam=true' in authselect_check.stdout"
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Remove minlen setting from pam_pwquality.so in PAM files"
+        task_2_cmd: "/tmp/cis_remediation_pam.sh"
+        task_2_rc: >-
+          {% if "'authselect_managing_pam=true' in authselect_check.stdout" %}
+            {{ result_2.rc | default(-1) }}
+          {% else %}
+            -1
+          {% endif %}
+        data_2: >-
+          {% if "'authselect_managing_pam=true' in authselect_check.stdout" %}
+            {{ result_2.stdout | default('') | trim }}
+          {% else %}
+            {{ authselect_check.stdout | default('') | trim }}
+          {% endif %}
+        status_2: >-
+          {% set check_output = authselect_check.stdout | default('') %}
+          {% if 'authselect_managing_pam=true' in check_output %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        details_2: >-
+          {% set check_output = authselect_check.stdout | default('') %}
+          {% if 'authselect_managing_pam=true' in check_output %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: minlen settings removed from PAM files
+            {% else %}
+              FAILED: Could not remove minlen settings from PAM files
+            {% endif %}
+          {% else %}
+            SKIPPED: System not using authselect to manage PAM files - PAM files not managed by authselect
+          {% endif %}
+
+    # Requirement 3: Verify the remediation - FIXED: Use script approach to avoid YAML parsing errors
+    - name: "Req 3 - Create verification script for password length configuration"
+      copy:
+        dest: "/tmp/verify_pwlength.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          echo "=== CHECK pwquality.conf.d/ ==="
+          grep -r "minlen\s*=" /etc/security/pwquality.conf.d/ 2>/dev/null || echo "No minlen setting found in .d directory"
+          echo "=== CHECK pwquality.conf ==="
+          grep "minlen\s*=" /etc/security/pwquality.conf 2>/dev/null || echo "No minlen setting found in main file"
+          echo "=== CHECK PAM FILES ==="
+          # Check if authselect is managing PAM files
+          if [ -f /etc/authselect/authselect.conf ]; then
+            if head -1 /etc/authselect/authselect.conf | grep -q 'custom/'; then
+              custom_dir="$(head -1 /etc/authselect/authselect.conf | grep 'custom/')"
+              for l_pam_file in system-auth password-auth; do
+                l_authselect_file="/etc/authselect/$custom_dir/$l_pam_file"
+                echo "--- $l_authselect_file ---"
+                if grep -q "pam_pwquality\.so.*minlen" "$l_authselect_file" 2>/dev/null; then
+                  echo "FAIL: minlen found in $l_authselect_file"
+                else
+                  echo "PASS: no minlen found in $l_authselect_file"
+                fi
+              done
+            else
+              echo "No custom authselect profile - checking /etc/pam.d/ directly"
+              for l_pam_file in system-auth password-auth; do
+                echo "--- /etc/pam.d/$l_pam_file ---"
+                if grep -q "pam_pwquality\.so.*minlen" "/etc/pam.d/$l_pam_file" 2>/dev/null; then
+                  echo "FAIL: minlen found in /etc/pam.d/$l_pam_file"
+                else
+                  echo "PASS: no minlen found in /etc/pam.d/$l_pam_file"
+                fi
+              done
+            fi
+          else
+            echo "authselect not configured - checking /etc/pam.d/ directly"
+            for l_pam_file in system-auth password-auth; do
+              echo "--- /etc/pam.d/$l_pam_file ---"
+              if grep -q "pam_pwquality\.so.*minlen" "/etc/pam.d/$l_pam_file" 2>/dev/null; then
+                echo "FAIL: minlen found in /etc/pam.d/$l_pam_file"
+              else
+                echo "PASS: no minlen found in /etc/pam.d/$l_pam_file"
+              fi
+            done
+          fi
+          echo "=== OVERALL CHECK ==="
+          # Check if minlen is set to 14 or more in .d directory or main file
+          minlen_found=false
+          minlen_value=0
+          
+          # Check .d directory first
+          if [ -d "/etc/security/pwquality.conf.d" ]; then
+            for file in /etc/security/pwquality.conf.d/*.conf; do
+              # Skip if file does not exist (no .conf files)
+              [ -f "$file" ] || continue
+              if grep -q "minlen\s*=" "$file" 2>/dev/null; then
+                minlen_found=true
+                minlen_value=$(grep "minlen\s*=" "$file" | sed 's/.*minlen\s*=\s*//' | tr -d ' ' | head -1)
+                echo "Found minlen=$minlen_value in $file"
+                break
+              fi
+            done
+          fi
+          
+          # If not found in .d, check main file
+          if [ "$minlen_found" = false ]; then
+            if grep -q "minlen\s*=" /etc/security/pwquality.conf 2>/dev/null; then
+              minlen_found=true
+              minlen_value=$(grep "minlen\s*=" /etc/security/pwquality.conf | sed 's/.*minlen\s*=\s*//' | tr -d ' ' | head -1)
+              echo "Found minlen=$minlen_value in /etc/security/pwquality.conf"
+            fi
+          fi
+          
+          if [ "$minlen_found" = true ] && [ "$minlen_value" -ge 14 ]; then
+            echo "PASS: minlen is set to $minlen_value (14 or more)"
+            exit 0
+          else
+            echo "FAIL: minlen is not set to 14 or more (found: $minlen_value)"
+            exit 1
+          fi
+          {% endraw %}
+      register: script_create_3
+      ignore_errors: true
+
+    - name: "Req 3 - Execute verification script"
+      shell: "/tmp/verify_pwlength.sh"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: "Req 3 - Remove temporary verification script"
+      file:
+        path: "/tmp/verify_pwlength.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify password length configuration"
+        task_3_cmd: "/tmp/verify_pwlength.sh"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED: Password length is correctly configured (minlen=14+ and no minlen in PAM)
+          {% elif 'FAIL: minlen is not set to 14 or more' in output %}
+            FAILED: minlen is not set to 14 or more characters
+          {% elif 'FAIL: minlen found' in output %}
+            FAILED: minlen still present in PAM files
+          {% else %}
+            FAILED: Verification failed - check output for details
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s1 == 'APPLIED' and s3 == 'APPLIED' and s2 in ['APPLIED', 'SKIPPED'] %}
+            APPLIED
+          {% elif s1 == 'FAILED' or s2 == 'FAILED' or s3 == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s1 == 'APPLIED' and s3 == 'APPLIED' and s2 in ['APPLIED', 'SKIPPED'] %}
+            Password length successfully configured to 14+ characters
+          {% elif s1 == 'FAILED' or s2 == 'FAILED' or s3 == 'FAILED' %}
+            Failed to apply password length configuration - one or more remediation steps failed
+          {% else %}
+            Could not determine remediation status
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.2.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('') | trim }}"
+          - "========================================================"

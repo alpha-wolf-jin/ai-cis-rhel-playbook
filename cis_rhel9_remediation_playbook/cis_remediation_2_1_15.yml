@@ -1,0 +1,322 @@
+---
+- name: Remediation for CIS 2.1.15 - Ensure telnet server services are not in use
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_15"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.15"
+    req_1: "Check if telnet-server package is installed using command: rpm -q telnet-server. Expected result: If package is NOT installed, skip all subsequent steps with status 'SKIPPED - Remediation not applicable - telnet-server is not installed on this server'."
+    req_2: "Stop the telnet.socket service using command: systemctl stop telnet.socket. Expected result: telnet.socket service is stopped."
+    req_3: "Remove the telnet-server package using command: dnf remove -y telnet-server. Expected result: telnet-server package is removed. OR - If the telnet-server package is required for dependencies and cannot be removed, mask the telnet.socket service using command: systemctl mask telnet.socket. Expected result: telnet.socket service is masked and prevented from starting."
+    req_4: "VERIFY: Confirm telnet-server is not in use using command: systemctl is-active telnet.socket 2>/dev/null || echo 'Service not found or inactive' && rpm -q telnet-server 2>/dev/null || echo 'Package not installed'. Expected result: Output shows 'Service not found or inactive' and 'Package not installed' or the service is masked."
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Note: For this remediation, we are only changing service state and removing packages.
+    # The state guard mainly ensures we don't repeatedly try to remove an already removed package.
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if telnet-server package is installed (for restoration reference)"
+      shell: |
+        rpm -q telnet-server 2>/dev/null && echo "installed" || echo "not_installed"
+      args:
+        executable: /bin/bash
+      register: _sg_pkg_state
+      changed_when: false
+
+    - name: "State Guard - Check telnet.socket service state (for restoration reference)"
+      shell: |
+        systemctl is-active telnet.socket 2>/dev/null || echo "inactive"
+        systemctl is-enabled telnet.socket 2>/dev/null || echo "disabled"
+        systemctl is-masked telnet.socket 2>/dev/null || echo "not_masked"
+      args:
+        executable: /bin/bash
+      register: _sg_svc_state
+      changed_when: false
+
+    - name: "State Guard - Save package state"
+      copy:
+        content: "{{ _sg_pkg_state.stdout | default('not_installed') }}"
+        dest: "{{ state_guard_dir }}/telnet-server.pkg_state"
+      when: _sg_pkg_state is defined
+
+    - name: "State Guard - Save service state"
+      copy:
+        content: |
+          {{ _sg_svc_state.stdout | default('inactive\ndisabled\nnot_masked') }}
+        dest: "{{ state_guard_dir }}/telnet.socket.svc_state"
+      when: _sg_svc_state is defined
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "SKIPPED"
+        rationale_1: "Not executed"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "SKIPPED"
+        rationale_2: "Not executed"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "SKIPPED"
+        rationale_3: "Not executed"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_4: ""
+        status_4: "SKIPPED"
+        rationale_4: "Not executed"
+        telnet_installed: false
+
+    # Requirement 1: Check if telnet-server package is installed
+    - name: "Req 1 - Check if telnet-server package is installed"
+      shell: rpm -q telnet-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Store requirement 1 details and determine if telnet is installed"
+      set_fact:
+        task_1_name: "Check telnet-server package installation"
+        task_1_cmd: "rpm -q telnet-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        telnet_installed: "{{ result_1.rc | default(1) == 0 }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: telnet-server package is installed - remediation is applicable
+          {% else %}
+            SKIPPED - Remediation not applicable - telnet-server is not installed on this server
+          {% endif %}
+
+    # Requirement 2: Stop the telnet.socket service
+    - name: "Req 2 - Stop telnet.socket service"
+      shell: systemctl stop telnet.socket
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: telnet_installed
+
+    - name: "Store requirement 2 details"
+      set_fact:
+        task_2_name: "Stop telnet.socket service"
+        task_2_cmd: "systemctl stop telnet.socket"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif not telnet_installed %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: telnet.socket service stopped successfully
+          {% elif not telnet_installed %}
+            SKIPPED: telnet-server package not installed
+          {% else %}
+            FAILED: Could not stop telnet.socket service
+          {% endif %}
+      when: telnet_installed
+
+    # Requirement 3: Remove telnet-server package or mask the service
+    - name: "Req 3 - Remove telnet-server package"
+      shell: |
+        # First try to remove the package
+        dnf remove -y telnet-server
+        rc=$?
+        if [ $rc -ne 0 ]; then
+          echo "Package removal failed (possibly due to dependencies). Masking service instead."
+          systemctl mask telnet.socket
+          echo "Service masked as fallback"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: telnet_installed
+
+    - name: "Store requirement 3 details"
+      set_fact:
+        task_3_name: "Remove telnet-server package or mask service"
+        task_3_cmd: "dnf remove -y telnet-server; if failed, systemctl mask telnet.socket"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 and 'Service masked' in result_3.stdout | default('') %}
+            APPLIED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif not telnet_installed %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_3.rc | default(-1) == 0 and 'Service masked' in result_3.stdout | default('') %}
+            APPLIED: telnet-server package could not be removed (likely due to dependencies), telnet.socket service has been masked
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: telnet-server package removed successfully
+          {% elif not telnet_installed %}
+            SKIPPED: telnet-server package not installed
+          {% else %}
+            FAILED: Could not remove telnet-server package or mask the service
+          {% endif %}
+      when: telnet_installed
+
+    # Requirement 4: Verify remediation
+    - name: "Req 4 - Verify telnet-server is not in use"
+      shell: |
+        systemctl is-active telnet.socket 2>/dev/null || echo 'Service not found or inactive'
+        rpm -q telnet-server 2>/dev/null || echo 'Package not installed'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: telnet_installed
+
+    - name: "Store requirement 4 details"
+      set_fact:
+        task_4_name: "Verify telnet-server is not in use"
+        task_4_cmd: "systemctl is-active telnet.socket 2>/dev/null || echo 'Service not found or inactive' && rpm -q telnet-server 2>/dev/null || echo 'Package not installed'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if 'Service not found or inactive' in output and ('Package not installed' in output or 'masked' in output) %}
+            APPLIED
+          {% elif not telnet_installed %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if 'Service not found or inactive' in output and ('Package not installed' in output or 'masked' in output) %}
+            APPLIED: Verification passed - telnet-server is not in use
+          {% elif not telnet_installed %}
+            SKIPPED: telnet-server package not installed
+          {% else %}
+            FAILED: Verification failed - telnet-server may still be in use
+          {% endif %}
+      when: telnet_installed
+
+    # Determine overall remediation status
+    - name: "Determine overall remediation status"
+      set_fact:
+        overall_status: >-
+          {% if not telnet_installed %}
+            SKIPPED
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_4 | trim == 'FAILED' and (status_3 | trim == 'APPLIED' or status_2 | trim == 'APPLIED') %}
+            PARTIALLY APPLIED
+          {% elif status_4 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if not telnet_installed %}
+            Remediation not applicable - telnet-server is not installed on this server
+          {% elif status_4 | trim == 'APPLIED' %}
+            Successfully remediated - telnet-server services are no longer in use
+          {% elif status_4 | trim == 'FAILED' and (status_3 | trim == 'APPLIED' or status_2 | trim == 'APPLIED') %}
+            Partial remediation applied - service was stopped or masked but verification failed
+          {% elif status_4 | trim == 'FAILED' %}
+            Remediation failed - could not ensure telnet-server services are not in use
+          {% else %}
+            Unknown remediation state
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.15"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.15"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('No details available') | trim }}"
+          - "========================================================"

@@ -1,0 +1,326 @@
+---
+- name: Remediation for CIS 1.1.2.2.2 - Ensure nodev option set on /dev/shm partition
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_2_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.2.2"
+    
+    req_1: "Check if /dev/shm is a separate partition in /etc/fstab"
+    req_2: "Apply nodev mount option to /dev/shm partition in /etc/fstab"
+    req_3: "Remount /dev/shm with updated options"
+    req_4: "Verify nodev option is set on /dev/shm"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remount /dev/shm to undo previous changes"
+      shell: mount -o remount /dev/shm
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1 - Check if /dev/shm is a separate partition in /etc/fstab
+    - name: "Req 1 - Check if /dev/shm is a separate partition"
+      shell: |
+        echo "=== CHECKING /dev/shm IN /ETC/FSTAB ==="
+        echo "Command: grep -E '^\s*[^#].*\s/dev/shm\s' /etc/fstab"
+        grep -E '^\s*[^#].*\s/dev/shm\s' /etc/fstab
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if /dev/shm is a separate partition"
+        task_1_cmd: |
+          grep -E '^\s*[^#].*\s/dev/shm\s' /etc/fstab
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output != '' %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 1 and output == '' %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 and output != '' %}
+            APPLIED: /dev/shm is configured as a separate partition in /etc/fstab
+          {% elif result_1.rc | default(-1) == 1 and output == '' %}
+            SKIPPED: /dev/shm is not a separate partition in /etc/fstab - remediation not applicable
+          {% else %}
+            FAILED: Could not check /dev/shm partition status
+          {% endif %}
+
+    # Requirement 2 - Apply nodev mount option to /dev/shm partition in /etc/fstab
+    - name: "Req 2 - Apply nodev option to /dev/shm in /etc/fstab"
+      shell: |
+        echo "=== BEFORE MODIFICATION ==="
+        cat /etc/fstab
+        echo ""
+        echo "=== APPLYING CHANGE ==="
+        echo "Command: Check if nodev option already exists"
+        if grep -E '^\s*[^#].*\s/dev/shm\s' /etc/fstab | grep -q 'nodev'; then
+          echo "nodev option already present in /dev/shm entry"
+          echo "No change needed"
+        else
+          echo "Adding nodev option to /dev/shm entry"
+          echo "Command: sed -i '/^\s*[^#].*\s\/dev\/shm\s/ s/defaults,/defaults,nodev,/; s/\(rw\|defaults\)/&,nodev/; s/,nodev,nodev/,nodev/; s/\([^,]\)$/\1,nodev/' /etc/fstab"
+          sed -i '/^\s*[^#].*\s\/dev\/shm\s/ {
+            s/defaults,/defaults,nodev,/
+            s/\(rw\|defaults\)/&,nodev/
+            s/,nodev,nodev/,nodev/
+            s/\([^,]\)$/\1,nodev/
+          }' /etc/fstab
+        fi
+        echo ""
+        echo "=== AFTER MODIFICATION ==="
+        cat /etc/fstab
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply nodev mount option to /dev/shm in /etc/fstab"
+        task_2_cmd: "sed -i with braces to target only /dev/shm line"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Requirement 1 was skipped, so this requirement is not applicable
+          {% elif result_2.rc | default(-1) == 0 %}
+            {% if 'nodev option already present' in result_2.stdout | default('') %}
+              APPLIED: nodev option already present in /dev/shm entry in /etc/fstab
+            {% else %}
+              APPLIED: nodev option added to /dev/shm partition in /etc/fstab
+            {% endif %}
+          {% else %}
+            FAILED: Could not modify /etc/fstab to add nodev option
+          {% endif %}
+
+    # Requirement 3 - Remount /dev/shm with updated options
+    - name: "Req 3 - Remount /dev/shm with updated options"
+      shell: |
+        echo "Command: mount -o remount /dev/shm"
+        mount -o remount /dev/shm
+        echo "Exit code: $?"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_2 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remount /dev/shm with updated options"
+        task_3_cmd: "mount -o remount /dev/shm"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_2 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if status_2 | trim == 'SKIPPED' %}
+            SKIPPED: Requirement 2 was skipped, so this requirement is not applicable
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: /dev/shm successfully remounted with updated options
+          {% else %}
+            FAILED: Could not remount /dev/shm with updated options
+          {% endif %}
+
+    # Requirement 4 - Verify nodev option is set on /dev/shm
+    - name: "Req 4 - Verify nodev option is set on /dev/shm"
+      shell: |
+        echo "Command: mount | grep -E '\s/dev/shm\s' | grep nodev"
+        mount | grep -E '\s/dev/shm\s' | grep nodev
+        echo "Exit code: $?"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify nodev option is set on /dev/shm"
+        task_4_cmd: |
+          mount | grep -E '\s/dev/shm\s' | grep nodev
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif result_4.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: Requirement 1 was skipped, so this requirement is not applicable
+          {% elif result_4.rc | default(-1) == 0 %}
+            APPLIED: nodev option is set on /dev/shm partition
+          {% else %}
+            FAILED: nodev option is NOT set on /dev/shm partition
+          {% endif %}
+
+    # Calculate overall status - FIXED: Split into two tasks to avoid self-reference
+    - name: Calculate overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' or status_4 | trim == 'FAILED' %}
+            FAILED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'SKIPPED' and 'already present' in rationale_2 | default('') %}
+            APPLIED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+
+    # Calculate overall details - FIXED: Now overall_status is defined from previous task
+    - name: Calculate overall remediation details
+      set_fact:
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            /dev/shm is not a separate partition in /etc/fstab - remediation not applicable
+          {% elif overall_status | trim == 'FAILED' %}
+            One or more remediation steps failed. Check individual requirement statuses.
+          {% elif overall_status | trim == 'APPLIED' %}
+            Successfully ensured nodev option is set on /dev/shm partition
+          {% else %}
+            Remediation partially applied - some steps may not have completed fully
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.2.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('No remediation applied') | trim }}"
+          - "========================================================"

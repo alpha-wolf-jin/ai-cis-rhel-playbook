@@ -1,0 +1,233 @@
+---
+- name: Remediation for CIS 1.1.1.4 - Ensure hfsplus kernel module is not available
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.4"
+    req_1: "Run provided CIS remediation script to fix Ensure hfsplus kernel module is not available"
+    req_2: "Run CIS audit procedure to confirm Ensure hfsplus kernel module is not available is now properly configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        module_exists: false
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+
+    # Requirement 1: Run provided CIS remediation script to fix Ensure hfsplus kernel module is not available
+    - name: Req 1 - Execute CIS remediation script for hfsplus module
+      copy:
+        dest: "/tmp/cis_remediation_1.1.1.4.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+
+          {
+             unset a_output2; l_output3="" l_dl="" # unset arrays and clear variables
+             l_mod_name="hfsplus" # set module name
+             l_mod_type="fs" # set module type
+             l_mod_path="$(readlink -f /lib/modules/**/kernel/$l_mod_type | sort -u)"
+             f_module_fix()
+             {
+                l_dl="y" # Set to ignore duplicate checks
+                a_showconfig=() # Create array with modprobe output
+                while IFS= read -r l_showconfig; do
+                   a_showconfig+=("$l_showconfig")
+                done < <(modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+'"${l_mod_name//-/_}"'\b')
+                if  lsmod | grep "$l_mod_name" &> /dev/null; then # Check if the module is currently loaded
+                   a_output2+=(" - unloading kernel module: \"$l_mod_name\"")
+                   modprobe -r "$l_mod_name" 2>/dev/null; rmmod "$l_mod_name" 2>/dev/null
+                fi
+                if ! grep -Pq -- '\binstall\h+'"${l_mod_name//- /_}"'\h+\/bin\/(true|false)\b' <<< "${a_showconfig[*]}"; then
+                   a_output2+=(" - setting kernel  module: \"$l_mod_name\" to \"/bin/false\"")
+                   printf '%s\n' "install $l_mod_name /bin/false" >> /etc/modprobe.d/"$l_mod_name".conf
+                fi
+                if ! grep -Pq -- '\bblacklist\h+'"${l_mod_name//-/_}"'\b' <<< "${a_showconfig[*]}"; then
+                   a_output2+=(" - denylisting kernel  module: \"$l_mod_name\"")
+                   printf '%s\n' "blacklist $l_mod_name" >> /etc/modprobe.d/"$l_mod_name".conf
+                fi
+             }
+             for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
+                if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
+                   l_output3="$l_output3\n  - \"$l_mod_base_directory\""
+                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
+                   [ "$l_dl" != "y" ] && f_module_fix
+                else
+                   echo -e " - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\""
+                fi
+             done
+             [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
+             [ "${#a_output2[@]}" -gt 0 ] && printf '%s\n' "${a_output2[@]}"
+             echo -e "\n - remediation of kernel module: \"$l_mod_name\" complete\n"
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the remediation script
+      shell: "/tmp/cis_remediation_1.1.1.4.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Req 1 - Remove temporary remediation script
+      file:
+        path: "/tmp/cis_remediation_1.1.1.4.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script for hfsplus module"
+        task_1_cmd: "/tmp/cis_remediation_1.1.1.4.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        module_exists: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if ("doesn't exist" not in output) and (result_1.rc | default(-1) == 0) %}
+            true
+          {% else %}
+            false
+          {% endif %}
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) != 0 %}
+            FAILED
+          {% else %}
+            {% if "doesn't exist" in output %}
+              SKIPPED
+            {% else %}
+              APPLIED
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if "doesn't exist" in output %}
+              SKIPPED: hfsplus module not available on the system, no remediation required per CIS procedure
+            {% else %}
+              APPLIED: CIS remediation script executed successfully
+            {% endif %}
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Run CIS audit procedure to confirm Ensure hfsplus kernel module is not available is now properly configured
+    - name: Req 2 - Run CIS audit check for hfsplus module
+      shell: |
+        {% raw %}
+        # Check if module is loaded
+        if lsmod | grep -q "hfsplus"; then
+          echo "FAIL: hfsplus module is loaded"
+          exit 1
+        fi
+        
+        # Check if module is blacklisted
+        if ! grep -r "blacklist hfsplus" /etc/modprobe.d/ &>/dev/null; then
+          echo "FAIL: hfsplus is not blacklisted in /etc/modprobe.d/"
+          exit 1
+        fi
+        
+        # Check if module is set to /bin/false
+        if ! grep -r "install hfsplus /bin/false" /etc/modprobe.d/ &>/dev/null; then
+          echo "FAIL: hfsplus is not set to /bin/false in /etc/modprobe.d/"
+          exit 1
+        fi
+        
+        echo "PASS: hfsplus module is not loaded and properly configured"
+        exit 0
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: module_exists | bool
+
+    - name: Store requirement 2 details when module exists
+      set_fact:
+        task_2_name: "Run CIS audit check for hfsplus module"
+        task_2_cmd: "Check module loading, blacklist, and install settings"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: System is compliant with CIS 1.1.1.4' if result_2.rc | default(-1) == 0 else 'FAILED: System is not compliant with CIS 1.1.1.4') | trim }}"
+      when: module_exists | bool
+
+    - name: Store requirement 2 details when module does not exist
+      set_fact:
+        task_2_name: "Run CIS audit check for hfsplus module"
+        task_2_cmd: "N/A - Module does not exist"
+        task_2_rc: -1
+        data_2: "Module not present, audit skipped per CIS procedure"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: hfsplus module not available on the system, no audit required per CIS procedure"
+      when: not (module_exists | bool)
+
+    # Calculate overall remediation status - FIXED BASED ON FEEDBACK
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            hfsplus module not available, no remediation required per CIS procedure
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'APPLIED' %}
+            Remediation applied and verified
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+            Remediation applied but verification failed
+          {% elif status_1 | trim == 'FAILED' %}
+            Remediation failed to apply
+          {% else %}
+            Status could not be determined
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.1.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Status could not be determined') | trim }}"
+          - "========================================================"

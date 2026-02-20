@@ -1,0 +1,858 @@
+---
+- name: Remediation for CIS 6.1.2 - Ensure filesystem integrity is regularly checked
+  hosts: all
+  become: yes
+  become_method: sudo
+  gather_facts: false
+  
+  vars:
+    checkpoint_id: "cis_6_1_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.2"
+    
+    # Requirement variables - quoted strings
+    req_1: "Check if AIDE is installed using command: rpm -q aide"
+    req_2: |
+      Apply root crontab entry for AIDE check using command: (crontab -u root -l 2>/dev/null; echo \"0 5 * * * /usr/sbin/aide --check\") | crontab -u root -
+    req_3: |
+      Create systemd service file for AIDE check using command: echo -e '[Unit]\\nDescription=Aide Check\\n\\n[Service]\\nType=simple\\nExecStart=/usr/sbin/aide --check\\n\\n[Install]\\nWantedBy=multi-user.target' > /etc/systemd/system/aidecheck.service
+    req_4: |
+      Create systemd timer file for AIDE check using command: echo -e '[Unit]\\nDescription=Aide check every day at 5AM\\n\\n[Timer]\\nOnCalendar=*-*-* 05:00:00\\nUnit=aidecheck.service\\n\\n[Install]\\nWantedBy=multi-user.target' > /etc/systemd/system/aidecheck.timer
+    req_5: "Set correct ownership on AIDE systemd files using command: chown root:root /etc/systemd/system/aidecheck.*"
+    req_6: "Set correct permissions on AIDE systemd files using command: chmod 0644 /etc/systemd/system/aidecheck.*"
+    req_7: "Reload systemd daemon using command: systemctl daemon-reload"
+    req_8: "Enable AIDE check service using command: systemctl enable aidecheck.service"
+    req_9: "Enable and start AIDE check timer using command: systemctl --now enable aidecheck.timer"
+    req_10: |
+      VERIFY: Confirm filesystem integrity check is scheduled using command: systemctl is-enabled aidecheck.timer 2>/dev/null || crontab -u root -l | grep -q \"aide --check\"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      ignore_errors: true
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # For .present backups: restore file from backup
+    - name: "State Guard - Restore /etc/systemd/system/aidecheck.service from backup"
+      copy:
+        src: "{{ state_guard_dir }}/aidecheck.service.present"
+        dest: "/etc/systemd/system/aidecheck.service"
+        remote_src: true
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Restore /etc/systemd/system/aidecheck.timer from backup"
+      copy:
+        src: "{{ state_guard_dir }}/aidecheck.timer.present"
+        dest: "/etc/systemd/system/aidecheck.timer"
+        remote_src: true
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    # For .absent markers: delete the config file created by previous remediation
+    - name: "State Guard - Delete /etc/systemd/system/aidecheck.service (created by remediation)"
+      file:
+        path: "/etc/systemd/system/aidecheck.service"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Delete /etc/systemd/system/aidecheck.timer (created by remediation)"
+      file:
+        path: "/etc/systemd/system/aidecheck.timer"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    # System-level undo for cron job
+    - name: "State Guard - Remove AIDE cron job"
+      shell: |
+        crontab -u root -l 2>/dev/null | grep -v "aide --check" | crontab -u root -
+      args:
+        executable: /bin/bash
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      ignore_errors: true
+
+    # Check if each file exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/systemd/system/aidecheck.service exists"
+      stat:
+        path: "/etc/systemd/system/aidecheck.service"
+      register: _sg_aidecheck_service_stat
+      ignore_errors: true
+
+    - name: "State Guard - Check if /etc/systemd/system/aidecheck.timer exists"
+      stat:
+        path: "/etc/systemd/system/aidecheck.timer"
+      register: _sg_aidecheck_timer_stat
+      ignore_errors: true
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/systemd/system/aidecheck.service (present)"
+      copy:
+        src: "/etc/systemd/system/aidecheck.service"
+        dest: "{{ state_guard_dir }}/aidecheck.service.present"
+        remote_src: true
+      when: "_sg_aidecheck_service_stat.stat is defined and _sg_aidecheck_service_stat.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Backup /etc/systemd/system/aidecheck.timer (present)"
+      copy:
+        src: "/etc/systemd/system/aidecheck.timer"
+        dest: "{{ state_guard_dir }}/aidecheck.timer.present"
+        remote_src: true
+      when: "_sg_aidecheck_timer_stat.stat is defined and _sg_aidecheck_timer_stat.stat.exists"
+      ignore_errors: true
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/systemd/system/aidecheck.service as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/aidecheck.service.absent"
+      when: "_sg_aidecheck_service_stat.stat is defined and not _sg_aidecheck_service_stat.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Mark /etc/systemd/system/aidecheck.timer as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/aidecheck.timer.absent"
+      when: "_sg_aidecheck_timer_stat.stat is defined and not _sg_aidecheck_timer_stat.stat.exists"
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      ignore_errors: true
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        data_6: ""
+        data_7: ""
+        data_8: ""
+        data_9: ""
+        data_10: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        status_4: "UNKNOWN"
+        status_5: "UNKNOWN"
+        status_6: "UNKNOWN"
+        status_7: "UNKNOWN"
+        status_8: "UNKNOWN"
+        status_9: "UNKNOWN"
+        status_10: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        rationale_4: "Not evaluated"
+        rationale_5: "Not evaluated"
+        rationale_6: "Not evaluated"
+        rationale_7: "Not evaluated"
+        rationale_8: "Not evaluated"
+        rationale_9: "Not evaluated"
+        rationale_10: "Not evaluated"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        task_9_name: "Not executed"
+        task_9_cmd: "N/A"
+        task_9_rc: -1
+        task_10_name: "Not executed"
+        task_10_cmd: "N/A"
+        task_10_rc: -1
+
+    # Requirement 1: Check if AIDE is installed using command: rpm -q aide
+    - name: "Req 1 - Check if AIDE is installed"
+      shell: |
+        rpm -q aide
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+      become: false  # rpm -q does not require root privileges
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if AIDE is installed"
+        task_1_cmd: "rpm -q aide"
+        task_1_rc: "{{ result_1.rc | default(-1) | int }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED
+          {% elif rc == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED: AIDE package is installed
+          {% elif rc == 1 %}
+            SKIPPED: AIDE package not installed, skipping all subsequent steps
+          {% else %}
+            FAILED: Command execution failed with exit code {{ rc }}, cannot determine if AIDE is installed
+          {% endif %}
+
+    # Requirement 2: Apply root crontab entry for AIDE check
+    - name: "Req 2 - Capture crontab before modification"
+      shell: |
+        echo "=== BEFORE ==="
+        crontab -u root -l 2>/dev/null || echo "(no crontab)"
+      args:
+        executable: /bin/bash
+      register: crontab_before
+      changed_when: false
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: "Req 2 - Apply root crontab entry for AIDE check"
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        (crontab -u root -l 2>/dev/null; echo "0 5 * * * /usr/sbin/aide --check") | crontab -u root -
+        echo "=== AFTER ==="
+        crontab -u root -l 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply root crontab entry for AIDE check"
+        task_2_cmd: |
+          (crontab -u root -l 2>/dev/null; echo \"0 5 * * * /usr/sbin/aide --check\") | crontab -u root -
+        task_2_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_2.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_2: >-
+          {% if task_1_rc == 0 %}
+            {{ (crontab_before.stdout | default('') + result_2.stdout | default('')) | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_2: >-
+          {% if task_1_rc == 0 %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if task_1_rc == 0 %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: AIDE check scheduled via cron to run daily at 5 AM
+            {% else %}
+              FAILED: Could not schedule AIDE check via cron
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 3: Create systemd service file for AIDE check
+    - name: "Req 3 - Capture service file before modification"
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/systemd/system/aidecheck.service ]; then
+          cat /etc/systemd/system/aidecheck.service
+        else
+          echo "(file does not exist)"
+        fi
+      args:
+        executable: /bin/bash
+      register: service_before
+      changed_when: false
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: "Req 3 - Create systemd service file for AIDE check"
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        echo -e '[Unit]\nDescription=Aide Check\n\n[Service]\nType=simple\nExecStart=/usr/sbin/aide --check\n\n[Install]\nWantedBy=multi-user.target' > /etc/systemd/system/aidecheck.service
+        echo "=== AFTER ==="
+        cat /etc/systemd/system/aidecheck.service
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Create systemd service file for AIDE check"
+        task_3_cmd: |
+          echo -e '[Unit]\\nDescription=Aide Check\\n\\n[Service]\\nType=simple\\nExecStart=/usr/sbin/aide --check\\n\\n[Install]\\nWantedBy=multi-user.target' > /etc/systemd/system/aidecheck.service
+        task_3_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_3.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_3: >-
+          {% if task_1_rc == 0 %}
+            {{ (service_before.stdout | default('') + result_3.stdout | default('')) | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_3: >-
+          {% if task_1_rc == 0 %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if task_1_rc == 0 %}
+            {% if result_3.rc | default(-1) == 0 %}
+              APPLIED: File /etc/systemd/system/aidecheck.service created with correct content
+            {% else %}
+              FAILED: Could not create service file
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 4: Create systemd timer file for AIDE check
+    - name: "Req 4 - Capture timer file before modification"
+      shell: |
+        echo "=== BEFORE ==="
+        if [ -f /etc/systemd/system/aidecheck.timer ]; then
+          cat /etc/systemd/system/aidecheck.timer
+        else
+          echo "(file does not exist)"
+        fi
+      args:
+        executable: /bin/bash
+      register: timer_before
+      changed_when: false
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: "Req 4 - Create systemd timer file for AIDE check"
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        echo -e '[Unit]\nDescription=Aide check every day at 5AM\n\n[Timer]\nOnCalendar=*-*-* 05:00:00\nUnit=aidecheck.service\n\n[Install]\nWantedBy=multi-user.target' > /etc/systemd/system/aidecheck.timer
+        echo "=== AFTER ==="
+        cat /etc/systemd/system/aidecheck.timer
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Create systemd timer file for AIDE check"
+        task_4_cmd: |
+          echo -e '[Unit]\\nDescription=Aide check every day at 5AM\\n\\n[Timer]\\nOnCalendar=*-*-* 05:00:00\\nUnit=aidecheck.service\\n\\n[Install]\\nWantedBy=multi-user.target' > /etc/systemd/system/aidecheck.timer
+        task_4_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_4.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_4: >-
+          {% if task_1_rc == 0 %}
+            {{ (timer_before.stdout | default('') + result_4.stdout | default('')) | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_4: >-
+          {% if task_1_rc == 0 %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if task_1_rc == 0 %}
+            {% if result_4.rc | default(-1) == 0 %}
+              APPLIED: File /etc/systemd/system/aidecheck.timer created with correct content
+            {% else %}
+              FAILED: Could not create timer file
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 5: Set correct ownership on AIDE systemd files
+    - name: "Req 5 - Set correct ownership on AIDE systemd files"
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        chown root:root /etc/systemd/system/aidecheck.*
+        echo "=== AFTER ==="
+        ls -la /etc/systemd/system/aidecheck.* 2>/dev/null || echo "No aidecheck files found"
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Set correct ownership on AIDE systemd files"
+        task_5_cmd: "chown root:root /etc/systemd/system/aidecheck.*"
+        task_5_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_5.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_5: >-
+          {% if task_1_rc == 0 %}
+            {{ result_5.stdout | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_5: >-
+          {% if task_1_rc == 0 %}
+            {% if result_5.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if task_1_rc == 0 %}
+            {% if result_5.rc | default(-1) == 0 %}
+              APPLIED: Ownership of aidecheck.service and aidecheck.timer set to root:root
+            {% else %}
+              FAILED: Could not set ownership
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 6: Set correct permissions on AIDE systemd files
+    - name: "Req 6 - Set correct permissions on AIDE systemd files"
+      shell: |
+        echo "=== APPLYING CHANGE ==="
+        chmod 0644 /etc/systemd/system/aidecheck.*
+        echo "=== AFTER ==="
+        ls -la /etc/systemd/system/aidecheck.* 2>/dev/null || echo "No aidecheck files found"
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Set correct permissions on AIDE systemd files"
+        task_6_cmd: "chmod 0644 /etc/systemd/system/aidecheck.*"
+        task_6_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_6.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_6: >-
+          {% if task_1_rc == 0 %}
+            {{ result_6.stdout | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_6: >-
+          {% if task_1_rc == 0 %}
+            {% if result_6.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_6: >-
+          {% if task_1_rc == 0 %}
+            {% if result_6.rc | default(-1) == 0 %}
+              APPLIED: Permissions of aidecheck.service and aidecheck.timer set to 0644
+            {% else %}
+              FAILED: Could not set permissions
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 7: Reload systemd daemon
+    - name: "Req 7 - Reload systemd daemon"
+      shell: |
+        systemctl daemon-reload
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 7 details
+      set_fact:
+        task_7_name: "Reload systemd daemon"
+        task_7_cmd: "systemctl daemon-reload"
+        task_7_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_7.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_7: >-
+          {% if task_1_rc == 0 %}
+            {{ result_7.stdout | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_7: >-
+          {% if task_1_rc == 0 %}
+            {% if result_7.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_7: >-
+          {% if task_1_rc == 0 %}
+            {% if result_7.rc | default(-1) == 0 %}
+              APPLIED: Systemd manager configuration reloaded
+            {% else %}
+              FAILED: Could not reload systemd daemon
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 8: Enable AIDE check service
+    - name: "Req 8 - Enable AIDE check service"
+      shell: |
+        systemctl enable aidecheck.service
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 8 details
+      set_fact:
+        task_8_name: "Enable AIDE check service"
+        task_8_cmd: "systemctl enable aidecheck.service"
+        task_8_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_8.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_8: >-
+          {% if task_1_rc == 0 %}
+            {{ result_8.stdout | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_8: >-
+          {% if task_1_rc == 0 %}
+            {% if result_8.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_8: >-
+          {% if task_1_rc == 0 %}
+            {% if result_8.rc | default(-1) == 0 %}
+              APPLIED: AIDE check service enabled
+            {% else %}
+              FAILED: Could not enable AIDE check service
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 9: Enable and start AIDE check timer
+    - name: "Req 9 - Enable and start AIDE check timer"
+      shell: |
+        systemctl --now enable aidecheck.timer
+      args:
+        executable: /bin/bash
+      register: result_9
+      ignore_errors: true
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 9 details
+      set_fact:
+        task_9_name: "Enable and start AIDE check timer"
+        task_9_cmd: "systemctl --now enable aidecheck.timer"
+        task_9_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_9.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_9: >-
+          {% if task_1_rc == 0 %}
+            {{ result_9.stdout | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_9: >-
+          {% if task_1_rc == 0 %}
+            {% if result_9.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_9: >-
+          {% if task_1_rc == 0 %}
+            {% if result_9.rc | default(-1) == 0 %}
+              APPLIED: AIDE check timer enabled and started
+            {% else %}
+              FAILED: Could not enable and start AIDE check timer
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 10: VERIFY - Confirm filesystem integrity check is scheduled
+    - name: "Req 10 - Verify filesystem integrity check is scheduled"
+      shell: |
+        systemctl is-enabled aidecheck.timer 2>/dev/null || crontab -u root -l | grep -q "aide --check"
+      args:
+        executable: /bin/bash
+      register: result_10
+      ignore_errors: true
+      changed_when: false
+      when: "task_1_rc == 0"
+
+    - name: Store requirement 10 details
+      set_fact:
+        task_10_name: "Verify filesystem integrity check is scheduled"
+        task_10_cmd: |
+          systemctl is-enabled aidecheck.timer 2>/dev/null || crontab -u root -l | grep -q \"aide --check\"
+        task_10_rc: >-
+          {% if task_1_rc == 0 %}
+            {{ result_10.rc | default(-1) | int }}
+          {% else %}
+            -1
+          {% endif %}
+        data_10: >-
+          {% if task_1_rc == 0 %}
+            {{ result_10.stdout | default('') | trim }}
+          {% else %}
+            {{ '' }}
+          {% endif %}
+        status_10: >-
+          {% if task_1_rc == 0 %}
+            {% if result_10.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_10: >-
+          {% if task_1_rc == 0 %}
+            {% if result_10.rc | default(-1) == 0 %}
+              APPLIED: Filesystem integrity check is scheduled via systemd timer or cron
+            {% else %}
+              FAILED: Filesystem integrity check is not scheduled
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed or installation status unknown, verification not applicable
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s1 == 'FAILED' %}
+            FAILED
+          {% elif task_1_rc == 0 %}
+            {% if status_10 | trim == 'APPLIED' %}
+              APPLIED
+            {% else %}
+              PARTIALLY APPLIED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% set s1 = status_1 | trim %}
+          {% if s1 == 'SKIPPED' %}
+            AIDE package not installed. Filesystem integrity monitoring cannot be configured.
+          {% elif s1 == 'FAILED' %}
+            Failed to determine if AIDE is installed. Cannot proceed with remediation.
+          {% elif task_1_rc == 0 %}
+            {% if status_10 | trim == 'APPLIED' %}
+              Filesystem integrity check successfully configured via systemd timer or cron.
+            {% else %}
+              Some components configured but verification failed. Check systemd and cron status.
+            {% endif %}
+          {% else %}
+            Filesystem integrity check configuration failed.
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 6.1.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_1_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_1_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_2_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_2_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_3_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_3_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_4_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_4_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_5_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_5_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_6_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_6_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_7_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_7_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_8_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_8_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_8 | default('') | trim }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 9 - {{ req_9 }}:"
+          - "  Task: {{ task_9_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_9_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_9_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_9 | default('') | trim }}"
+          - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_9 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 10 - {{ req_10 }}:"
+          - "  Task: {{ task_10_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_10_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_10_rc | default(-1) | string | trim }}"
+          - "  Data: {{ data_10 | default('') | trim }}"
+          - "  Status: {{ status_10 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_10 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

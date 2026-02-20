@@ -1,0 +1,230 @@
+---
+- name: Remediation for CIS 5.1.22
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_22"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.22"
+    req_1: "Check if sshd is installed"
+    req_2: "Apply configuration to set UsePAM to yes in /etc/ssh/sshd_config"
+    req_3: "VERIFY: Confirm UsePAM is enabled"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, restore original sshd_config from backup
+    - name: State Guard - Restore /etc/ssh/sshd_config from backup
+      copy:
+        src: "{{ state_guard_dir }}/sshd_config.present"
+        dest: "/etc/ssh/sshd_config"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restart sshd to apply restored config
+      shell: systemctl restart sshd
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if /etc/ssh/sshd_config exists
+      stat:
+        path: "/etc/ssh/sshd_config"
+      register: _sg_sshd_config_stat
+
+    - name: State Guard - Backup /etc/ssh/sshd_config (present)
+      copy:
+        src: "/etc/ssh/sshd_config"
+        dest: "{{ state_guard_dir }}/sshd_config.present"
+        remote_src: true
+      when: _sg_sshd_config_stat.stat.exists
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+
+    # Requirement 1: Check if openssh-server is installed
+    - name: "Req 1 - Check openssh-server package"
+      shell: rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check openssh-server package"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output.startswith('openssh-server-') %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output.startswith('openssh-server-') %}
+            APPLIED: openssh-server is installed, remediation is applicable
+          {% else %}
+            SKIPPED: openssh-server is not installed on this server
+          {% endif %}
+
+    # Requirement 2: Apply configuration to set UsePAM to yes in /etc/ssh/sshd_config
+    - name: "Req 2 - Apply UsePAM configuration"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/ssh/sshd_config
+        echo "=== APPLYING CHANGE ==="
+        sed -i '/^\s*UsePAM\s/d' /etc/ssh/sshd_config && echo 'UsePAM yes' >> /etc/ssh/sshd_config
+        echo "=== AFTER ==="
+        cat /etc/ssh/sshd_config
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: status_1 | trim == "APPLIED"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply UsePAM configuration"
+        task_2_cmd: |
+          sed -i '/^\s*UsePAM\s/d' /etc/ssh/sshd_config && echo 'UsePAM yes' >> /etc/ssh/sshd_config
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim != "APPLIED" %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != "APPLIED" %}
+            SKIPPED: openssh-server not installed
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: UsePAM configuration updated successfully
+          {% else %}
+            FAILED: Could not update UsePAM configuration
+          {% endif %}
+
+    # Requirement 3: Verify UsePAM is enabled
+    - name: "Req 3 - Verify UsePAM configuration"
+      shell: |
+        sshd -T -C user=root -C host="$(hostname)" -C addr="$(grep $(hostname) /etc/hosts | awk '{print $1}')" | grep -i 'usepam yes'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: status_1 | trim == "APPLIED"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify UsePAM configuration"
+        task_3_cmd: |
+          sshd -T -C user=root -C host=\"$(hostname)\" -C addr=\"$(grep $(hostname) /etc/hosts | awk '{print $1}')\" | grep -i 'usepam yes'
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim != "APPLIED" %}
+            SKIPPED
+          {% elif result_3.stdout | default('') | trim == 'usepam yes' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim != "APPLIED" %}
+            SKIPPED: openssh-server not installed
+          {% elif result_3.stdout | default('') | trim == 'usepam yes' %}
+            APPLIED: UsePAM is enabled in sshd configuration
+          {% else %}
+            FAILED: UsePAM is not enabled in sshd configuration
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.22"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.22"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_3 | trim }}"
+          - "  Details: {{ rationale_3 | trim }}"
+          - "========================================================"

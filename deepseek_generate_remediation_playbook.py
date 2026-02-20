@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Generic Ansible Playbook Generator
+Generic Ansible Remediation Playbook Generator
 
-This script generates Ansible playbooks based on custom requirements.
+This script generates Ansible REMEDIATION playbooks based on CIS benchmark requirements.
+It applies fixes and configuration changes to make systems compliant.
 
 HOW TO USE FOR DIFFERENT TASKS:
 ================================
@@ -160,41 +161,81 @@ def generate_playbook(
     if requirements is None:
         requirements = []
     
-    # Build audit procedure section if provided
+    # Build remediation procedure section if provided
+    # Note: The parameter is still called audit_procedure for interface compatibility,
+    # but for remediation playbooks it contains the remediation procedure
     audit_procedure_section = ""
     if audit_procedure:
         audit_procedure_section = f"""
 
-**CIS BENCHMARK AUDIT PROCEDURE:**
-The following is the official audit procedure from the CIS Benchmark. 
-Your playbook MUST implement this audit procedure:
+**CIS BENCHMARK REMEDIATION PROCEDURE:**
+The following is the official remediation procedure from the CIS Benchmark. 
+Your playbook MUST implement this remediation procedure to FIX the system:
 
 ```bash
 {audit_procedure}
 ```
 
-**CRITICAL INSTRUCTIONS FOR AUDIT PROCEDURE:**
+**CRITICAL INSTRUCTIONS FOR REMEDIATION PROCEDURE:**
 1. **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
-   - **MANDATORY**: If the audit procedure provides scripts or commands, you MUST use them exactly as provided
+   - **MANDATORY**: If the remediation procedure provides scripts or commands, you MUST use them exactly as provided
    - **DO NOT** create alternative commands or scripts unless the provided ones fail to work
    - **ONLY** explore other options if the provided scripts/commands do not work (e.g., command not found, syntax errors, etc.)
-   - Preserve the exact commands, scripts, and logic from the audit procedure
-2. **IF THE AUDIT PROCEDURE CONTAINS A COMPLETE BASH SCRIPT** (identified by `#!/usr/bin/env bash` or `#!/bin/bash`):
+   - Preserve the exact commands, scripts, and logic from the remediation procedure
+2. **IF THE REMEDIATION PROCEDURE CONTAINS A COMPLETE BASH SCRIPT** (identified by `#!/usr/bin/env bash` or `#!/bin/bash`):
    - **MUST** use the ENTIRE script as a single `copy:` + `shell:` task pair — save script to a temp file and execute it
-   - **DO NOT** break the script into individual commands or grep/awk tasks
+   - **DO NOT** break the script into individual commands
    - **DO NOT** re-implement the script logic with separate Ansible tasks
-   - The script already contains all the checking logic — just run it and capture its output
-   - Determine PASS/FAIL from the script's stdout (typically `** PASS **` or `** FAIL **`)
+   - The script already contains all the remediation logic — just run it and capture its output
 3. **IF ONLY INDIVIDUAL COMMANDS ARE PROVIDED** (no complete bash script):
    - Convert each command into a separate Ansible task
-   - Each distinct check should become a separate requirement/task
-4. Capture the output of each command/script for the compliance report
-5. **USE THE EXPECTED OUTPUT** from the audit procedure to determine PASS/FAIL status:
-   - If the procedure shows "Example output: generated", then "generated" = PASS
-   - If the procedure shows "Verify output is not masked or disabled", then check for those strings
-   - Compare actual command output against the expected output shown in the procedure
-6. The audit procedure defines what PASS and FAIL mean - use this for status determination logic
-7. **Extract expected outputs and failure conditions** from the procedure text and use them in your status variables
+   - Each distinct remediation step should become a separate requirement/task
+   - Use appropriate Ansible modules where possible (e.g., package, service, lineinfile, file)
+4. Capture the output of each command/script for the remediation report
+5. **IDEMPOTENCY**: Ensure each task is safe to run multiple times
+   - Check if a change is needed before applying it
+   - Use `creates:` or `when:` conditions where appropriate
+6. The remediation procedure defines what changes must be applied — implement them faithfully
+7. **The LAST task should VERIFY** the remediation was applied correctly by running the audit check
+8. **SKIP IF NOT APPLICABLE**: If the required software or package is not in place, do NOT attempt to install it. This remediation is not suitable for this server — mark it as SKIPPED instead of failing or forcing changes.
+9. **CAPTURE FILE CONTENTS BEFORE AND AFTER MODIFICATION**: When a remediation task modifies a configuration file (e.g., `/etc/fstab`, `/etc/sysctl.conf`, `/etc/ssh/sshd_config`), use `cat` to capture the file contents before and after the change. Store both in `data_N` so the stdout/stdout_lines show exactly what changed. This makes it much easier for AI analysis to understand the remediation and provides clear evidence for further enhancement if needed.
+   - **Pattern**: Before the modification task, run `cat /path/to/file` and store the output. After the modification, run `cat /path/to/file` again. Include both in the report data.
+   - Example:
+     ```yaml
+     - name: "Req 2 - Apply config change to /etc/sysctl.conf"
+       shell: |
+         echo "=== BEFORE ==="
+         cat /etc/sysctl.conf
+         echo "=== APPLYING CHANGE ==="
+         # ... apply the change ...
+         echo "=== AFTER ==="
+         cat /etc/sysctl.conf
+       args:
+         executable: /bin/bash
+       register: result_2
+       ignore_errors: true
+     ```
+10. **REBOOT HANDLING**: If the remediation procedure requires a system reboot:
+   - Use the Ansible `reboot` module with a **3-minute timeout** to wait for the connection to come back
+   - **DO NOT** use `shell: reboot` or `command: shutdown -r now` — these will lose the SSH connection without waiting
+   - **Pattern**:
+     ```yaml
+     - name: "Req N - Reboot system to apply changes"
+       reboot:
+         reboot_timeout: 180
+       register: result_N
+       ignore_errors: true
+     ```
+   - The `reboot` module automatically handles: initiating reboot, waiting for the system to come back, and re-establishing the SSH connection
+   - If the reboot is conditional (e.g., only needed if changes were made), add a `when:` condition:
+     ```yaml
+     - name: "Req N - Reboot system if changes were applied"
+       reboot:
+         reboot_timeout: 180
+       when: "result_previous.changed | default(false)"
+       register: result_N
+       ignore_errors: true
+     ```
 
 """
     
@@ -313,13 +354,13 @@ The following feedback identifies issues and provides recommendations for enhanc
                 f'      - ""'
             )
         
-        # Add OVERALL COMPLIANCE section using the LAST requirement's status
+        # Add OVERALL REMEDIATION section using the LAST requirement's status
         last_idx = req_indices[-1]
         report_lines.append(
             f'      - "========================================================"\n'
-            f'      - "OVERALL COMPLIANCE:"\n'
-            f'      - "  Status: {{{{{{ status_{last_idx:02d} | default(\'UNKNOWN\') | trim }}}}}}"\n'
-            f'      - "  Rationale: {{{{{{ rationale_{last_idx:02d} | default(\'Not evaluated\') | trim }}}}}}"\n'
+            f'      - "OVERALL REMEDIATION:"\n'
+            f'      - "  Result: {{{{{{ status_{last_idx:02d} | default(\'UNKNOWN\') | trim }}}}}}"\n'
+            f'      - "  Details: {{{{{{ rationale_{last_idx:02d} | default(\'Not evaluated\') | trim }}}}}}"\n'
             f'      - "========================================================"'
         )
         
@@ -328,7 +369,7 @@ The following feedback identifies issues and provides recommendations for enhanc
         first_idx = 1
         vars_section = '    req_1: "Requirement 1 description"'
         init_section = '        data_1: "Not collected yet"'
-        report_section = '      - "REQUIREMENT 1 - {{ req_1 }}:"\n      - "  Data: {{ data_1 | default(\'N/A\') | trim }}"\n      - "  Status: {{ status_1 | default(\'UNKNOWN\') | trim }}"\n      - "  Rationale: {{ rationale_1 | default(\'Not evaluated\') | trim }}"\n      - ""\n      - "========================================================"\n      - "OVERALL COMPLIANCE:"\n      - "  Status: {{ status_1 | default(\'UNKNOWN\') | trim }}"\n      - "  Rationale: {{ rationale_1 | default(\'Not evaluated\') | trim }}"\n      - "========================================================"'
+        report_section = '      - "REQUIREMENT 1 - {{ req_1 }}:"\n      - "  Data: {{ data_1 | default(\'N/A\') | trim }}"\n      - "  Status: {{ status_1 | default(\'UNKNOWN\') | trim }}"\n      - "  Details: {{ rationale_1 | default(\'Not evaluated\') | trim }}"\n      - ""\n      - "========================================================"\n      - "OVERALL REMEDIATION:"\n      - "  Result: {{ status_1 | default(\'UNKNOWN\') | trim }}"\n      - "  Details: {{ rationale_1 | default(\'Not evaluated\') | trim }}"\n      - "========================================================"'
     
     # Determine if this is an enhancement or new generation
     is_enhancement = current_playbook and feedback
@@ -346,11 +387,11 @@ The following feedback identifies issues and provides recommendations for enhanc
 
 ## 2. SIMPLICITY RULES
 1. **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
-   - **MANDATORY**: If the audit procedure or requirements provide scripts or commands, use them exactly as provided
+   - **MANDATORY**: If the remediation procedure or requirements provide scripts or commands, use them exactly as provided
    - **DO NOT** create alternative commands or scripts unless the provided ones fail to work
    - **ONLY** explore other options if the provided scripts/commands do not work (e.g., command not found, syntax errors, etc.)
-   - Preserve the exact commands, scripts, and logic from the audit procedure
-2. MINIMUM tasks - only what's needed to collect data
+   - Preserve the exact commands, scripts, and logic from the remediation procedure
+2. MINIMUM tasks - only what is needed to apply remediation and verify
 3. NO debug tasks except the final report
 4. NO complex Jinja2 - use simple expressions
 5. ONE task per requirement
@@ -365,17 +406,94 @@ The following feedback identifies issues and provides recommendations for enhanc
 ## 3. MANDATORY STRUCTURE
 ```yaml
 ---
-- name: Data Collection for KCS [KCS ID]
+- name: Remediation for CIS [Checkpoint ID]
   hosts: all
   become: yes
   gather_facts: false
   vars:
-    kcs_article: "[KCS URL]"
+    checkpoint_id: "cis_[checkpoint_id_underscored]"
+    state_guard_dir: "/tmp/.cis_state_guard/{{{{{{ checkpoint_id }}}}}}"
+    state_guard_flag: "{{{{{{ state_guard_dir }}}}}}/checkpoint.flag"
+    kcs_article: "[CIS Benchmark reference]"
     # COPY EXACT requirement text from requirements above!
     # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
-    # ❌ WRONG: req_2: Run script to check for audit log files
-    # ✅ CORRECT: req_2: "Run script to check for audit log files"
+    # ❌ WRONG: req_2: Run script to apply remediation
+    # ✅ CORRECT: req_2: "Run script to apply remediation"
 {vars_section}
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    # See Section 7 for detailed State Guard instructions
+    # Backup naming: .present = file existed before, .absent = file did not exist before
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{{{{{ state_guard_flag }}}}}}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # For .present backups: restore file from backup
+    - name: "State Guard - Restore [original file] from backup"
+      copy:
+        src: "{{{{{{ state_guard_dir }}}}}}/[filename].present"
+        dest: "/path/to/[original file]"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # For .absent markers: delete the config file created by previous remediation
+    # - name: "State Guard - Delete [config file] (created by remediation)"
+    #   file:
+    #     path: "/path/to/[config file]"
+    #     state: absent
+    #   when: _sg_flag.stat.exists
+    #   ignore_errors: true
+
+    # Add system-level undo commands if needed (e.g., remount, sysctl -p, systemctl restart)
+    - name: "State Guard - Undo system changes"
+      shell: "[undo command, e.g., mount -o remount /var, sysctl -p]"
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{{{{{ state_guard_dir }}}}}}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{{{{{ state_guard_dir }}}}}}"
+        state: directory
+        mode: '0700'
+
+    # Check if each file exists before deciding backup suffix
+    - name: "State Guard - Check if [original file] exists"
+      stat:
+        path: "/path/to/[original file]"
+      register: _sg_file_stat
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup [original file] (present)"
+      copy:
+        src: "/path/to/[original file]"
+        dest: "{{{{{{ state_guard_dir }}}}}}/[filename].present"
+        remote_src: true
+      when: _sg_file_stat.stat.exists
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark [config file] as absent"
+      copy:
+        content: "absent"
+        dest: "{{{{{{ state_guard_dir }}}}}}/[filename].absent"
+      when: not _sg_file_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{{{{{ state_guard_flag }}}}}}"
 
   tasks:
     - name: Initialize data variables
@@ -392,7 +510,6 @@ The following feedback identifies issues and provides recommendations for enhanc
         executable: /bin/bash
       register: result_{{first_idx}}
       ignore_errors: true
-      changed_when: false
 
     - name: Store requirement {{first_idx}} details
       set_fact:
@@ -400,23 +517,22 @@ The following feedback identifies issues and provides recommendations for enhanc
         task_{{first_idx}}_cmd: "[exact shell command used]"
         task_{{first_idx}}_rc: "{{{{{{ result_{{first_idx}}.rc | default(-1) }}}}}}"
         data_{{first_idx}}: "{{{{{{ result_{{first_idx}}.stdout | default('') | trim }}}}}}"
-        status_{{first_idx}}: "{{{{{{ ('PASS' if condition else 'FAIL') | trim }}}}}}"
-        # NOTE: If rationale contains double quotes, use single quotes for outer wrapper:
-        # rationale_{{first_idx}}: '{{ ("PASS when output is exactly \"value\", FAIL otherwise" if ... else "FAIL: Expected \"value\"") | trim }}'
-        rationale_{{first_idx}}: "{{{{{{ 'PASS when X, FAIL when Y' | trim }}}}}}"
+        status_{{first_idx}}: "{{{{{{ ('APPLIED' if result_{{first_idx}}.rc | default(-1) == 0 else 'FAILED') | trim }}}}}}"
+        rationale_{{first_idx}}: "{{{{{{ 'APPLIED: change was made successfully' if result_{{first_idx}}.rc | default(-1) == 0 else 'FAILED: change could not be applied' | trim }}}}}}"
 
-    # Final report - MUST include Status and Rationale for each requirement
-    - name: Generate compliance report
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
       debug:
         msg:
           - "========================================================"
-          - "        COMPLIANCE REPORT"
+          - "        REMEDIATION REPORT"
           - "========================================================"
-          - "Reference: [KCS URL or CIS Benchmark reference]"
+          - "Reference: [CIS Benchmark reference]"
           - "========================================================"
           - ""
 {{report_section}}
           - "========================================================"
+
 ```
 
 ## 4. CRITICAL SYNTAX RULES
@@ -450,6 +566,26 @@ The following feedback identifies issues and provides recommendations for enhanc
   1. **Preferred**: Use single quotes `'...'` for the outer wrapper and escape double quotes `\"` inside
   2. **Alternative**: Use double quotes `"..."` for the outer wrapper and escape single quotes `\'` inside, or use single quotes for string literals inside
   3. **Why**: YAML parser sees the second set of matching quotes and thinks the string has ended prematurely
+
+**CRITICAL - YAML Quoting for `when:` Conditions:**
+- **Problem**: When a `when:` condition contains single quotes (e.g., string comparisons, `not in` checks), YAML parser gets confused about where the string starts and ends
+- ❌ WRONG - Causes "did not find expected '-' indicator" error:
+  ```yaml
+  when:
+    - current_tmp_line != ''
+    - 'noexec' not in current_tmp_line
+  ```
+- ✅ CORRECT - Wrap the entire condition in double quotes:
+  ```yaml
+  when:
+    - "current_tmp_line != ''"
+    - "'noexec' not in current_tmp_line"
+  ```
+- **Rule**: ALWAYS wrap `when:` list items in double quotes if they contain:
+  1. Single quotes: `''`, `'value'`
+  2. Special characters: `:`, `{{`, `[`, etc.
+  3. `not in` or `in` checks with quoted strings
+  4. String comparisons with empty strings (`!= ''`, `== ''`)
 
 **YAML Syntax for Shell Commands:**
 - Commands with special characters MUST use literal block scalar (|) or folded (>)
@@ -721,15 +857,15 @@ The following feedback identifies issues and provides recommendations for enhanc
 - **Note**: `{% raw %}` and `{% endraw %}` are Jinja2 tags that go INSIDE the shell content, not on the `shell:` line
 
 **Complex Bash Scripts - MANDATORY PATTERN:**
-- **CRITICAL**: When a requirement contains a bash script (from audit procedure or requirements), you MUST use this EXACT pattern:
+- **CRITICAL**: When a requirement contains a bash script (from remediation procedure or requirements), you MUST use this EXACT pattern:
   1. Use `copy` module to create the script on remote client with `{% raw %}` tags
   2. Use `shell` module to execute the script
   3. Use `file` module to delete the temporary script
 - **MANDATORY PATTERN** (use this EXACT structure):
 ```yaml
-    - name: Req 1 - Execute CIS audit script for [description]
+    - name: Req 1 - Execute CIS remediation script for [description]
       copy:
-        dest: "/tmp/cis_audit_[checkpoint_id].sh"
+        dest: "/tmp/cis_remediation_[checkpoint_id].sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -749,28 +885,27 @@ The following feedback identifies issues and provides recommendations for enhanc
       register: script_create_1
       ignore_errors: true
 
-    - name: Req 1 - Execute the audit script
-      shell: "/tmp/cis_audit_[checkpoint_id].sh"
+    - name: Req 1 - Execute the remediation script
+      shell: "/tmp/cis_remediation_[checkpoint_id].sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      changed_when: false
 
-    - name: Req 1 - Remove temporary audit script
+    - name: Req 1 - Remove temporary remediation script
       file:
-        path: "/tmp/cis_audit_[checkpoint_id].sh"
+        path: "/tmp/cis_remediation_[checkpoint_id].sh"
         state: absent
       ignore_errors: true
 ```
 - **CRITICAL RULES**:
   - **ALWAYS** wrap script content in `{% raw %}` and `{% endraw %}` tags in the `copy` module's `content` field
   - **ALWAYS** use three tasks: `copy` (create), `shell` (execute), `file` (delete)
-  - Script filename should be unique per requirement (e.g., `/tmp/cis_audit_7.2.9.sh` or `/tmp/cis_audit_req_1.sh`)
+  - Script filename should be unique per requirement (e.g., `/tmp/cis_remediation_7.2.9.sh` or `/tmp/cis_remediation_req_1.sh`)
   - Set `mode: '0700'` on the copy task to make script executable
   - Use `args: executable: /bin/bash` on the shell task
   - Use `ignore_errors: true` on all three tasks
-  - Use `changed_when: false` on the shell task (audit scripts don't change system state)
+  - Remediation scripts are expected to change system state — do NOT add `changed_when: false`
   - Register the shell task result (e.g., `register: result_1`) for status evaluation
   - **DO NOT** try to execute scripts inline with shell module - always use copy/shell/file pattern
 
@@ -807,86 +942,118 @@ vars:
 - **CRITICAL RULE:** With single quotes, use `\\.` (SINGLE backslash) NOT `\\\\.` (DOUBLE backslash)
 
 **CRITICAL - Extracting Specific Values from Regex Matches:**
-- **PREFERRED APPROACH: Use `regex_replace()` with backreferences to extract specific capture groups directly**
-  - This is safer and more readable than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
-  - Array indexing is error-prone and can grab characters from the full match string rather than the specific capture group
-  - Use backreferences `\\1`, `\\2`, `\\3`, etc. to extract the 1st, 2nd, 3rd capture groups
-- ✅ **CORRECT - Using `regex_replace()` to extract values directly:**
+- **PREFERRED APPROACH: Use `regex_findall()` to extract capture groups safely**
+  - `regex_findall` returns a list of matches — use `[0]` to get the first match
+  - This is much safer than `regex_replace()` (which returns `\\1` as literal control character if the regex doesn't match the entire string due to greedy `.*` issues or hidden characters like tabs/newlines)
+  - This is also safer than `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
+- ✅ **CORRECT - Using `regex_findall()` to extract values (PREFERRED):**
   ```yaml
   status_1: >-
+    {# Extract values using regex_findall - SAFE approach #}
     {% set output = result_1.stdout | default('') | trim %}
     {% if "Access:" in output %}
-      {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
-      {% set uid  = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
-      {% set gid  = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
-      {% if mode | int(base=8) <= 420 and uid == '0' and gid == '0' %}
-        PASS
+      {% set first_line = output.split('\n')[0] %}
+      {% set mode_list = first_line | regex_findall('Access: \\(0?([0-7]+)/') %}
+      {% set uid_list  = first_line | regex_findall('Uid: \\(\\s*([0-9]+)/') %}
+      {% set gid_list  = first_line | regex_findall('Gid: \\(\\s*([0-9]+)/') %}
+      {% set mode = mode_list[0] if mode_list else '0' %}
+      {% set uid  = uid_list[0] if uid_list else '-1' %}
+      {% set gid  = gid_list[0] if gid_list else '-1' %}
+      {# CRITICAL: int(base=8) converts octal string to decimal. Compare against DECIMAL equivalent! #}
+      {# Octal 700 = decimal 448, Octal 644 = decimal 420 #}
+      {% if mode | int(base=8) <= 448 and uid == '0' and gid == '0' %}
+        APPLIED
       {% else %}
-        FAIL
+        FAILED
       {% endif %}
     {% else %}
-      FAIL
+      FAILED
     {% endif %}
+  ```
+- ❌ **WRONG - Using `regex_replace()` (greedy `.*` issues, returns control characters on mismatch):**
+  ```yaml
+  {# regex_replace requires the ENTIRE string to match. If there are hidden tabs, extra spaces,
+     or multi-line content, .* may not match as expected, causing \\1 to be returned as a
+     literal control character (\\x01) instead of the captured group! #}
+  {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}  {# ❌ DANGEROUS #}
+  {% set uid  = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}    {# ❌ DANGEROUS #}
   ```
 - ❌ **WRONG - Using `regex_search()` with array indexing (error-prone):**
   ```yaml
-  status_1: >-
-    {% set output = result_1.stdout | default('') | trim %}
-    {% if output != '' %}
-      {% set match = output | regex_search('Access: \\(([0-9]+)/.*Uid: \\(\\s*([0-9]+)/.*Gid: \\(\\s*([0-9]+)/') %}
-      {% if match %}
-        {% set mode_str = match[1] %}  # ❌ WRONG: match[1] may grab wrong character
-        {% set uid_str = match[2] %}    # ❌ WRONG: match[2] may grab wrong character
-        {% set gid_str = match[3] %}    # ❌ WRONG: match[3] may grab wrong character
+  {% set match = output | regex_search('Access: \\(([0-9]+)/.*') %}
+  {% set mode_str = match[1] %}  {# ❌ WRONG: match[1] may grab wrong character #}
   ```
-- **Key Rules for `regex_replace()` extraction:**
-  - Use `.*` at the start to match everything before the capture group
-  - Use `.*` at the end to match everything after the capture group
-  - Use `\\1`, `\\2`, `\\3` (with double backslash) as the replacement to extract the 1st, 2nd, 3rd capture groups
-  - In template blocks (`{% %}`), use `\\` (double backslash) for backreferences - this is CORRECT
-  - Example: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}`
+- ❌ **WRONG - Comparing octal string against wrong decimal value:**
+  ```yaml
+  {# mode is an octal string like "700". int(base=8) converts it to decimal 448.
+     Comparing 448 <= 700 is WRONG — you'd be allowing permissions up to octal 1274! #}
+  {% if mode | int(base=8) <= 700 %}  {# ❌ WRONG! 700 here is decimal, not octal #}
+  {# ✅ CORRECT: Compare against decimal 448 (which is octal 700) #}
+  {% if mode | int(base=8) <= 448 %}  {# ✅ CORRECT: 448 decimal = 700 octal #}
+  ```
+- **Key Rules for `regex_findall()` extraction:**
+  - Returns a list of matched groups — use `[0]` to get the first match
+  - Always provide a default: `{% set mode = mode_list[0] if mode_list else '0' %}`
+  - Works reliably even when the string has hidden characters, tabs, newlines, or multi-line content
+  - Use `split('\\n')[0]` to isolate the first line before applying regex when output may be multi-line
+- **CRITICAL - Octal Permission Comparison:**
+  - `int(base=8)` converts an octal string (e.g., "700") to its decimal equivalent (448)
+  - You must compare against the DECIMAL equivalent of your target permission:
+    - Octal `700` = Decimal `448`
+    - Octal `755` = Decimal `493`
+    - Octal `644` = Decimal `420`
+    - Octal `600` = Decimal `384`
+  - ✅ `mode | int(base=8) <= 448` (checking if permissions are ≤ octal 700)
+  - ❌ `mode | int(base=8) <= 700` (WRONG! This allows permissions up to octal 1274)
 
 **Examples in Status Variables (MOST COMMON USE CASE):**
-- ✅ CORRECT: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (quoted string, single quotes, SINGLE backslash `\\.`)
-- ✅ CORRECT (for extraction): `status_1: "{{{{ ('PASS' if ((result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') | int) >= 25) else 'FAIL') | trim }}}}"` (using regex_replace to extract version number)
-- ❌ WRONG: `status_1: |` followed by `{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAIL') | trim }}` (literal block scalar `|` + DOUBLE backslash `\\\\.` - DOUBLE TRAP!)
-- ❌ WRONG: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (DOUBLE backslash `\\\\.` - THIS IS THE TRAP!)
-- ❌ WRONG: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search("pam-1\\\\.3\\\\.1-([0-9]+)")) else 'FAIL') | trim }}}}"` (double quotes require double-escaping - causes trap)
+- ✅ CORRECT: `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAILED') | trim }}}}"` (quoted string, single quotes, SINGLE backslash `\\.`)
+- ✅ CORRECT (for extraction): `status_1: "{{{{ ('APPLIED' if ((result_1.stdout | regex_findall('pam-1\\.3\\.1-([0-9]+)'))[0] | default('0') | int >= 25) else 'FAILED') | trim }}}}"` (using regex_findall to extract version number safely)
+- ❌ WRONG: `status_1: |` followed by `{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAILED') | trim }}` (literal block scalar `|` + DOUBLE backslash `\\\\.` - DOUBLE TRAP!)
+- ❌ WRONG: `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAILED') | trim }}}}"` (DOUBLE backslash `\\\\.` - THIS IS THE TRAP!)
+- ❌ WRONG: `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search("pam-1\\\\.3\\\\.1-([0-9]+)")) else 'FAILED') | trim }}}}"` (double quotes require double-escaping - causes trap)
 
 **Standalone Examples:**
 - ✅ CORRECT: `{{ result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)') }}` (single quotes, SINGLE backslash `\\.`) - for boolean checks
-- ✅ CORRECT: `{{ result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') }}` (single quotes, SINGLE backslash `\\.`, double backslash `\\1` for backreference) - for extracting values
+- ✅ CORRECT: `{{ (result_1.stdout | regex_findall('pam-1\\.3\\.1-([0-9]+)'))[0] | default('0') }}` (single quotes, SINGLE backslash `\\.`) - for extracting values using regex_findall
+- ⚠️ CAUTION: `{{ result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') }}` - regex_replace works ONLY if `.*` matches the entire string; may return control characters on multi-line input
 - ❌ WRONG: `{{ result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)') }}` (DOUBLE backslash `\\\\.` - THIS IS THE TRAP!)
 - ❌ WRONG: `{{ result_1.stdout is match('pattern') }}` (too strict, use regex_search)
 
 **Remember:** 
 - Single quotes + SINGLE backslash (`\\.`) = CORRECT for regex patterns
 - Single quotes + DOUBLE backslash (`\\\\.`) = TRAP!
-- For extracting values: Use `regex_replace()` with `\\1`, `\\2`, etc. (double backslash for backreferences) - PREFERRED over array indexing
+- For extracting values: Use `regex_findall()` with `[0]` indexing - PREFERRED (safe with multi-line input)
+- `regex_replace()` with `\\1` backreferences is DANGEROUS — returns control characters if `.*` doesn't match the entire string
+- For octal permission comparison: `int(base=8)` converts to decimal — compare against the DECIMAL equivalent (e.g., 448 for octal 700)
 
 ## 5. STATUS AND RATIONALE - CRITICAL RULES
 
 **Status Value Definitions:**
-- **PASS**: Requirement is definitively met
-- **FAIL**: Requirement is definitively not met
-- **NA**: Skip related task or Did not execute the related task
-- **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+- **APPLIED**: Remediation step was successfully applied
+- **FAILED**: Remediation step could not be applied
+- **SKIPPED**: Remediation is not applicable (e.g., required software/package not installed — do NOT install it, just skip)
+- **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
+
+**When to use SKIPPED for manual/human intervention scenarios:**
+- If the remediation requires manual action that cannot be automated (e.g., disk partitioning, physical access, storage allocation), use **SKIPPED** with a clear message explaining what manual action is needed
+- Example: SKIPPED with details "Manual action required: allocate disk space or create LVM volume group for /var/tmp partition"
 
 **CRITICAL - Status Variable Requirements:**
-1. **MUST be Jinja2 EXPRESSIONS** (using {{{{ }}}}) that EVALUATE to 'PASS'/'FAIL'/'NA'/'UNKNOWN', NOT string literals
-   - ✅ CORRECT: `status_1: "{{{{ ('PASS' if condition else 'FAIL') | trim }}}}"`
-   - ❌ WRONG: `status_1: "'PASS' if condition else 'FAIL'"` (string literal - will show expression text)
+1. **MUST be Jinja2 EXPRESSIONS** (using {{{{ }}}}) that EVALUATE to 'APPLIED'/'FAILED'/'SKIPPED'/'UNKNOWN', NOT string literals
+   - ✅ CORRECT: `status_1: "{{{{ ('APPLIED' if condition else 'FAILED') | trim }}}}"`
+   - ❌ WRONG: `status_1: "'APPLIED' if condition else 'FAILED'"` (string literal - will show expression text)
 2. **MUST use QUOTED STRINGS**, NOT literal block scalars (`|`)
-   - ✅ CORRECT: `status_1: "{{{{ 'PASS' if condition else 'FAIL' }}}}"`
-   - ❌ WRONG: `status_1: |` followed by `{{ ('PASS' if condition else 'FAIL') | trim }}` (preserves newlines)
+   - ✅ CORRECT: `status_1: "{{{{ 'APPLIED' if condition else 'FAILED' }}}}"`
+   - ❌ WRONG: `status_1: |` followed by `{{ ('APPLIED' if condition else 'FAILED') | trim }}` (preserves newlines)
 3. **MUST use `| trim`** on all status, rationale, and data variables
-   - Prevents "PASS\\n" → "PASS"
-   - Apply in set_fact: `status_1: "{{{{ ('PASS' if condition else 'FAIL') | trim }}}}"`
+   - Prevents "APPLIED\\n" → "APPLIED"
+   - Apply in set_fact: `status_1: "{{{{ ('APPLIED' if condition else 'FAILED') | trim }}}}"`
    - Apply in report: `"Status: {{{{ status_1 | default('UNKNOWN') | trim }}}}"`
 4. **If using regex in status determination: Use SINGLE quotes with SINGLE backslash (`\\.`), NOT double backslash (`\\\\.`)**
-   - ✅ CORRECT: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (quoted string, SINGLE backslash `\\.`)
-   - ❌ WRONG: `status_1: |` followed by `{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAIL') | trim }}` (literal block scalar `|` + DOUBLE backslash `\\\\.` - DOUBLE TRAP!)
-   - ❌ WRONG: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (DOUBLE backslash `\\\\.` - TRAP!)
+   - ✅ CORRECT: `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAILED') | trim }}}}"` (quoted string, SINGLE backslash `\\.`)
+   - ❌ WRONG: `status_1: |` followed by `{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAILED') | trim }}` (literal block scalar `|` + DOUBLE backslash `\\\\.` - DOUBLE TRAP!)
+   - ❌ WRONG: `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')) else 'FAILED') | trim }}}}"` (DOUBLE backslash `\\\\.` - TRAP!)
 
 **CRITICAL - set_fact Limitation:**
 - Variables in the SAME `set_fact` block CANNOT reference each other
@@ -894,19 +1061,19 @@ vars:
   ```yaml
   - set_fact:
       data_1: "{{{{ result_1.stdout | default('') | trim }}}}"
-      status_1: "{{{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}}}"  # Reference result_1.stdout, NOT data_1
+      status_1: "{{{{ ('APPLIED' if (result_1.stdout | default('') | trim == '') else 'FAILED') | trim }}}}"  # Reference result_1.stdout, NOT data_1
   ```
 - ❌ WRONG: Referencing variable in same block
   ```yaml
   - set_fact:
       data_1: "{{{{ result_1.stdout | default('') | trim }}}}"
-      status_1: "{{{{ ('PASS' if (data_1 | trim == '') else 'FAIL') | trim }}}}"  # data_1 is undefined here!
+      status_1: "{{{{ ('APPLIED' if (data_1 | trim == '') else 'FAILED') | trim }}}}"  # data_1 is undefined here!
   ```
 
 **CRITICAL - Using trim in Comparisons:**
 - ALWAYS use `| trim` BEFORE comparing AND on final result
-- ✅ CORRECT: `status_4: "{{{{ ('PASS' if (data_1 | trim == '' or status_2 | trim == 'PASS') else 'FAIL') | trim }}}}"`
-- ❌ WRONG: `status_4: "{{{{ ('PASS' if (data_1 == '' or status_2 == 'PASS') else 'FAIL') | trim }}}}"` (missing trim before comparison)
+- ✅ CORRECT: `status_4: "{{{{ ('APPLIED' if (data_1 | trim == '' or status_2 | trim == 'APPLIED') else 'FAILED') | trim }}}}"`
+- ❌ WRONG: `status_4: "{{{{ ('APPLIED' if (data_1 == '' or status_2 == 'APPLIED') else 'FAILED') | trim }}}}"` (missing trim before comparison)
 
 **CRITICAL - Complex Comparisons Using Jinja2 Templates:**
 - For complicated version comparisons or multi-step logic, use Jinja2 template blocks with `{% set %}` and `{% if %}`
@@ -929,39 +1096,44 @@ vars:
                   (major == 1 and minor > 3) or
                   (major == 1 and minor == 3 and patch > 1) or
                   (major == 1 and minor == 3 and patch == 1 and release >= 25) %}
-              PASS
+              APPLIED
             {% else %}
-              FAIL
+              FAILED
             {% endif %}
           {% else %}
-            FAIL
+            FAILED
           {% endif %}
         {% else %}
-          FAIL
+          FAILED
         {% endif %}
   ```
 - **Key Points for Complex Comparisons:**
-  - **PREFERRED**: Use `regex_replace()` with backreferences to extract specific values directly into variables
-    - This is safer and more reliable than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
-    - Array indexing is error-prone and can grab characters from the full match string rather than the specific capture group
+  - **PREFERRED**: Use `regex_findall()` to extract values safely into variables
+    - Returns a list of matches — use `[0]` with a default for safety
+    - Works reliably with multi-line input, hidden characters, and mixed content
     - Example for extracting multiple values: 
       ```yaml
-      {% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}
-      {% set uid  = output | regex_replace('.*Uid: \\(\\s*([0-9]+)/.*', '\\1') %}
-      {% set gid  = output | regex_replace('.*Gid: \\(\\s*([0-9]+)/.*', '\\1') %}
+      {% set first_line = output.split('\n')[0] %}
+      {% set mode_list = first_line | regex_findall('Access: \\(0?([0-7]+)/') %}
+      {% set uid_list  = first_line | regex_findall('Uid: \\(\\s*([0-9]+)/') %}
+      {% set gid_list  = first_line | regex_findall('Gid: \\(\\s*([0-9]+)/') %}
+      {% set mode = mode_list[0] if mode_list else '0' %}
+      {% set uid  = uid_list[0] if uid_list else '-1' %}
+      {% set gid  = gid_list[0] if gid_list else '-1' %}
       ```
   - **ALTERNATIVE**: For version strings with consistent delimiters, use `regex_search()` to get the full match, then use `split()` to extract components
     - This approach works well when the format is predictable (e.g., `pam-1.3.1-25`)
     - Example: `{% set version_match = output | regex_search('pam-([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)') %}`
     - Then extract parts: `{% set version_parts = version_match.split('-')[1] %}`
     - Then split by `.`: `{% set major = version_parts.split('.')[0] | int %}`
-    - **NOTE**: Only use this approach if you're certain about the format. For extracting specific capture groups, `regex_replace()` is preferred.
+    - **NOTE**: Only use this approach if you're certain about the format. For extracting specific capture groups, `regex_findall()` is preferred.
+  - **AVOID**: `regex_replace()` with backreferences for value extraction — `.*` greedy matching fails with multi-line or complex strings, returning control characters instead of captured groups
   - Use `{% set variable = ... %}` to extract and store intermediate values
   - Use `{% if %}` blocks for multi-condition logic
   - Use `regex_replace()` or `regex_search()` with proper escaping: in template blocks, use single backslash `\\.` for periods in regex patterns
   - Use `| int` or `| int(base=8)` filter to convert extracted strings to integers for numeric comparison
   - Folded block scalar (`>-`) is ACCEPTABLE for complex templates (folds newlines correctly)
-  - Always end with `PASS` or `FAIL` (not quoted, as it's inside the template block)
+  - Always end with `APPLIED` or `FAILED` or `SKIPPED` (not quoted, as it's inside the template block)
   - Use `{# ... #}` for comments/debugging within template blocks
 - **When to use this approach:**
   - Version comparisons requiring multiple components (major.minor.patch-release)
@@ -978,11 +1150,11 @@ vars:
 
 ## 6. REPORT FORMAT
 ```yaml
-- name: Generate compliance report
+- name: Generate remediation report
   debug:
     msg:
       - "========================================================"
-      - "        COMPLIANCE REPORT"
+      - "        REMEDIATION REPORT"
       - "========================================================"
       - "Reference: {{{{ kcs_article }}}}"
       - "========================================================"
@@ -998,9 +1170,9 @@ vars:
       # ... repeat for all requirements ...
       - ""
       - "========================================================"
-      - "OVERALL COMPLIANCE:"
-      - "  Status: {{{{ status_N | trim }}}}"
-      - "  Rationale: {{{{ rationale_N | trim }}}}"
+      - "OVERALL REMEDIATION:"
+      - "  Result: {{{{ status_N | trim }}}}"
+      - "  Details: {{{{ rationale_N | trim }}}}"
       - "========================================================"
 ```
 
@@ -1008,7 +1180,167 @@ vars:
 - Each requirement gets: task name, command, exit code, data, status, rationale
 - Empty data with exit code 0 or 1 = valid "nothing found"
 - Status determined by requirement's rationale (parse from requirement text)
-- LAST requirement (usually "OVERALL Verify") determines OVERALL COMPLIANCE
+- LAST requirement (usually "OVERALL Verify") determines OVERALL REMEDIATION
+- Status values: APPLIED, FAILED, or SKIPPED (if required software/package not installed, or manual human action is needed)
+
+## 7. STATE GUARD (PRISTINE STATE FOR RETRIES)
+
+**PURPOSE:** Ensure each remediation attempt starts from a clean, unmodified state. This prevents
+"configuration drift" where a failed trial leaves the system in a half-changed state that
+compromises subsequent attempts.
+
+**HOW IT WORKS:**
+Using a unique `checkpoint_id`, we create a persistent restore point on the target system:
+1. **If checkpoint exists** (previous failed run): System is "dirty" — restore original state first, then backup again
+2. **If checkpoint does NOT exist** (first run): Capture current pristine state as baseline
+
+**MANDATORY VARIABLES in `vars:`:**
+```yaml
+  vars:
+    checkpoint_id: "cis_[checkpoint_id_with_underscores]"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+```
+- `checkpoint_id`: Use the CIS checkpoint ID with dots replaced by underscores (e.g., `"cis_1_1_2_4_3"` for checkpoint 1.1.2.4.3)
+
+**WHAT TO BACKUP - Analyze the remediation procedure to identify:**
+1. **Files that will be MODIFIED** (already exist): e.g., `/etc/fstab`, `/etc/sysctl.conf`, `/etc/ssh/sshd_config` → backup with `.present` suffix
+2. **Files that will be CREATED** (don't exist yet): e.g., `/etc/modprobe.d/cis_cramfs.conf`, `/etc/sysctl.d/99-cis.conf` → mark with `.absent` suffix
+3. **System state that will change**: e.g., mount options, kernel parameters, service states → include undo commands in restore phase
+4. **CRITICAL**: Determine for each file whether it pre-exists or will be created by the remediation — this affects the backup suffix and restore behavior
+
+**BACKUP FILE NAMING CONVENTION:**
+- **`.present`** suffix: File existed before remediation → backup for restore (e.g., `fstab.present`)
+- **`.absent`** suffix: File did NOT exist before remediation → marker to delete the file on restore (e.g., `crypto-policy.conf.absent`)
+
+This distinction is critical: if a remediation **creates** a new config file, restoring pristine state means **deleting** that file, not restoring from backup.
+
+**pre_tasks PATTERN (RESTORE then CAPTURE):**
+```yaml
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE (only if checkpoint exists from previous failed run) ---
+
+    # For files that EXISTED before remediation (.present backup):
+    # Restore the original file from backup
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.present"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # For files that DID NOT EXIST before remediation (.absent marker):
+    # Delete the file created by the previous remediation run
+    - name: "State Guard - Delete /etc/modprobe.d/cis_example.conf (created by remediation)"
+      file:
+        path: "/etc/modprobe.d/cis_example.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # System-level undo (if remediation changes runtime state):
+    - name: "State Guard - Remount to undo previous changes"
+      shell: mount -o remount /var
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # Clean up old checkpoint after restore
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if each file exists before backup
+    - name: "State Guard - Check if /etc/fstab exists"
+      stat:
+        path: "/etc/fstab"
+      register: _sg_fstab_stat
+
+    - name: "State Guard - Check if /etc/modprobe.d/cis_example.conf exists"
+      stat:
+        path: "/etc/modprobe.d/cis_example.conf"
+      register: _sg_example_conf_stat
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/fstab (present)"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.present"
+        remote_src: true
+      when: _sg_fstab_stat.stat.exists
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/modprobe.d/cis_example.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/cis_example.conf.absent"
+      when: not _sg_example_conf_stat.stat.exists
+
+    # If the file happens to exist, back it up with .present
+    - name: "State Guard - Backup /etc/modprobe.d/cis_example.conf (present)"
+      copy:
+        src: "/etc/modprobe.d/cis_example.conf"
+        dest: "{{ state_guard_dir }}/cis_example.conf.present"
+        remote_src: true
+      when: _sg_example_conf_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+```
+
+**NO post_tasks — Checkpoint cleanup is MANUAL:**
+- Do NOT add `post_tasks` to remove checkpoints automatically
+- Even if the playbook succeeds, the AI compliance analysis may still fail, triggering a re-generate and re-run
+- If the checkpoint were cleaned on playbook success, the next retry would have no pristine state to restore from
+- All checkpoints are stored under `/tmp/.cis_state_guard/` — clean up manually once all checkpoints pass:
+  ```bash
+  rm -rf /tmp/.cis_state_guard/
+  ```
+
+**RULES:**
+1. **ALWAYS include State Guard** in every remediation playbook — no exceptions
+2. **Backup EVERY file** the remediation will modify (analyze the remediation procedure carefully)
+3. **Use `.present` suffix** for files that exist before remediation, **`.absent` suffix** for files that don't exist yet
+4. **In RESTORE phase**: For `.present` backups → restore the file; for `.absent` markers → delete the config file
+5. **In CAPTURE phase**: Use `stat` to check each file's existence, then backup with the correct suffix
+6. **Include system-level undo** in restore phase if remediation changes runtime state (mounts, sysctl, services)
+7. **Use `ignore_errors: true`** on all restore tasks (backup may not exist if first run was interrupted)
+8. **Use `remote_src: true`** on all copy tasks (files are on the remote host, not control node)
+9. **The `_sg_flag` and `_sg_*_stat` variables** (prefixed with underscore) are reserved for State Guard — do not reuse them
+10. **Do NOT auto-cleanup checkpoints** — leave them for manual cleanup after all checkpoints pass
+
+**EXAMPLES BY REMEDIATION TYPE:**
+
+| Remediation Type | Files to Backup | Backup Suffix | System Undo Command |
+|---|---|---|---|
+| Mount option change | `/etc/fstab` (pre-exists) | `.present` | `mount -o remount /path` |
+| Kernel parameter | `/etc/sysctl.conf` (pre-exists) | `.present` | `sysctl -p` |
+| Kernel parameter (new file) | `/etc/sysctl.d/99-cis.conf` (created) | `.absent` → delete on restore | `sysctl --system` |
+| SSH config | `/etc/ssh/sshd_config` (pre-exists) | `.present` | `systemctl restart sshd` |
+| Kernel module (new file) | `/etc/modprobe.d/cis_cramfs.conf` (created) | `.absent` → delete on restore | N/A |
+| Kernel module (existing) | `/etc/modprobe.d/[module].conf` (pre-exists) | `.present` | `modprobe [module]` or N/A |
+| PAM config | `/etc/pam.d/[service]` (pre-exists) | `.present` | N/A |
+| File permissions | N/A (capture with `stat`) | N/A | Restore with `chmod`/`chown` |
+| Cron/systemd | Config files in `/etc/cron.d/` or `/etc/systemd/` | `.present` or `.absent` | `systemctl daemon-reload` |
 
 **OUTPUT:** Valid YAML only. No markdown. Start with ---.
 """
@@ -1017,11 +1349,11 @@ vars:
     
     # Build the base prompt
     if is_enhancement:
-        base_prompt = f"""Enhance the existing Ansible playbook based on the feedback provided below.
+        base_prompt = f"""Enhance the existing Ansible REMEDIATION playbook based on the feedback provided below.
 
 **Objective:** {playbook_objective}
 {audit_procedure_section}
-**Requirements to collect data for:**
+**Remediation requirements to implement:**
 {requirements_text}{example_section}{enhancement_section}
 {common_sections}
 
@@ -1037,15 +1369,15 @@ vars:
 
 Enhance the existing playbook by applying the feedback above. Return the complete enhanced playbook with all fixes applied."""
     else:
-        base_prompt = f"""Generate a MINIMAL Ansible playbook for data collection.
+        base_prompt = f"""Generate a MINIMAL Ansible playbook for CIS benchmark REMEDIATION (applying fixes).
 
 **Objective:** {playbook_objective}
 {audit_procedure_section}
-**Requirements to collect data for:**
+**Remediation requirements to implement:**
 {requirements_text}{example_section}
 {common_sections}
 
-Generate the minimal playbook now:"""
+Generate the minimal remediation playbook now:"""
     
     # Use the base_prompt as prompt_template
     prompt_template = base_prompt
@@ -1201,12 +1533,14 @@ def save_playbook(content: str, filename: str = "kill_packet_recvmsg_process.yml
     print(f"\n✅ Playbook saved to: {filename}")
 
 
-def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
+def check_playbook_syntax(filename: str, target_host: str, remote_user: str = "root") -> tuple[bool, str]:
     """
     Check Ansible playbook syntax.
     
     Args:
         filename: Path to the playbook file
+        target_host: Target host for inventory
+        remote_user: Remote user for SSH connection (default: root)
         
     Returns:
         tuple: (is_valid, error_message)
@@ -1227,7 +1561,7 @@ def check_playbook_syntax(filename: str, target_host: str) -> tuple[bool, str]:
             ansible_nav, 'run', 
             filename, 
             '-i', f'{target_host},',
-            '-u', 'root',  # Use root user to connect
+            '-u', remote_user,  # Use specified user to connect
             '-v',  # Verbose output
             '--syntax-check',
             '--mode', 'stdout'  # Force output to stdout instead of interactive mode
@@ -1347,7 +1681,7 @@ def filter_verbose_task_output(output: str) -> str:
     return '\n'.join(filtered_lines)
 
 
-def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", check_mode: bool = False, verbose: str = "v", skip_debug: bool = False) -> tuple[bool, str]:
+def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", check_mode: bool = False, verbose: str = "v", skip_debug: bool = False, remote_user: str = "root") -> tuple[bool, str]:
     """
     Test the playbook on a real server to verify it meets requirements.
     
@@ -1357,6 +1691,7 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
         check_mode: If True, run in check mode (dry-run, no changes made)
         verbose: Verbose level - "v" (default, basic info), "vv" (detailed), "vvv" (very detailed), "" (silent)
         skip_debug: If True, skip debug-tagged tasks (for production execution)
+        remote_user: Remote user for SSH connection (default: root)
         
     Returns:
         tuple: (is_successful, output) - output is filtered to reduce verbose task details
@@ -1387,7 +1722,7 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
             ansible_nav, 'run', 
             filename, 
             '-i', f'{target_host},',
-            '-u', 'root'  # Use root user to connect
+            '-u', remote_user  # Use specified user to connect
         ]
         
         # Add verbose flags based on level
@@ -1571,9 +1906,9 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
                 
                 print("✅ Playbook completed successfully!")
                 
-                # Check for compliance report
-                if "COMPLIANT" in output or "NON-COMPLIANT" in output or "Compliance" in output:
-                    print("✅ Compliance report generated")
+                # Check for remediation report
+                if "REMEDIATION REPORT" in output or "OVERALL REMEDIATION" in output:
+                    print("✅ Remediation report generated")
                 
                 # Parse Ansible output for specific checks
                 if "PLAY RECAP" in output:
@@ -1635,11 +1970,11 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
             
             # For verification playbooks, even non-zero exit codes might be acceptable
             # if the playbook completed and generated a report
-            if "PLAY RECAP" in output and ("COMPLIANT" in output or "Compliance" in output):
-                print("⚠️  Playbook exited with non-zero code but completed verification")
-                print("   This is acceptable for compliance check playbooks")
-                print("   ✅ Treating as successful - compliance report was generated")
-                return True, "Compliance verification completed with findings"
+            if "PLAY RECAP" in output and ("REMEDIATION REPORT" in output or "OVERALL REMEDIATION" in output):
+                print("⚠️  Playbook exited with non-zero code but completed remediation")
+                print("   This is acceptable for remediation playbooks")
+                print("   ✅ Treating as successful - remediation report was generated")
+                return True, "Remediation completed with findings"
             
             # If we get here, it's a non-zero exit code and not a known acceptable case
             # Return the filtered output as error message
@@ -1665,23 +2000,19 @@ def test_playbook_on_server(filename: str, target_host: str = "192.168.122.16", 
 
 def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bool, str]:
     """
-    Verify that playbook statuses (PASS/FAIL/NA/UNKNOWN) align with AI analysis (COMPLIANT/NON-COMPLIANT/UNKNOWN/NA).
+    Verify that playbook statuses (APPLIED/FAILED/SKIPPED/UNKNOWN) align with AI analysis.
     
     **Status Standard (Both Playbook and AI must follow):**
-    - **COMPLIANT** (AI) / **PASS** (Playbook): Data shows requirement is definitively met
-    - **NON-COMPLIANT** (AI) / **FAIL** (Playbook): Data shows requirement is definitively not met
-    - **UNKNOWN** (Both): Cannot determine from data (error collecting, ambiguous requirement)
-    - **NA** (Both): Skip related task or Did not execute the related task
+    - **APPLIED**: Remediation step was successfully applied
+    - **FAILED**: Remediation step could not be applied
+    - **SKIPPED**: Remediation is not applicable (required software/package not installed, or manual human action is needed)
+    - **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
     
-    Status mapping:
-    - PASS -> COMPLIANT
-    - FAIL -> NON-COMPLIANT
-    - NA -> NA
-    - UNKNOWN -> UNKNOWN
+    For remediation, both playbook and AI use the same status values.
     
     Args:
         test_output: Playbook execution output containing statuses
-        analysis_message: AI analysis message containing compliance statuses
+        analysis_message: AI analysis message containing remediation statuses
         
     Returns:
         tuple: (is_aligned, alignment_message)
@@ -1695,9 +2026,9 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
     overall_playbook_status = None
     overall_req_num = None  # Track which requirement number is the OVERALL requirement
     
-    # Pattern to match "REQUIREMENT N - ..." followed by "Status: PASS/FAIL/NA"
+    # Pattern to match "REQUIREMENT N - ..." followed by "Status: APPLIED/FAILED/SKIPPED"
     # Also check if it's the OVERALL requirement
-    req_pattern = r'REQUIREMENT\s+(\d+)\s*-\s*([^:]*):\s*.*?Status:\s*(PASS|FAIL|NA|UNKNOWN)'
+    req_pattern = r'REQUIREMENT\s+(\d+)\s*-\s*([^:]*):\s*.*?Status:\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)'
     for match in re.finditer(req_pattern, test_output, re.DOTALL | re.IGNORECASE):
         req_num = int(match.group(1))
         req_title = match.group(2).strip().upper()
@@ -1710,13 +2041,13 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
         else:
             playbook_statuses[req_num] = status
     
-    # Extract overall status from playbook output (from OVERALL COMPLIANCE section)
-    overall_pattern = r'OVERALL\s+COMPLIANCE:.*?Result:\s*(PASS|FAIL|NA|UNKNOWN)'
+    # Extract overall status from playbook output (from OVERALL REMEDIATION section)
+    overall_pattern = r'OVERALL\s+REMEDIATION:.*?(?:Result|Status):\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)'
     overall_match = re.search(overall_pattern, test_output, re.DOTALL | re.IGNORECASE)
     if overall_match:
         overall_playbook_status = overall_match.group(1).upper()
     
-    # Extract compliance statuses from AI analysis
+    # Extract remediation statuses from AI analysis
     ai_statuses = {}
     overall_ai_status = None
     
@@ -1735,8 +2066,7 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
             if current_req in ai_statuses:
                 del ai_statuses[current_req]
             
-            # Also check the current line for compliance status (might be on same line or nearby)
-            # Check current line and next 15 lines for compliance status
+            # Check current line and next 15 lines for remediation status
             # Stop at the next requirement to avoid matching wrong requirement's status
             for j in range(i, min(i + 20, len(lines))):
                 # Check if we've hit the next requirement (stop searching)
@@ -1744,53 +2074,38 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
                 if next_req_match and int(next_req_match.group(1)) != current_req:
                     break
                 
-                # Skip lines that contain "COMPLIANCE STATUS" (all caps, overall) - we only want individual requirement statuses
-                # We want "Compliance Status" (mixed case) for individual requirements
-                # Check if the line has "COMPLIANCE STATUS" in all caps (overall) but NOT "Compliance Status" (mixed case, individual)
-                # The pattern should match "COMPLIANCE STATUS" (all caps) but not "Compliance Status" (mixed case)
+                # Skip lines that contain "REMEDIATION STATUS" (all caps, overall) - we only want individual requirement statuses
                 line_upper = lines[j].upper()
-                # Check if line contains "COMPLIANCE STATUS" in all caps (without mixed case "Compliance Status")
-                if 'COMPLIANCE STATUS' in line_upper:
-                    # Check if it's actually "Compliance Status" (mixed case) - if so, don't skip it
-                    if not re.search(r'[Cc]ompliance\s+[Ss]tatus', lines[j]):
+                if 'REMEDIATION STATUS' in line_upper:
+                    # Check if it's actually "Remediation Status" (mixed case) - if so, don't skip it
+                    if not re.search(r'[Rr]emediation\s+[Ss]tatus', lines[j]):
                         # This is likely the overall status line (all caps), skip it
                         continue
                 
-                # Pattern: "- **Compliance Status**: COMPLIANT/NON-COMPLIANT" or "Compliance Status: COMPLIANT/NON-COMPLIANT"
-                # Make sure we match the full pattern including the colon and status
-                # IMPORTANT: Check for NON-COMPLIANT first (longer match) to avoid matching "COMPLIANT" from "NON-COMPLIANT"
-                # Match "Compliance Status" (mixed case) not "COMPLIANCE STATUS" (all caps, which is overall)
-                # Use case-sensitive matching to ensure we only match "Compliance Status" (mixed case)
-                # Pattern breakdown: [-*]? (optional dash/asterisk), \s* (whitespace), \*\*? (markdown bold), 
-                # Compliance\s+Status (mixed case), \*\*? (markdown bold end), \s*:\s* (colon with whitespace),
-                # \*?\s* (optional asterisk and whitespace), (NON-COMPLIANT|COMPLIANT|UNKNOWN) (status), \b (word boundary)
-                status_match = re.search(r'[-*]?\s*\*\*?[Cc]ompliance\s+[Ss]tatus\*\*?\s*:\s*\*?\s*(NON-COMPLIANT|COMPLIANT|UNKNOWN)\b', lines[j], re.IGNORECASE)
+                # Pattern: "- **Remediation Status**: APPLIED/FAILED/SKIPPED" or "Remediation Status: APPLIED/FAILED/SKIPPED"
+                status_match = re.search(r'[-*]?\s*\*\*?[Rr]emediation\s+[Ss]tatus\*\*?\s*:\s*\*?\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)\b', lines[j], re.IGNORECASE)
                 if status_match:
                     status_value = status_match.group(1).upper()
                     ai_statuses[current_req] = status_value
                     current_req = None  # Reset after finding status
                     break
         
-        # Also check if current line has a compliance status without a requirement header
-        # This handles cases where the status might appear before we've seen the requirement header
-        # But only if we're already tracking a requirement
+        # Also check if current line has a remediation status without a requirement header
         if current_req:
-            # Skip lines that contain "COMPLIANCE STATUS" (all caps, overall)
-            if not (re.search(r'^\s*[-*]?\s*\*\*?COMPLIANCE\s+STATUS\*\*?\s*:', line, re.IGNORECASE) and not re.search(r'Compliance\s+Status', line, re.IGNORECASE)):
-                status_match = re.search(r'[-*]?\s*\*\*?Compliance\s+Status\*\*?\s*:\s*\*?\s*(NON-COMPLIANT|COMPLIANT|UNKNOWN)\b', line, re.IGNORECASE)
+            # Skip lines that contain "REMEDIATION STATUS" (all caps, overall)
+            if not (re.search(r'^\s*[-*]?\s*\*\*?REMEDIATION\s+STATUS\*\*?\s*:', line, re.IGNORECASE) and not re.search(r'Remediation\s+Status', line, re.IGNORECASE)):
+                status_match = re.search(r'[-*]?\s*\*\*?Remediation\s+Status\*\*?\s*:\s*\*?\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)\b', line, re.IGNORECASE)
                 if status_match and current_req not in ai_statuses:
                     status_value = status_match.group(1).upper()
                     ai_statuses[current_req] = status_value
                     current_req = None  # Reset after finding status
     
-    # Extract overall compliance status from AI analysis
+    # Extract overall remediation status from AI analysis
     # Try multiple patterns for overall status
-    # IMPORTANT: Use case-sensitive matching for "COMPLIANCE STATUS" (all caps) to avoid matching "Compliance Status" (individual)
-    # Examples: "- **COMPLIANCE STATUS**: COMPLIANT" or "COMPLIANCE STATUS: COMPLIANT"
     overall_ai_patterns = [
-        (r'[-*]?\s*\*\*?COMPLIANCE\s+STATUS\*\*?\s*:\s*\*?\s*(COMPLIANT|NON-COMPLIANT|UNKNOWN)\b', 0),  # Case-sensitive, all caps "- **COMPLIANCE STATUS**: COMPLIANT"
-        (r'OVERALL[^:]*COMPLIANCE[:\s]+\*?\s*(COMPLIANT|NON-COMPLIANT|UNKNOWN)\b', re.IGNORECASE),  # "OVERALL COMPLIANCE: COMPLIANT"
-        (r'Overall[^:]*[:\s]+\*?\s*(COMPLIANT|NON-COMPLIANT|UNKNOWN)\b', re.IGNORECASE),  # "Overall: COMPLIANT"
+        (r'[-*]?\s*\*\*?REMEDIATION\s+STATUS\*\*?\s*:\s*\*?\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)\b', 0),  # Case-sensitive, all caps
+        (r'OVERALL[^:]*REMEDIATION[:\s]+\*?\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)\b', re.IGNORECASE),  # "OVERALL REMEDIATION: APPLIED"
+        (r'Overall[^:]*[:\s]+\*?\s*(APPLIED|FAILED|SKIPPED|UNKNOWN)\b', re.IGNORECASE),  # "Overall: APPLIED"
     ]
     for pattern, flags in overall_ai_patterns:
         overall_ai_match = re.search(pattern, analysis_message, flags)
@@ -1798,7 +2113,7 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
             overall_ai_status = overall_ai_match.group(1).upper()
             break
     
-    # Verify alignment: PASS = COMPLIANT, FAIL = NON-COMPLIANT
+    # Verify alignment: Both playbook and AI should use APPLIED/FAILED/SKIPPED/UNKNOWN
     alignment_issues = []
     
     # Check requirement alignments (skip OVERALL requirement in individual comparison)
@@ -1812,20 +2127,9 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
         ai_status = ai_statuses.get(req_num)
         
         if playbook_status and ai_status:
-            # Map: PASS -> COMPLIANT, FAIL -> NON-COMPLIANT, NA -> NA, UNKNOWN -> UNKNOWN
-            if playbook_status == "PASS":
-                expected_ai = "COMPLIANT"
-            elif playbook_status == "FAIL":
-                expected_ai = "NON-COMPLIANT"
-            elif playbook_status == "NA":
-                expected_ai = "NA"  # NA maps to NA (both mean: Skip related task or Did not execute)
-            elif playbook_status == "UNKNOWN":
-                expected_ai = "UNKNOWN"
-            else:
-                expected_ai = None
-            
-            if expected_ai and ai_status != expected_ai:
-                alignment_issues.append(f"Requirement {req_num}: Playbook={playbook_status}, AI={ai_status} (expected {expected_ai})")
+            # For remediation, both use the same status values - direct comparison
+            if playbook_status != ai_status:
+                alignment_issues.append(f"Requirement {req_num}: Playbook={playbook_status}, AI={ai_status}")
         elif playbook_status and not ai_status:
             alignment_issues.append(f"Requirement {req_num}: Playbook has status {playbook_status} but AI analysis missing")
         elif ai_status and not playbook_status:
@@ -1833,20 +2137,9 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
     
     # Check overall alignment
     if overall_playbook_status and overall_ai_status:
-        # Map: PASS -> COMPLIANT, FAIL -> NON-COMPLIANT, NA -> NA, UNKNOWN -> UNKNOWN
-        if overall_playbook_status == "PASS":
-            expected_overall_ai = "COMPLIANT"
-        elif overall_playbook_status == "FAIL":
-            expected_overall_ai = "NON-COMPLIANT"
-        elif overall_playbook_status == "NA":
-            expected_overall_ai = "NA"  # NA maps to NA (both mean: Skip related task or Did not execute)
-        elif overall_playbook_status == "UNKNOWN":
-            expected_overall_ai = "UNKNOWN"
-        else:
-            expected_overall_ai = None
-        
-        if expected_overall_ai and overall_ai_status != expected_overall_ai:
-            alignment_issues.append(f"Overall: Playbook={overall_playbook_status}, AI={overall_ai_status} (expected {expected_overall_ai})")
+        # For remediation, both use the same status values - direct comparison
+        if overall_playbook_status != overall_ai_status:
+            alignment_issues.append(f"Overall: Playbook={overall_playbook_status}, AI={overall_ai_status}")
     elif overall_playbook_status and not overall_ai_status:
         alignment_issues.append(f"Overall: Playbook has status {overall_playbook_status} but AI analysis missing")
     elif overall_ai_status and not overall_playbook_status:
@@ -1859,17 +2152,17 @@ def verify_status_alignment(test_output: str, analysis_message: str) -> tuple[bo
         debug_info += f"Overall AI status: {overall_ai_status}\n"
         debug_info += f"Overall playbook status: {overall_playbook_status}\n"
         # Also show a sample of the analysis message to help debug extraction
-        # Find lines containing "Compliance Status" or "COMPLIANCE STATUS"
+        # Find lines containing "Remediation Status" or "REMEDIATION STATUS"
         relevant_lines = []
         for i, line in enumerate(analysis_message.split('\n')):
-            if 'Compliance Status' in line or 'COMPLIANCE STATUS' in line or 'Requirement' in line:
+            if 'Remediation Status' in line or 'REMEDIATION STATUS' in line or 'Requirement' in line:
                 relevant_lines.append(f"Line {i}: {line}")
                 if len(relevant_lines) >= 30:  # Limit to 30 relevant lines
                     break
-        debug_info += f"\nRelevant lines from analysis message (containing 'Compliance Status' or 'Requirement'):\n" + "\n".join(relevant_lines) + "\n"
+        debug_info += f"\nRelevant lines from analysis message (containing 'Remediation Status' or 'Requirement'):\n" + "\n".join(relevant_lines) + "\n"
         return False, "Status misalignment detected:\n" + debug_info + "\n".join(alignment_issues)
     
-    return True, "All statuses align correctly (PASS=COMPLIANT, FAIL=NON-COMPLIANT, NA=UNKNOWN)"
+    return True, "All statuses align correctly (APPLIED/FAILED/SKIPPED/UNKNOWN)"
 
 
 def extract_analysis_statuses(analysis_message: str) -> dict:
@@ -1881,19 +2174,21 @@ def extract_analysis_statuses(analysis_message: str) -> dict:
         
     Returns:
         dict with keys:
-        - data_collection: "PASS" or "FAIL" or None
-        - compliance_analysis: "PASS" or "FAIL" or None
+        - data_collection: "PASS" or "FAIL" or None (from DATA_COLLECTION or REMEDIATION EXECUTION)
+        - remediation_verification: "PASS" or "FAIL" or None (from REMEDIATION VERIFICATION)
         - NOTE: playbook_analysis is no longer included as it's handled separately (after syntax check, before test execution)
     """
     import re
     analysis_upper = analysis_message.upper()
     statuses = {
         'data_collection': None,
-        'compliance_analysis': None
+        'remediation_execution': None,
+        'remediation_verification': None
     }
     
-    # Extract DATA COLLECTION status
+    # Extract DATA_COLLECTION status (Stage 1)
     data_collection_patterns = [
+        r'DATA_COLLECTION[:\s]*PASS',
         r'DATA\s+COLLECTION[:\s]*PASS',
         r'\*\*DATA\s+COLLECTION\*\*[:\s]*PASS',
         r'-\s*\*\*DATA\s+COLLECTION\*\*[:\s]*PASS',
@@ -1905,6 +2200,7 @@ def extract_analysis_statuses(analysis_message: str) -> dict:
     
     if not statuses['data_collection']:
         data_collection_fail_patterns = [
+            r'DATA_COLLECTION[:\s]*FAIL',
             r'DATA\s+COLLECTION[:\s]*FAIL',
             r'\*\*DATA\s+COLLECTION\*\*[:\s]*FAIL',
         ]
@@ -1913,26 +2209,50 @@ def extract_analysis_statuses(analysis_message: str) -> dict:
                 statuses['data_collection'] = 'FAIL'
                 break
     
-    # Extract COMPLIANCE ANALYSIS (PASS/FAIL, not COMPLIANT/NON-COMPLIANT)
-    compliance_analysis_patterns = [
-        r'COMPLIANCE\s+ANALYSIS[:\s]*PASS',
-        r'\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*PASS',
-        r'-\s*\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*PASS',
+    # Extract REMEDIATION EXECUTION status (Overall Assessment)
+    remediation_exec_patterns = [
+        r'REMEDIATION\s+EXECUTION[:\s]*PASS',
+        r'\*\*REMEDIATION\s+EXECUTION\*\*[:\s]*PASS',
+        r'-\s*\*\*REMEDIATION\s+EXECUTION\*\*[:\s]*PASS',
     ]
-    for pattern in compliance_analysis_patterns:
+    for pattern in remediation_exec_patterns:
         if re.search(pattern, analysis_upper):
-            statuses['compliance_analysis'] = 'PASS'
+            statuses['remediation_execution'] = 'PASS'
             break
     
-    if not statuses['compliance_analysis']:
-        compliance_analysis_fail_patterns = [
-            r'COMPLIANCE\s+ANALYSIS[:\s]*FAIL',
-            r'\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*FAIL',
-            r'-\s*\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*FAIL',
+    if not statuses['remediation_execution']:
+        remediation_exec_fail_patterns = [
+            r'REMEDIATION\s+EXECUTION[:\s]*FAIL',
+            r'\*\*REMEDIATION\s+EXECUTION\*\*[:\s]*FAIL',
+            r'-\s*\*\*REMEDIATION\s+EXECUTION\*\*[:\s]*FAIL',
         ]
-        for pattern in compliance_analysis_fail_patterns:
+        for pattern in remediation_exec_fail_patterns:
             if re.search(pattern, analysis_upper):
-                statuses['compliance_analysis'] = 'FAIL'
+                statuses['remediation_execution'] = 'FAIL'
+                break
+    
+    # Extract REMEDIATION VERIFICATION status (Overall Assessment)
+    remediation_verify_patterns = [
+        r'REMEDIATION\s+VERIFICATION[:\s]*PASS',
+        r'\*\*REMEDIATION\s+VERIFICATION\*\*[:\s]*PASS',
+        r'-\s*\*\*REMEDIATION\s+VERIFICATION\*\*[:\s]*PASS',
+        r'COMPLIANCE\s+ANALYSIS[:\s]*PASS',  # Backwards compatibility
+    ]
+    for pattern in remediation_verify_patterns:
+        if re.search(pattern, analysis_upper):
+            statuses['remediation_verification'] = 'PASS'
+            break
+    
+    if not statuses['remediation_verification']:
+        remediation_verify_fail_patterns = [
+            r'REMEDIATION\s+VERIFICATION[:\s]*FAIL',
+            r'\*\*REMEDIATION\s+VERIFICATION\*\*[:\s]*FAIL',
+            r'-\s*\*\*REMEDIATION\s+VERIFICATION\*\*[:\s]*FAIL',
+            r'COMPLIANCE\s+ANALYSIS[:\s]*FAIL',  # Backwards compatibility
+        ]
+        for pattern in remediation_verify_fail_patterns:
+            if re.search(pattern, analysis_upper):
+                statuses['remediation_verification'] = 'FAIL'
                 break
     
     return statuses
@@ -1962,7 +2282,7 @@ def extract_playbook_issues_from_analysis(analysis_message: str) -> tuple[bool, 
 
 def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
     """
-    Check if status values in the compliance report are evaluated (PASS/FAIL/NA) or contain Jinja2 expressions.
+    Check if status values in the remediation report are evaluated (APPLIED/FAILED/SKIPPED) or contain Jinja2 expressions.
     
     Args:
         test_output: Playbook execution output
@@ -1975,13 +2295,13 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
     import re
     import json
     
-    # First, try to extract the compliance report from Ansible JSON output
-    # The report is typically in the "msg" field of the "Generate compliance report" task
+    # First, try to extract the remediation report from Ansible JSON output
+    # The report is typically in the "msg" field of the "Generate remediation report" task
     compliance_report_text = ""
     
     # Try to extract from JSON structure (Ansible output format)
     try:
-        # Look for the "Generate compliance report" task output
+        # Look for the "Generate remediation report" task output
         # Pattern: "msg": [ "line1", "line2", ... ]
         msg_pattern = r'"msg":\s*\[(.*?)\]'
         msg_matches = re.findall(msg_pattern, test_output, re.DOTALL)
@@ -1992,7 +2312,7 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
                 msg_array = json.loads('[' + msg_match + ']')
                 # Join all strings in the array
                 msg_text = '\n'.join(str(item) for item in msg_array)
-                if 'COMPLIANCE REPORT' in msg_text:
+                if 'REMEDIATION REPORT' in msg_text or 'COMPLIANCE REPORT' in msg_text:
                     compliance_report_text = msg_text
                     break
             except (json.JSONDecodeError, ValueError):
@@ -2001,7 +2321,7 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
                 string_pattern = r'"([^"]*)"'
                 strings = re.findall(string_pattern, msg_match)
                 msg_text = '\n'.join(strings)
-                if 'COMPLIANCE REPORT' in msg_text:
+                if 'REMEDIATION REPORT' in msg_text or 'COMPLIANCE REPORT' in msg_text:
                     compliance_report_text = msg_text
                     break
     except Exception:
@@ -2014,13 +2334,13 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
         report_lines = []
         
         for i, line in enumerate(lines):
-            # Detect start of compliance report
-            if 'COMPLIANCE REPORT' in line or ('COMPLIANCE' in line and 'REPORT' in line):
+            # Detect start of remediation report
+            if 'REMEDIATION REPORT' in line or 'COMPLIANCE REPORT' in line or ('REMEDIATION' in line and 'REPORT' in line):
                 in_compliance_report = True
                 report_lines.append(line)
                 continue
             
-            # Detect end of compliance report
+            # Detect end of remediation report
             if in_compliance_report:
                 if 'PLAY RECAP' in line or ('TASK [' in line and i > 0 and len(report_lines) > 10):
                     break
@@ -2029,17 +2349,17 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
         compliance_report_text = '\n'.join(report_lines)
     
     if not compliance_report_text:
-        # If we can't find the compliance report, assume it's OK (might be in a different format)
-        return True, "Compliance report not found in expected format, skipping status validation"
+        # If we can't find the remediation report, assume it's OK (might be in a different format)
+        return True, "Remediation report not found in expected format, skipping status validation"
     
     # Patterns to detect Jinja2 expressions in status values
     jinja2_patterns = [
         r'Status:\s*\{\s*\(',  # Status: { (
         r'Status:\s*\{\{\s*\(',  # Status: {{ (
         r'Status:\s*\{\{\{\{\s*\(',  # Status: {{{{ (
-        r'Status:\s*["\']\s*PASS\s*if',  # Status: 'PASS if
-        r'Status:\s*["\']\s*FAIL\s*if',  # Status: 'FAIL if
-        r'Status:\s*["\']\s*NA\s*if',  # Status: 'NA if
+        r'Status:\s*["\']\s*APPLIED\s*if',  # Status: 'APPLIED if
+        r'Status:\s*["\']\s*FAILED\s*if',  # Status: 'FAILED if
+        r'Status:\s*["\']\s*SKIPPED\s*if',  # Status: 'SKIPPED if
         r'Status:\s*["\']\s*UNKNOWN\s*if',  # Status: 'UNKNOWN if
         r'Status:\s*trim\s*\}\}',  # Status: ... trim }}
         r'Status:\s*trim\s*\}\}\}\}',  # Status: ... trim }}}}
@@ -2050,7 +2370,7 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
     lines = compliance_report_text.split('\n')
     
     for i, line in enumerate(lines):
-        # Check for status lines (but not "OVERALL COMPLIANCE" section)
+        # Check for status lines (but not "OVERALL REMEDIATION" section)
         if 'Status:' in line and 'OVERALL' not in line.upper():
             status_lines.append((i+1, line))
     
@@ -2065,10 +2385,10 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
     if issues:
         error_msg = "Status values are showing Jinja2 expressions instead of evaluated values.\n\n"
         error_msg += "**Valid status values:**\n"
-        error_msg += "- **PASS**: Requirement is definitively met\n"
-        error_msg += "- **FAIL**: Requirement is definitively not met\n"
-        error_msg += "- **NA**: Skip related task or Did not execute the related task\n"
-        error_msg += "- **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)\n\n"
+        error_msg += "- **APPLIED**: Remediation step was successfully applied\n"
+        error_msg += "- **FAILED**: Remediation step could not be applied\n"
+        error_msg += "- **SKIPPED**: Remediation is not applicable (required software/package not installed)\n"
+        error_msg += "- **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)\n\n"
         error_msg += "Found issues:\n"
         for issue in issues[:5]:  # Show first 5 issues
             error_msg += f"  - {issue}\n"
@@ -2077,54 +2397,42 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
         error_msg += "\nThis indicates the playbook is using string literals instead of Jinja2 expressions for status variables."
         return False, error_msg
     
-    # Also check if status values are valid (PASS/FAIL/NA/UNKNOWN)
+    # Also check if status values are valid (APPLIED/FAILED/SKIPPED/UNKNOWN)
     # Extract and validate status values with proper stripping
     # CRITICAL: Use strip() before comparison - if status is valid after stripping, accept it
+    valid_statuses = ['APPLIED', 'FAILED', 'SKIPPED', 'UNKNOWN', 'PASS', 'FAIL', 'NA']  # Include legacy values for compatibility
     invalid_statuses = []
     for line_num, line in status_lines:
         # Extract status value from the line
         # Pattern: Status: <value> (capture everything after "Status:" until end of line or comma)
-        # This will capture the value including any trailing whitespace/newlines
         status_match = re.search(r'Status:\s*(?:["\'])?\s*(.+?)(?:["\'])?\s*[,]?\s*$', line, re.IGNORECASE | re.MULTILINE | re.DOTALL)
         if status_match:
-            # Extract the status value and strip it to remove newlines and whitespace
             raw_status_value = status_match.group(1)
-            # CRITICAL: Strip before comparison
             status_value = raw_status_value.strip()
             
-            # Check if it's a valid status value (after stripping)
-            if status_value.upper() in ['PASS', 'FAIL', 'NA', 'UNKNOWN']:
-                # Valid status after stripping - accept it even if raw value had newlines
-                # This is correct behavior - strip() cleans the value before comparison
+            if status_value.upper() in valid_statuses:
                 pass
             else:
-                # Invalid status value even after stripping
-                # Check if it contains newline or other invalid characters
                 if '\n' in raw_status_value or '\r' in raw_status_value:
-                    invalid_statuses.append(f"Line {line_num}: Status shows `{repr(raw_status_value)}` (contains newline character) instead of clean 'PASS', 'FAIL', 'NA', or 'UNKNOWN'")
+                    invalid_statuses.append(f"Line {line_num}: Status shows `{repr(raw_status_value)}` (contains newline character) instead of clean 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN'")
                 else:
-                    invalid_statuses.append(f"Line {line_num}: Status shows `{repr(status_value)}` instead of 'PASS', 'FAIL', 'NA', or 'UNKNOWN'")
+                    invalid_statuses.append(f"Line {line_num}: Status shows `{repr(status_value)}` instead of 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN'")
         else:
-            # Try alternative pattern - extract value after "Status:" more flexibly
             alt_match = re.search(r'Status:\s*(.+?)(?:\s*[,]?\s*$|\s*["\'])', line, re.IGNORECASE | re.DOTALL)
             if alt_match:
                 raw_status_value = alt_match.group(1)
-                # CRITICAL: Strip before comparison
                 status_value = raw_status_value.strip()
-                if status_value.upper() not in ['PASS', 'FAIL', 'NA', 'UNKNOWN']:
+                if status_value.upper() not in valid_statuses:
                     if '\n' in raw_status_value or '\r' in raw_status_value:
-                        invalid_statuses.append(f"Line {line_num}: Status shows `{repr(raw_status_value)}` (contains newline character) instead of clean 'PASS', 'FAIL', 'NA', or 'UNKNOWN'")
+                        invalid_statuses.append(f"Line {line_num}: Status shows `{repr(raw_status_value)}` (contains newline character) instead of clean 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN'")
                     else:
-                        invalid_statuses.append(f"Line {line_num}: Status shows `{repr(status_value)}` instead of 'PASS', 'FAIL', 'NA', or 'UNKNOWN'")
+                        invalid_statuses.append(f"Line {line_num}: Status shows `{repr(status_value)}` instead of 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN'")
             else:
-                # Couldn't extract status value - check if line contains Status: but no valid value
                 if 'Status:' in line:
-                    # Extract any potential status value and check after stripping
-                    # Look for Status: followed by any text
                     fallback_match = re.search(r'Status:\s*(.+)', line, re.IGNORECASE)
                     if fallback_match:
                         fallback_value = fallback_match.group(1).strip()
-                        if fallback_value.upper() not in ['PASS', 'FAIL', 'NA', 'UNKNOWN']:
+                        if fallback_value.upper() not in valid_statuses:
                             invalid_statuses.append(f"Line {line_num}: {line.strip()}")
                     else:
                         invalid_statuses.append(f"Line {line_num}: {line.strip()}")
@@ -2134,8 +2442,8 @@ def check_status_values_evaluated(test_output: str) -> tuple[bool, str]:
         error_msg += "**Valid status values:**\n"
         error_msg += "- **PASS**: Requirement is definitively met\n"
         error_msg += "- **FAIL**: Requirement is definitively not met\n"
-        error_msg += "- **NA**: Skip related task or Did not execute the related task\n"
-        error_msg += "- **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)\n\n"
+        error_msg += "- **SKIPPED**: Remediation is not applicable (required software/package not installed)\n"
+        error_msg += "- **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)\n\n"
         error_msg += "Found invalid statuses:\n"
         for issue in invalid_statuses[:5]:
             error_msg += f"  - {issue}\n"
@@ -2156,13 +2464,13 @@ def analyze_playbook(
     Analyze if the playbook structure and content correctly implements all requirements (STAGE 0: PLAYBOOK STRUCTURE CHECK).
     
     This function checks if the playbook content has tasks implementing all requirements BEFORE execution.
-    It verifies the playbook structure matches the requirements and CIS audit procedure.
+    It verifies the playbook structure matches the requirements and CIS remediation procedure.
     
     Args:
         requirements: List of requirements
         playbook_objective: The objective of the playbook
         playbook_content: The actual playbook YAML content
-        audit_procedure: CIS Benchmark audit procedure (optional)
+        audit_procedure: CIS Benchmark remediation procedure (optional)
         
     Returns:
         tuple: (is_valid, playbook_analysis_message)
@@ -2182,25 +2490,25 @@ def analyze_playbook(
     if audit_procedure:
         audit_procedure_section = f"""
 
-**CIS BENCHMARK AUDIT PROCEDURE:**
-The following is the official audit procedure from the CIS Benchmark. 
-The playbook MUST implement this audit procedure correctly:
+**CIS BENCHMARK REMEDIATION PROCEDURE:**
+The following is the official remediation procedure from the CIS Benchmark. 
+The playbook MUST implement this remediation procedure correctly:
 
 ```bash
 {audit_procedure}
 ```
 
-**CRITICAL - AUDIT PROCEDURE COMPLIANCE:**
+**CRITICAL - REMEDIATION PROCEDURE COMPLIANCE:**
 1. **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
-   - **MANDATORY**: If the audit procedure provides scripts or commands, the playbook MUST use them exactly as provided
+   - **MANDATORY**: If the remediation procedure provides scripts or commands, the playbook MUST use them exactly as provided
    - **DO NOT** accept alternative commands or scripts unless the provided ones are confirmed to not work
-   - **ONLY** flag as incorrect if the playbook uses different commands when the audit procedure provides specific ones
-   - Verify that the playbook preserves the exact commands, scripts, and logic from the audit procedure
-2. The playbook should convert the audit procedure script/commands into Ansible tasks
-3. Each distinct check in the audit procedure should become a separate requirement/task
-4. The playbook should follow the step-by-step logic from the audit procedure
-5. Conditional execution should match the audit procedure (e.g., "If nothing is returned, no further audit steps are required")
-6. Status determination logic should match the expected outputs and pass/fail criteria from the audit procedure
+   - **ONLY** flag as incorrect if the playbook uses different commands when the procedure provides specific ones
+   - Verify that the playbook preserves the exact commands, scripts, and logic from the remediation procedure
+2. The playbook should convert the remediation procedure script/commands into Ansible tasks
+3. Each distinct remediation step should become a separate requirement/task
+4. The playbook should follow the step-by-step logic from the remediation procedure
+5. Idempotency should be ensured - each task should be safe to run multiple times
+6. The last task should verify the remediation was applied correctly
 
 """
     
@@ -2208,17 +2516,17 @@ The playbook MUST implement this audit procedure correctly:
     # Note: We need to escape % characters for .format() - % becomes %%
     # Also need to escape { and } for .format() - { becomes {{ and } becomes }}
     # For Jinja2 template syntax like {% set %}, we use {{%% set %%}} which becomes {% set %} after format
-    playbook_analysis_prompt = """You are an expert Ansible auditor. Analyze if a playbook STRUCTURE correctly implements all requirements.
+    playbook_analysis_prompt = """You are an expert Ansible auditor. Analyze if a REMEDIATION playbook STRUCTURE correctly implements all requirements.
 
 **SCOPE:**
 - This stage ONLY checks playbook CONTENT structure and task existence
-- DO NOT check execution output, data collection, or actual data values (handled in later stages)
+- DO NOT check execution output or actual results (handled in later stages)
 
 **STATUS VALUE DEFINITIONS:**
-- **PASS**: Requirement is definitively met
-- **FAIL**: Requirement is definitively not met
+- **APPLIED**: Remediation step is correctly implemented
+- **FAILED**: Remediation step is missing or incorrectly implemented
 - **NA**: Skip related task or Did not execute the related task
-- **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+- **UNKNOWN**: Cannot determine from content
 
 **INPUT:**
 **Playbook Objective:** {objective}
@@ -2238,8 +2546,8 @@ The playbook MUST implement this audit procedure correctly:
    - **Scope**: EXISTENCE only, NOT correctness
    - **Method**:
      * Count total requirements in input list
-     * For DATA COLLECTION requirements: Check if task exists (shell/command modules, task names)
-     * For STRUCTURAL requirements: Check if elements exist (CIS comments, "Generate compliance report" task)
+     * For REMEDIATION requirements: Check if task exists (shell/command modules, task names)
+     * For STRUCTURAL requirements: Check if elements exist (CIS comments, "Generate remediation report" task)
      * Mark as FOUND if task/element exists, even if implementation is incorrect
    - **PASS**: All requirements have corresponding tasks/elements
    - **FAIL**: Any requirement completely missing (no task/element exists)
@@ -2249,14 +2557,14 @@ The playbook MUST implement this audit procedure correctly:
    - **Scope**: Implementation details and correctness
    - **Check**:
      * **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
-       - **MANDATORY**: If the audit procedure or requirements provide scripts or commands, verify the playbook uses them exactly as provided
+       - **MANDATORY**: If the remediation procedure or requirements provide scripts or commands, verify the playbook uses them exactly as provided
        - **DO NOT** flag as incorrect if the playbook uses the provided scripts/commands, even if alternatives exist
-       - **ONLY** flag as incorrect if the playbook uses different commands when specific ones are provided in the audit procedure
-       - Verify that the playbook preserves the exact commands, scripts, and logic from the audit procedure
-     * Command/script matches requirement description OR matches the provided audit procedure script/command
+       - **ONLY** flag as incorrect if the playbook uses different commands when specific ones are provided in the remediation procedure
+       - Verify that the playbook preserves the exact commands, scripts, and logic from the remediation procedure
+     * Command/script matches requirement description OR matches the provided remediation procedure script/command
      * Regex patterns are correct (extract and compare values properly)
      * Version comparisons implemented correctly (e.g., "1.3.1-25 or later" extracts and compares numerically)
-     * Status determination logic matches requirement's pass/fail criteria
+     * Status determination logic matches requirement's applied/failed/skipped criteria
      * **Complex comparisons using Jinja2 templates** (`{% set %}`, `{% if %}` blocks) are VALID and acceptable for complicated logic
        - Example: Multi-component version comparisons (major.minor.patch-release) using `{% set %}` to extract components
        - Example: Complex conditional logic with multiple AND/OR conditions using `{% if %}` blocks
@@ -2265,19 +2573,20 @@ The playbook MUST implement this audit procedure correctly:
      * **IGNORE potential issues** (e.g., "may not correctly match", "could cause issues") - execution will test these
      * **IGNORE reliability concerns** (e.g., "may not reliably produce") - execution will test reliability
      * **ONLY FLAG confirmed problems**: Clearly wrong patterns, missing logic, incorrect syntax, or obvious mismatches
-     * **DO NOT flag if playbook uses provided scripts/commands from audit procedure** - this is correct behavior
+     * **DO NOT flag if playbook uses provided scripts/commands from remediation procedure** - this is correct behavior
      * If you cannot confirm an issue definitively, do NOT flag it - let execution reveal the actual behavior
    - **PASS**: Tasks implement requirements correctly (or issues are only potential/uncertain)
-   - **FAIL**: Tasks have confirmed implementation problems (wrong regex, incorrect comparisons, missing logic, etc.) OR playbook uses different commands when audit procedure provides specific ones
+   - **FAIL**: Tasks have confirmed implementation problems (wrong regex, incorrect comparisons, missing logic, etc.) OR playbook uses different commands when remediation procedure provides specific ones
 
-**3. AUDIT PROCEDURE COMPLIANCE** (if audit procedure provided):
-   - **Purpose**: Verify playbook WORKFLOW and DEPENDENCIES align with audit procedure
+**3. REMEDIATION PROCEDURE COMPLIANCE** (if remediation procedure provided):
+   - **Purpose**: Verify playbook WORKFLOW and DEPENDENCIES align with remediation procedure
    - **Scope**: Workflow/dependencies only, NOT implementation details
    - **Check**:
-     * Conditional execution matches audit procedure (e.g., `when:` conditions where required)
-     * Task execution order matches audit procedure's step-by-step logic
-     * Task dependencies match audit procedure (e.g., Requirement 2 depends on Requirement 1's output)
-     * Overall compliance logic matches audit procedure (e.g., "PASS when req_1 returns nothing OR (req_1 returns output AND req_2=PASS AND req_3=PASS)")
+     * Conditional execution matches remediation procedure (e.g., `when:` conditions to SKIP if software not installed)
+     * Task execution order matches remediation procedure's step-by-step logic
+     * Task dependencies match remediation procedure (e.g., Requirement 2 depends on Requirement 1's output)
+     * Overall remediation logic matches procedure (e.g., "APPLIED when all steps succeed, SKIPPED when required package not installed")
+     * If required software/package is not installed, remediation should be SKIPPED, not FAILED
    - **PASS**: Workflow/dependencies align
    - **FAIL**: Workflow/dependencies don't align
    - **NOTE**: Implementation details (regex, version comparisons) belong in "Requirements Analysis"
@@ -2334,27 +2643,28 @@ The playbook MUST implement this audit procedure correctly:
                    (major == 1 and minor > 3) or
                    (major == 1 and minor == 3 and patch > 1) or
                    (major == 1 and minor == 3 and patch == 1 and release >= 25) %}
-               PASS
+               APPLIED
              {% else %}
-               FAIL
+               FAILED
              {% endif %}
            {% else %}
-             FAIL
+             FAILED
            {% endif %}
          {% else %}
-           FAIL
+           FAILED
          {% endif %}
        ```
      * **Key indicators of valid complex templates**:
-       - **PREFERRED**: Uses `regex_replace()` with backreferences (`\\1`, `\\2`, etc.) to extract specific capture groups directly
-         - This is safer than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
-         - Example: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}`
+       - **PREFERRED**: Uses `regex_findall()` to extract values safely (returns list, use `[0]` with default)
+         - This is safer than `regex_replace()` (which returns control characters on mismatch) and `regex_search()` with array indexing
+         - Example: `{% set mode_list = first_line | regex_findall('Access: \\(0?([0-7]+)/') %}` then `{% set mode = mode_list[0] if mode_list else '0' %}`
        - **ALTERNATIVE**: For version strings with consistent delimiters, uses `regex_search()` to get full version match first, then `split()` to extract components
          - This approach works well when the format is predictable (e.g., `pam-1.3.1-25`)
+       - **AVOID**: `regex_replace()` with backreferences (`\\1`) for value extraction — greedy `.*` fails with multi-line input
        - Uses `{% set variable = ... %}` to extract and store intermediate values
        - Uses `{% if %}` blocks for multi-condition logic
        - Uses `| int` or `| int(base=8)` filter to convert strings to integers for numeric comparison
-       - Ends with `PASS` or `FAIL` (not quoted, inside template block)
+       - Ends with `APPLIED` or `FAILED` or `SKIPPED` (not quoted, inside template block)
        - Uses folded block scalar (`>-`) which is ACCEPTABLE for this use case
        - May use `{# ... #}` for comments/debugging within template blocks
    - **Regex Double-Escaping Trap Check**:
@@ -2385,13 +2695,13 @@ The playbook MUST implement this audit procedure correctly:
        * `regex_search('pam-1\\\\\\.3\\\\\\.1-([0-9]+)')` - In inline expression, FOUR backslashes before period
      * ✅ CORRECT Examples (from actual YAML source):
        * `regex_search('pam-1\\.3\\.1-([0-9]+)')` - In inline expression, ONE backslash before period
-       * `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` - Inline expression with ONE backslash
+       * `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAILED') | trim }}}}"` - Inline expression with ONE backslash
        * `{% set major = output | regex_replace('^.*pam-([0-9]+)\\..*$', '\\1') | int %}` - In template block, `\\` is CORRECT
 
 **5. CONDITIONAL EXECUTION VERIFICATION** (if applicable):
    - Check if playbook has proper `when:` conditions for conditional requirements
-   - Verify conditional logic matches audit procedure (if provided)
-   - Example: If audit procedure says "If nothing is returned, no further audit steps are required", check if Requirements 2 and 3 have `when: data_1 | length > 0`
+   - Verify conditional logic matches remediation procedure (if provided)
+   - Example: If remediation requires a package that may not be installed, check if tasks have `when:` conditions to skip when package is absent
 
 **PASS CRITERIA:**
 ✅ All requirements have corresponding tasks/elements (REQUIREMENT MAPPING VERIFICATION: PASS)
@@ -2401,7 +2711,7 @@ The playbook MUST implement this audit procedure correctly:
 ✅ Regex patterns use SINGLE backslash (`\\.`) in inline expressions, or correct escaping in template blocks
 ✅ Complex comparisons using Jinja2 templates (`{% set %}`, `{% if %}`) are valid and acceptable
 ✅ Structural requirements present (comments, report tasks, etc.)
-✅ Audit procedure compliance correct (if provided)
+✅ Remediation procedure compliance correct (if provided)
 ✅ Conditional execution properly implemented (if applicable)
 
 **FAIL CRITERIA:**
@@ -2410,7 +2720,7 @@ The playbook MUST implement this audit procedure correctly:
 ❌ Status variables use literal block scalars (`|`) instead of quoted strings or folded (`>-`)
 ❌ Regex patterns use DOUBLE backslash (`\\\\.`) instead of SINGLE backslash (`\\.`)
 ❌ Structural requirements completely missing
-❌ Audit procedure compliance incorrect (if provided)
+❌ Remediation procedure compliance incorrect (if provided)
 ❌ Conditional execution missing when required
 
 **DO NOT CHECK:**
@@ -2419,12 +2729,13 @@ The playbook MUST implement this audit procedure correctly:
 - Empty output validity (verified in later stages)
 - Jinja2 syntax correctness (validated by other functions)
 - YAML syntax correctness (validated by syntax check)
-- "Generate compliance report" task output format (only verify task exists)
+- "Generate remediation report" task output format (only verify task exists)
 - Status values with newlines if `| trim` is present (acceptable)
 - Folded block scalars (`>-`) (acceptable)
 - **Potential issues** (e.g., "may not correctly", "could cause") - execution will test these
 - **Reliability concerns** (e.g., "may not reliably", "might fail") - execution will test reliability
 - **Uncertain problems** - only flag confirmed, definitive issues
+- **State Guard pre_tasks and post_tasks** - these are infrastructure tasks for retry safety, not remediation logic. Do NOT flag State Guard tasks as missing requirements or incorrect implementation.
 
 **RESPONSE FORMAT:**
 
@@ -2434,7 +2745,7 @@ PLAYBOOK_STRUCTURE: PASS
 
 **REQUIREMENT MAPPING VERIFICATION:** PASS
 - **Total Requirements in Input:** [N] requirements
-- **Data Collection Requirements Found:** [X] requirements (tasks exist in playbook content)
+- **Remediation Requirements Found:** [X] requirements (tasks exist in playbook content)
 - **Structural Requirements Verified:** [Y] requirements
 - **NOTE**: Checks for EXISTENCE only. Correctness is verified separately in "Requirements Analysis".
 
@@ -2444,7 +2755,7 @@ PLAYBOOK_STRUCTURE: PASS
 - Requirement 3: Task "Req 3 - [description]" exists and implements correctly
 - Requirement 4: Task "Req 4 - [description]" exists and implements correctly
 - Requirement 5: CIS reference comment present and correct
-- Requirement 6: "Generate compliance report" task exists in playbook content
+- Requirement 6: "Generate remediation report" task exists in playbook content
   - **NOTE**: Only task existence verified. Output format not analyzed.
 - Requirement 7: [Other structural requirement exists and correct]
 
@@ -2455,20 +2766,21 @@ PLAYBOOK_STRUCTURE: PASS
 - All regex patterns use correct escaping:
   - In inline expressions (`{{ }}`): SINGLE backslash (`\\.`)
   - In template blocks (`{% %}`): 
-    - **PREFERRED**: Use `regex_replace()` with backreferences (`\\1`, `\\2`, etc.) to extract specific capture groups directly
+    - **PREFERRED**: Use `regex_findall()` to extract values safely (returns list, use `[0]` with default)
     - **ALTERNATIVE**: For version strings with consistent delimiters, use `regex_search()` with single backslash `\\.` for periods, then use `split()` to extract components
+    - **AVOID**: `regex_replace()` with backreferences for value extraction (greedy `.*` fails with multi-line input)
 
-{{If audit procedure provided:}}
-**Audit Procedure Compliance:** PASS
-- Workflow and dependencies align with audit procedure
-- Conditional execution matches audit procedure requirements
-- Overall compliance logic structure matches audit procedure
+{{If remediation procedure provided:}}
+**Remediation Procedure Compliance:** PASS
+- Workflow and dependencies align with remediation procedure
+- Conditional execution matches remediation procedure requirements
+- Overall remediation logic structure matches remediation procedure
 - **NOTE**: Implementation details checked in "Requirements Analysis", not here
 
 {{If conditional execution applicable:}}
 **Conditional Execution Verification:** PASS
 - Requirements 2 and 3 have proper `when:` conditions (e.g., `when: data_1 | length > 0`)
-- Conditional execution logic matches audit procedure
+- Conditional execution logic matches remediation procedure
 ```
 
 **FAILURE RESPONSE:**
@@ -2477,7 +2789,7 @@ PLAYBOOK_STRUCTURE: FAIL
 
 **REQUIREMENT MAPPING VERIFICATION:** FAIL
 - **Total Requirements in Input:** [N] requirements
-- **Data Collection Requirements Found:** [X] requirements
+- **Remediation Requirements Found:** [X] requirements
 - **Structural Requirements Verified:** [Y] requirements
 - **NOTE**: Checks for EXISTENCE only. FAIL only if requirements are completely missing.
 
@@ -2489,16 +2801,16 @@ Missing/Not Found:
 - **NOTE**: Checks CORRECTNESS and IMPLEMENTATION DETAILS. Tasks may exist but fail here if incorrect.
 - **CRITICAL**: Only flag CONFIRMED issues. Do NOT flag potential issues (e.g., "may not correctly", "could cause") or reliability concerns (e.g., "may not reliably") - execution will test these.
 - **PRIORITY: USE PROVIDED SCRIPTS/COMMANDS FIRST**
-  - **MANDATORY**: If the audit procedure provides scripts or commands, verify the playbook uses them exactly as provided
-  - **DO NOT** flag as incorrect if the playbook uses the provided scripts/commands from the audit procedure
-  - **ONLY** flag as incorrect if the playbook uses different commands when specific ones are provided in the audit procedure
+  - **MANDATORY**: If the remediation procedure provides scripts or commands, verify the playbook uses them exactly as provided
+  - **DO NOT** flag as incorrect if the playbook uses the provided scripts/commands from the remediation procedure
+  - **ONLY** flag as incorrect if the playbook uses different commands when specific ones are provided in the remediation procedure
 - Requirement X: [requirement text] - Task exists but implementation incorrect
   - Example: "Regex pattern `'pam-1\\.3\\.1-([0-9]+)'` doesn't extract and compare build number to '25' as required" (CONFIRMED issue)
-  - Example: "Playbook uses `grep -r pattern` but audit procedure specifies `find /path -name 'file' | xargs grep pattern`" (CONFIRMED issue - different command when specific one provided)
+  - Example: "Playbook uses `grep -r pattern` but remediation procedure specifies `find /path -name 'file' | xargs grep pattern`" (CONFIRMED issue - different command when specific one provided)
   - ❌ WRONG: "Regex pattern may not correctly match" (potential issue - DO NOT FLAG)
   - ❌ WRONG: "May not reliably produce" (reliability concern - DO NOT FLAG)
-  - ❌ WRONG: "Playbook uses audit procedure command X, but alternative command Y might be better" (DO NOT FLAG - using provided command is correct)
-- Requirement Y: [requirement text] - Task exists but doesn't match requirement (wrong command/script when audit procedure provides specific one, incorrect regex, wrong version comparison - CONFIRMED issues only)
+  - ❌ WRONG: "Playbook uses remediation procedure command X, but alternative command Y might be better" (DO NOT FLAG - using provided command is correct)
+- Requirement Y: [requirement text] - Task exists but doesn't match requirement (wrong command/script when remediation procedure provides specific one, incorrect regex, wrong version comparison - CONFIRMED issues only)
 
 {{If status variables have issues:}}
 **Status Variable Format and Regex Verification:** FAIL
@@ -2517,21 +2829,24 @@ Missing/Not Found:
 - Regex patterns MUST use correct escaping:
   - In inline expressions (`{{ }}`): SINGLE backslash (`\\.`), NOT multiple backslashes (`\\\\.` or `\\\\\\.`)
   - In template blocks (`{% %}`): 
-    - **PREFERRED**: Use `regex_replace()` with backreferences (`\\1`, `\\2`, etc.) to extract specific capture groups directly
-      - This is safer than using `regex_search()` with array indexing (`match[1]`, `match[2]`, etc.)
-      - Example: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}`
+    - **PREFERRED**: Use `regex_findall()` to extract values safely (returns list, use `[0]` with default)
+      - Example: `{% set mode_list = first_line | regex_findall('Access: \\(0?([0-7]+)/') %}` then `{% set mode = mode_list[0] if mode_list else '0' %}`
     - **ALTERNATIVE**: For version strings with consistent delimiters, use `regex_search()` with single backslash `\\.` for periods, then use `split()` to extract components
+    - **AVOID**: `regex_replace()` with backreferences for value extraction (greedy `.*` fails with multi-line input, returns control characters)
 - **Detection**: In the YAML source, distinguish between inline expressions and template blocks
 - **Examples**:
   * ❌ WRONG: `status_1: |` (literal preserves newlines)
   * ❌ WRONG: `regex_search('pam-1\\\\.3\\\\.1-([0-9]+)')` in inline expression (TWO backslashes `\\\\.` before period - WRONG!)
   * ❌ WRONG: `regex_search('pam-1\\\\\\.3\\\\\\.1-([0-9]+)')` in inline expression (FOUR backslashes `\\\\\\.` before period - WRONG!)
   * ❌ WRONG: Using `regex_search()` with array indexing: `{% set match = output | regex_search('pattern') %}{% set value = match[1] %}` (error-prone, may grab wrong character)
+  * ❌ WRONG: Using `regex_replace()` for value extraction: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}` (DANGEROUS: returns control character if `.*` doesn't match entire string)
+  * ❌ WRONG: `mode | int(base=8) <= 700` (700 is decimal, not octal! Octal 700 = decimal 448)
   * ✅ CORRECT: `regex_search('pam-1\\.3\\.1-([0-9]+)')` in inline expression (ONE backslash `\\.` before period - CORRECT) - for boolean checks
-  * ✅ CORRECT: `status_1: "{{{{ ('PASS' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAIL') | trim }}}}"` (quoted string + single backslash) - for boolean checks
-  * ✅ CORRECT: `{% set mode = output | regex_replace('.*Access: \\(0?([0-7]+)/.*', '\\1') %}` - PREFERRED: Extract specific capture group directly
+  * ✅ CORRECT: `status_1: "{{{{ ('APPLIED' if (result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)')) else 'FAILED') | trim }}}}"` (quoted string + single backslash) - for boolean checks
+  * ✅ CORRECT: `{% set mode_list = first_line | regex_findall('Access: \\(0?([0-7]+)/') %}` then `{% set mode = mode_list[0] if mode_list else '0' %}` - PREFERRED: Extract with regex_findall
   * ✅ CORRECT: `{% set version_match = output | regex_search('pam-([0-9]+\\.[0-9]+\\.[0-9]+)-([0-9]+)') %}` - ALTERNATIVE: For version strings with consistent delimiters, use `regex_search()` first, then `split()` to extract components
   * ✅ CORRECT: `{% set major = version_parts.split('.')[0] | int %}` - Use `split()` method to extract version components (when using regex_search approach)
+  * ✅ CORRECT: `mode | int(base=8) <= 448` - Comparing against decimal 448 (which is octal 700)
   * ✅ CORRECT: Complex template using folded block scalar (RECOMMENDED APPROACH):
     ```yaml
     status_1: >-
@@ -2548,29 +2863,29 @@ Missing/Not Found:
                 (major == 1 and minor > 3) or
                 (major == 1 and minor == 3 and patch > 1) or
                 (major == 1 and minor == 3 and patch == 1 and release >= 25) %}
-            PASS
+            APPLIED
           {% else %}
-            FAIL
+            FAILED
           {% endif %}
         {% else %}
-          FAIL
+          FAILED
         {% endif %}
       {% else %}
-        FAIL
+        FAILED
       {% endif %}
     ```
 
-{{If audit procedure compliance wrong:}}
-**Audit Procedure Compliance:** FAIL
+{{If remediation procedure compliance wrong:}}
+**Remediation Procedure Compliance:** FAIL
 - [Specific workflow/dependency issue]
 - [What needs to be fixed]
 - **NOTE**: Implementation details belong in "Requirements Analysis"
 
 {{If conditional execution missing:}}
 **Conditional Execution Issues:**
-- Requirements 2 and 3 should have `when:` conditions but don't
-- Audit procedure requires: "If nothing is returned, no further audit steps are required"
-- Missing: `when: data_1 | length > 0` on Requirements 2 and 3 tasks
+- Requirements should have `when:` conditions to skip when required software/package not installed
+- Remediation procedure requires conditional checks before applying fixes
+- Missing: `when:` conditions for checking prerequisites
 
 ADVICE TO UPDATE PLAYBOOK:
 1. [Add missing tasks/elements]
@@ -2661,29 +2976,29 @@ def analyze_data_collection(
     suppress_header: bool = False
 ) -> tuple[bool, str]:
     """
-    Analyze if the playbook collected sufficient data (STAGE 1: DATA SUFFICIENCY CHECK).
+    Analyze if the playbook executed remediation steps properly (STAGE 1: EXECUTION CHECK).
     
-    This function ONLY checks if data was collected properly.
-    It also validates that status values are correctly evaluated (PASS/FAIL/NA/UNKNOWN).
+    This function checks if remediation steps were executed and data was collected properly.
+    It also validates that status values are correctly evaluated (APPLIED/FAILED/NA/UNKNOWN).
     
     Args:
         requirements: List of requirements
         playbook_objective: The objective of the playbook
-        test_output: Output from data collection playbook
+        test_output: Output from remediation playbook execution
         playbook_content: The actual playbook YAML content (optional, used to analyze status evaluation issues)
-        audit_procedure: CIS Benchmark audit procedure (optional)
+        audit_procedure: CIS Benchmark remediation procedure (optional)
         suppress_header: If True, suppress the header output (used when called from analyze_playbook_output)
         
     Returns:
         tuple: (is_sufficient, data_collection_analysis_message)
-        - is_sufficient: True if data was collected properly and status values are correct
-        - data_collection_analysis_message: AI's analysis of data collection sufficiency
+        - is_sufficient: True if remediation was executed properly and status values are correct
+        - data_collection_analysis_message: AI's analysis of execution sufficiency
     """
     if not suppress_header:
         print("\n" + "=" * 80)
-        print("🔍 STAGE 1: DATA COLLECTION ANALYSIS")
+        print("🔍 STAGE 1: REMEDIATION EXECUTION ANALYSIS")
         print("=" * 80)
-        print("Checking if playbook collected sufficient data...")
+        print("Checking if playbook executed remediation steps properly...")
     
     # First, check if status values are correctly evaluated
     status_values_valid, status_validation_error = check_status_values_evaluated(test_output)
@@ -2704,20 +3019,20 @@ def analyze_data_collection(
     if audit_procedure:
         audit_procedure_section = f"""
 
-**CIS BENCHMARK AUDIT PROCEDURE:**
-The following is the official audit procedure from the CIS Benchmark. 
-Use this to determine if task skipping aligns with the audit procedure:
+**CIS BENCHMARK REMEDIATION PROCEDURE:**
+The following is the official remediation procedure from the CIS Benchmark. 
+Use this to determine if task skipping or conditional execution aligns with the procedure:
 
 ```bash
 {audit_procedure}
 ```
 
-**CRITICAL - TASK SKIPPING VALIDATION:**
-- If the audit procedure states: "If nothing is returned, no further audit steps are required"
-- Then tasks that are skipped (Status='NA') when the condition is met are VALID and SUFFICIENT
-- Example: If Requirement 1 returns empty output, and audit procedure says "no further steps required", then Requirements 2 and 3 should be skipped (Status='NA')
-- **Skipped tasks that align with audit procedure are SUFFICIENT DATA** - they indicate intentional conditional execution
-- Only flag skipped tasks as INSUFFICIENT if they don't align with the audit procedure
+**CRITICAL - TASK EXECUTION VALIDATION:**
+- If the remediation procedure has conditional steps (e.g., requires a package that may not be installed)
+- Then tasks that are skipped (Status='SKIPPED') when the condition is met are VALID and SUFFICIENT
+- Example: If required software/package is not installed, remediation steps should be SKIPPED — do NOT install the package
+- **Skipped tasks that align with remediation procedure prerequisites are SUFFICIENT** - they indicate the remediation is not applicable
+- Only flag skipped tasks as INSUFFICIENT if they don't align with the remediation procedure
 
 """
     
@@ -2746,34 +3061,34 @@ The following is the actual playbook YAML. Use this to identify why status value
 - Status variables are set as string literals instead of Jinja2 expressions
 - Missing `{{{{ }}}}` around the expression
 - Using single quotes around the entire expression instead of Jinja2 syntax
-- **Using literal block scalars (`|`) for status variables - preserves newlines and causes "PASS\n" or "FAIL\n" in output**
+- **Using literal block scalars (`|`) for status variables - preserves newlines and causes "APPLIED\n" or "FAILED\n" in output**
 - **Using `match()` instead of `regex_search()` - `match()` requires full string match, too strict**
 - **Using single quotes for regex patterns - requires single-escaping backslashes (e.g., `\\.` instead of `\\\\.`)**
-- Example WRONG: `status_1: "'PASS' if condition else 'FAIL'"` (string literal)
+- Example WRONG: `status_1: "'APPLIED' if condition else 'FAILED'"` (string literal)
 - Example WRONG: 
   ```yaml
   status_1: |
-    {{ ('PASS' if condition else 'FAIL') | trim }}
+    {{ ('APPLIED' if condition else 'FAILED') | trim }}
   ```
   (literal block scalar preserves newlines)
 - Example WRONG: `{{ result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)') }}` (double quotes require double-escaping)
-- Example WRONG: `status_1: "{{{{ 'PASS' if (result_1.stdout is match('pattern')) else 'FAIL' }}}}"` (using match() instead of regex_search())
-- Example CORRECT: `status_1: "{{{{ ('PASS' if condition else 'FAIL') | trim }}}}"` (quoted string with Jinja2 expression)
+- Example WRONG: `status_1: "{{{{ 'APPLIED' if (result_1.stdout is match('pattern')) else 'FAILED' }}}}"` (using match() instead of regex_search())
+- Example CORRECT: `status_1: "{{{{ ('APPLIED' if condition else 'FAILED') | trim }}}}"` (quoted string with Jinja2 expression)
 - Example CORRECT: `{{ result_1.stdout | regex_search('pam-1\\.3\\.1-([0-9]+)') }}` (single quotes, single backslashes - no double-escaping needed)
-- Example CORRECT: `{{ result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') }}` (single quotes for pattern and replacement)
-- Example CORRECT: `status_1: "{{{{ 'PASS' if (result_1.stdout | regex_search('pattern')) else 'FAIL' }}}}"` (using regex_search() with single quotes for pattern matching)
+- Example CORRECT (escaping): `{{ result_1.stdout | regex_replace('.*pam-1\\.3\\.1-([0-9]+).*', '\\1') }}` (single quotes for pattern and replacement - but PREFER `regex_findall` for extraction to avoid greedy `.*` issues)
+- Example CORRECT: `status_1: "{{{{ 'APPLIED' if (result_1.stdout | regex_search('pattern')) else 'FAILED' }}}}"` (using regex_search() with single quotes for pattern matching)
 
 """
     
     # Build data collection analysis prompt
-    data_collection_prompt = """You are an expert Ansible auditor. Your task is to check if a playbook COLLECTED SUFFICIENT DATA.
+    data_collection_prompt = """You are an expert Ansible auditor. Your task is to check if a remediation playbook EXECUTED PROPERLY.
 
-**DO NOT perform compliance analysis. ONLY check if data was collected.**
+**DO NOT perform compliance analysis. ONLY check if remediation steps were executed.**
 
 **Playbook Objective:**
 {objective}
 {audit_procedure_section}
-**Requirements to collect data for:**
+**Remediation requirements to check:**
 {requirements}
 {playbook_content_section}
 **Playbook Execution Output:**
@@ -2781,61 +3096,60 @@ The following is the actual playbook YAML. Use this to identify why status value
 {output}
 ```
 
-**YOUR TASK - DATA SUFFICIENCY CHECK:**
+**YOUR TASK - REMEDIATION EXECUTION CHECK:**
 
-1. Does the output contain a "Generate compliance report" task?
-2. For EACH requirement, does the report include ACTUAL DATA or CONFIRMED ABSENCE?
+1. Does the output contain a "Generate remediation report" task?
+2. For EACH requirement, does the report include execution results or confirmed status?
 3. Is any data missing, showing "Not collected yet", or showing only placeholders?
-4. **CRITICAL - STATUS VALUE VALIDATION**: Check if the 'Status' for each requirement in the output is 'PASS', 'FAIL', 'NA', or 'UNKNOWN' (not Jinja2 expressions like `{{ ('PASS' if ... else 'FAIL') | trim }}`)
+4. **CRITICAL - STATUS VALUE VALIDATION**: Check if the 'Status' for each requirement in the output is 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN' (not Jinja2 expressions)
    - **Status value definitions:**
-     - **PASS**: Requirement is definitively met
-     - **FAIL**: Requirement is definitively not met
-     - **NA**: Skip related task or Did not execute the related task
-     - **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+     - **APPLIED**: Remediation step was successfully applied
+     - **FAILED**: Remediation step could not be applied
+     - **SKIPPED**: Remediation is not applicable (e.g., required software/package not installed)
+     - **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
 
 **IMPORTANT - THREE VALID SCENARIOS:**
-1. **Data collected**: Command found and retrieved actual data (e.g., "Docker version 20.10.24")
-2. **Confirmed absence**: Command succeeded (exit code 0) but found nothing (e.g., "No packages found", empty output)
-3. **Task skipped (Status='NA')**: Task was intentionally skipped due to conditional execution that aligns with audit procedure
-   - Example: If audit procedure says "If nothing is returned, no further audit steps are required"
-   - Then when Requirement 1 returns empty, Requirements 2 and 3 should be skipped (Status='NA')
-   - **This is SUFFICIENT DATA** - the skipping indicates intentional conditional execution per audit procedure
-   - Only flag as INSUFFICIENT if the skipping doesn't align with audit procedure
+1. **Step executed**: Remediation command ran and reported results
+2. **Confirmed absence**: Command succeeded (exit code 0) but no change needed (already compliant)
+3. **Task skipped (Status='SKIPPED')**: Task was intentionally skipped because required software/package is not installed
+   - Example: If GDM/GNOME is not installed, remediation for GNOME settings should be SKIPPED
+   - **This is a VALID result** - the skipping indicates remediation is not applicable for this server
+   - Only flag as INSUFFICIENT if the skipping doesn't align with remediation procedure prerequisites
 
-ALL THREE scenarios are DATA SUFFICIENT because they provide clear information about the environment or indicate intentional conditional execution.
+ALL THREE scenarios are VALID EXECUTION because they provide clear information about remediation status.
 
 **CRITICAL - STATUS VALUES MUST BE EVALUATED:**
-- Status values in the compliance report MUST be evaluated as 'PASS', 'FAIL', 'NA', or 'UNKNOWN'
+- Status values in the remediation report MUST be evaluated as 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN'
 - **Status value definitions:**
-  - **PASS**: Requirement is definitively met
-  - **FAIL**: Requirement is definitively not met
-  - **NA**: Skip related task or Did not execute the related task
-  - **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
-- Status values MUST NOT show Jinja2 expressions like `{{ ('PASS' if ... else 'FAIL') | trim }}`
+  - **APPLIED**: Remediation step was successfully applied
+  - **FAILED**: Remediation step could not be applied
+  - **SKIPPED**: Remediation is not applicable (required software/package not installed — do NOT install it)
+  - **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
+- Status values MUST NOT show Jinja2 expressions like `{{ ('APPLIED' if ... else 'FAILED') | trim }}`
 - If status values show Jinja2 expressions, this is a CRITICAL ERROR that must be fixed
 - If playbook_content is provided and status evaluation issues are detected, analyze the playbook to provide specific fix advice
 
 **RESPONSE FORMAT:**
 
-If data is SUFFICIENT and status values are correct:
+If execution is SUFFICIENT and status values are correct:
 ```
 DATA_COLLECTION: PASS
 
-All requirements have actual data or confirmed absence.
-All status values are correctly evaluated as PASS/FAIL/NA/UNKNOWN.
+All requirements have execution results or confirmed status.
+All status values are correctly evaluated as APPLIED/FAILED/SKIPPED/UNKNOWN.
 
-**Data collection per requirement:**
-- Requirement 1: ✅ SUFFICIENT - [actual data found OR confirmed absence with exit code 0], Status: [PASS/FAIL/NA/UNKNOWN]
-- Requirement 2: ✅ SUFFICIENT - [actual data found OR confirmed absence with exit code 0 OR task skipped (Status='NA') when aligns with audit procedure], Status: [PASS/FAIL/NA/UNKNOWN]
-- Requirement 3: ✅ SUFFICIENT - [task skipped (Status='NA') - aligns with audit procedure: "If nothing is returned, no further audit steps are required"], Status: NA
+**Execution status per requirement:**
+- Requirement 1: ✅ SUFFICIENT - [remediation applied OR confirmed not needed], Status: [APPLIED/FAILED/SKIPPED/UNKNOWN]
+- Requirement 2: ✅ SUFFICIENT - [remediation applied OR skipped due to missing prerequisite], Status: [APPLIED/FAILED/SKIPPED/UNKNOWN]
+- Requirement 3: ✅ SUFFICIENT - [task skipped (Status='SKIPPED') - required software not installed, remediation not applicable], Status: SKIPPED
 ...
 ```
 
-If data is INSUFFICIENT (command FAILED, not just empty):
+If execution is INSUFFICIENT (command FAILED, not just empty):
 ```
 DATA_COLLECTION: FAIL
 
-INSUFFICIENT_DATA: [Explain what data is missing or FAILED to collect]
+INSUFFICIENT_DATA: [Explain what execution data is missing or FAILED]
 
 Missing/Incomplete:
 - Requirement X: [what's wrong - no data, placeholder, error, etc.]
@@ -2851,45 +3165,44 @@ If status values are NOT evaluated correctly (showing Jinja2 expressions):
 ```
 DATA_COLLECTION: FAIL
 
-STATUS_EVALUATION_ERROR: Status values are showing Jinja2 expressions instead of evaluated values (PASS/FAIL/NA/UNKNOWN).
+STATUS_EVALUATION_ERROR: Status values are showing Jinja2 expressions instead of evaluated values (APPLIED/FAILED/SKIPPED/UNKNOWN).
 
 **Status value definitions:**
-- **PASS**: Requirement is definitively met
-- **FAIL**: Requirement is definitively not met
-- **NA**: Skip related task or Did not execute the related task
-- **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+- **APPLIED**: Remediation step was successfully applied
+- **FAILED**: Remediation step could not be applied
+- **SKIPPED**: Remediation is not applicable (required software/package not installed)
+- **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
 
 Issues Found:
-- Requirement X: Status shows `{{ ('PASS' if ... else 'FAIL') | trim }}` instead of 'PASS', 'FAIL', 'NA', or 'UNKNOWN'
+- Requirement X: Status shows `{{ ('APPLIED' if ... else 'FAILED') | trim }}` instead of 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN'
 - Requirement Y: Status shows Jinja2 expression instead of evaluated value
 
 ADVICE TO UPDATE PLAYBOOK:
 [If playbook_content is provided, analyze the playbook and provide specific advice:]
 1. Review the `set_fact` tasks that set status_N variables
-2. Ensure status variables use Jinja2 expressions (with {{{{ }}}}) that EVALUATE to 'PASS'/'FAIL'/'NA'/'UNKNOWN', not string literals
-3. Example WRONG: `status_1: "'PASS' if condition else 'FAIL'"` (string literal - will show expression text)
-4. Example CORRECT: `status_1: "{{{{ ('PASS' if condition else 'FAIL') | trim }}}}"` (Jinja2 expression - will evaluate to 'PASS' or 'FAIL')
-5. For skipped tasks: `status_N: "NA"` (when task is skipped or did not execute due to conditional execution)
-6. For error cases: `status_N: "{{{{ 'UNKNOWN' | trim }}}}"` (when error collecting data or requirement is ambiguous)
+2. Ensure status variables use Jinja2 expressions (with {{{{ }}}}) that EVALUATE to 'APPLIED'/'FAILED'/'SKIPPED'/'UNKNOWN', not string literals
+3. Example WRONG: `status_1: "'APPLIED' if condition else 'FAILED'"` (string literal - will show expression text)
+4. Example CORRECT: `status_1: "{{{{ ('APPLIED' if condition else 'FAILED') | trim }}}}"` (Jinja2 expression - will evaluate to 'APPLIED' or 'FAILED')
+5. For skipped tasks: `status_N: "SKIPPED"` (when remediation is not applicable, e.g., required software not installed)
+6. For error cases: `status_N: "{{{{ 'UNKNOWN' | trim }}}}"` (when error during execution or requirement is ambiguous)
 7. [Specific fix instructions based on the actual playbook content]
 ```
 
 **IMPORTANT - DISTINGUISHING VALID vs INSUFFICIENT:**
 
-✅ SUFFICIENT (valid data):
-- Actual data collected: "Docker version 20.10.24"
-- Confirmed absence with exit code 0: "No packages found", "(empty)"
+✅ SUFFICIENT (valid execution):
+- Remediation step executed successfully
+- Confirmed no change needed (already compliant)
 - Exit code 1 from grep/egrep with empty output = "No matches found" (VALID!)
 - Any command completed and reported its result (even if empty)
-- **Task skipped (Status='NA') when it aligns with audit procedure** (VALID!)
-  - Example: If audit procedure says "If nothing is returned, no further audit steps are required"
-  - Then Requirements 2 and 3 skipped when Requirement 1 returns empty = VALID and SUFFICIENT
-  - The skipping indicates intentional conditional execution per audit procedure
-- Status values are 'PASS', 'FAIL', 'NA', or 'UNKNOWN' (evaluated, not Jinja2 expressions)
-  - **PASS**: Requirement is definitively met
-  - **FAIL**: Requirement is definitively not met
-  - **NA**: Skip related task or Did not execute the related task (VALID when aligns with audit procedure)
-  - **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
+- **Task skipped (Status='SKIPPED') when required software/package not installed** (VALID!)
+  - Example: If GDM/GNOME not installed, GNOME-related remediation steps = VALID SKIP
+  - The skipping indicates remediation is not applicable for this server
+- Status values are 'APPLIED', 'FAILED', 'SKIPPED', or 'UNKNOWN' (evaluated, not Jinja2 expressions)
+  - **APPLIED**: Remediation step was successfully applied
+  - **FAILED**: Remediation step could not be applied
+  - **SKIPPED**: Remediation is not applicable (required software/package not installed)
+  - **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
 
 **CRITICAL - grep exit codes:**
 - Exit code 0 = matches found (has output)
@@ -2900,15 +3213,15 @@ Example: `journalctl | grep 'Connection timed out'` returns exit code 1 with emp
 → This is SUFFICIENT DATA meaning "no 'Connection timed out' entries exist"
 
 ❌ INSUFFICIENT (needs fix):
-- "Not collected yet" - task didn't run (and should have run per audit procedure)
+- "Not collected yet" - task didn't run (and should have run per remediation procedure)
 - Command crashed/errored (exit code 2+) with no useful output
 - Report section completely missing for a requirement
 - Only placeholders, no execution at all
-- **Task skipped when it should have run per audit procedure** (only flag if skipping doesn't align with audit procedure)
-- Status values showing Jinja2 expressions instead of 'PASS'/'FAIL'/'NA'/'UNKNOWN'
-  - Valid status values: **PASS** (requirement met), **FAIL** (requirement not met), **NA** (skip related task or did not execute - VALID when aligns with audit procedure), **UNKNOWN** (cannot determine - error collecting, ambiguous requirement)
+- **Task skipped when it should have run per remediation procedure** (only flag if skipping doesn't align with prerequisites)
+- Status values showing Jinja2 expressions instead of 'APPLIED'/'FAILED'/'SKIPPED'/'UNKNOWN'
+  - Valid status values: **APPLIED** (step applied), **FAILED** (step could not be applied), **SKIPPED** (not applicable - required software not installed), **UNKNOWN** (cannot determine - error during execution, ambiguous requirement)
 
-DO NOT analyze compliance - just verify data collection ran and reported results, and that status values are correctly evaluated.
+DO NOT analyze compliance - just verify remediation execution ran and reported results, and that status values are correctly evaluated.
 
 **Your Response:**""".format(
         objective=playbook_objective,
@@ -3000,30 +3313,28 @@ def analyze_playbook_output(
     suppress_header: bool = False
 ) -> tuple[bool, str]:
     """
-    Analyze the playbook data collection output and determine compliance for each requirement.
-    
-    NEW APPROACH: Playbooks only collect data, AI determines compliance.
+    Analyze the remediation playbook output and determine if remediation was applied correctly.
     
     This function:
-    1. First calls analyze_data_collection() to check if data was collected properly
-    2. If data collection passes, performs full compliance analysis
+    1. First calls analyze_data_collection() to check if remediation was executed properly
+    2. If execution passes, performs full remediation verification analysis
     
     Args:
         requirements: Original list of requirements
         playbook_objective: The objective of the playbook
-        test_output: Output from data collection playbook
-        audit_procedure: CIS Benchmark audit procedure with expected outputs (optional)
-        playbook_content: The actual playbook YAML content (optional, used to verify conditional execution)
-        suppress_header: If True, suppress the "AI COMPLIANCE ANALYSIS" header (default: False)
+        test_output: Output from remediation playbook execution
+        audit_procedure: CIS Benchmark remediation procedure (optional)
+        playbook_content: The actual playbook YAML content (optional)
+        suppress_header: If True, suppress the header (default: False)
         
     Returns:
-        tuple: (is_verified, compliance_analysis_message)
-        - is_verified: True if playbook collected data properly and analysis completed
-        - compliance_analysis_message: AI's compliance determination for each requirement
+        tuple: (is_verified, analysis_message)
+        - is_verified: True if playbook executed properly and analysis completed
+        - analysis_message: AI's remediation verification for each requirement
     """
     if not suppress_header:
         print("\n" + "=" * 80)
-        print("🔍 AI COMPLIANCE ANALYSIS (Analyzing Collected Data)")
+        print("🔍 AI REMEDIATION ANALYSIS (Analyzing Execution Results)")
         print("=" * 80)
     
     # NOTE: STAGE 0 (Playbook Structure Analysis) is now handled by LangGraph workflow
@@ -3041,27 +3352,27 @@ def analyze_playbook_output(
         suppress_header=True
     )
     
-    # If data collection failed, return early with the data collection analysis
+    # If execution check failed, return early
     if not data_collection_passed:
-        print("\n⚠️  Insufficient Data Collected")
-        print("   The playbook's compliance report is missing actual data.")
-        print("   AI provided specific advice to improve data collection.")
+        print("\n⚠️  Remediation Execution Issues Detected")
+        print("   The playbook's remediation report is missing expected results.")
+        print("   AI provided specific advice to improve remediation execution.")
         return False, data_collection_analysis
     
-    # STAGE 2: Data collection passed, proceed with full compliance analysis
-    print("Playbook collected data. AI now determining compliance...")
+    # STAGE 2: Execution passed, proceed with full remediation verification
+    print("Playbook executed. AI now verifying remediation results...")
     
     # Format requirements for analysis
     requirements_text = "\n".join([f"{i+1}. {req}" for i, req in enumerate(requirements)])
     
-    # Build audit procedure context if provided
+    # Build remediation procedure context if provided
     audit_context = ""
     if audit_procedure:
         audit_context = f"""
 
-**CIS BENCHMARK AUDIT PROCEDURE FOR REFERENCE:**
-The audit procedure below contains expected outputs and pass/fail criteria.
-Use this to determine compliance status:
+**CIS BENCHMARK REMEDIATION PROCEDURE FOR REFERENCE:**
+The remediation procedure below contains the expected changes and verification criteria.
+Use this to determine if remediation was applied correctly:
 
 ```
 {audit_procedure}
@@ -3075,43 +3386,42 @@ According to CIS benchmark logic:
 - **When nothing is returned, subsequent requirements should NOT be executed**
 - Example: If Requirement 1 returns empty (module not found), and the procedure says "no further audit steps are required", then Requirements 2 and 3 should NOT have been executed
 
-**CRITICAL - AUDIT PROCEDURE COMPLIANCE LOGIC:**
-**YOU MUST CAREFULLY READ AND FOLLOW THE AUDIT PROCEDURE LOGIC:**
+**CRITICAL - REMEDIATION PROCEDURE VERIFICATION LOGIC:**
+**YOU MUST CAREFULLY READ AND FOLLOW THE REMEDIATION PROCEDURE LOGIC:**
 
-The audit procedure typically has a multi-step structure:
-- **Step 1**: Initial check (e.g., check if module is available on filesystem)
-  - If Step 1 returns nothing (empty output) → Overall: COMPLIANT (no further steps needed)
-  - If Step 1 returns output (something found) → Proceed to Step 2
+The remediation procedure typically has a multi-step structure:
+- **Step 1**: Check prerequisites (e.g., check if required software/package is installed)
+  - If prerequisite not met (e.g., software not installed) → Overall: SKIPPED (remediation not applicable)
+  - If prerequisite met → Proceed to Step 2
 
-- **Step 2**: Additional verification (only if Step 1 found something)
-  - Step 2 typically contains multiple requirements (e.g., Requirement 2 and Requirement 3)
-  - **Step 2 is PASS only when ALL its requirements are PASS**
-  - If Step 2 is PASS → Overall: COMPLIANT (even though Step 1 failed)
-  - If Step 2 is FAIL (any requirement fails) → Overall: NON-COMPLIANT
+- **Step 2**: Apply remediation changes
+  - Step 2 may contain multiple remediation steps
+  - **All steps must succeed for full remediation**
+  - If all steps succeed → Overall: APPLIED
+  - If any step fails → Overall: FAILED or PARTIALLY APPLIED
 
 **EXAMPLE LOGIC:**
 ```
-Step 1: Check if module is available on filesystem
-  - If nothing returned → Overall: COMPLIANT ✅
-  - If output returned → Go to Step 2
+Step 1: Check if required package is installed
+  - If package not installed → Overall: SKIPPED (do NOT install it)
+  - If package installed → Go to Step 2
 
-Step 2: Verify module is not loaded AND not loadable
-  - Requirement 2: Module not loaded (PASS/FAIL)
-  - Requirement 3: Module not loadable (PASS/FAIL)
-  - Step 2 PASS = (Requirement 2 = PASS) AND (Requirement 3 = PASS)
-  - If Step 2 PASS → Overall: COMPLIANT ✅ (even if Step 1 failed)
-  - If Step 2 FAIL → Overall: NON-COMPLIANT ❌
+Step 2: Apply configuration changes
+  - Requirement 2: Apply setting A (APPLIED/FAILED)
+  - Requirement 3: Apply setting B (APPLIED/FAILED)
+  - If all APPLIED → Overall: APPLIED ✅
+  - If any FAILED → Overall: FAILED ❌
 ```
 
-**KEY POINT**: When Step 1 fails (module is available) BUT Step 2 passes (both requirements 2 and 3 pass), the overall status is **COMPLIANT**, not NON-COMPLIANT.
+**KEY POINT**: When prerequisite is not met, the overall status should be **SKIPPED**, not FAILED. Do NOT attempt to install missing software/packages.
 
 **IMPORTANT:** 
-- If the procedure shows "Example output: generated", compare actual output to "generated"
-- If the procedure says "Verify output is not masked or disabled", check for those strings
-- Use the expected outputs shown in the procedure to determine PASS/FAIL status
-- The procedure defines what constitutes compliance vs non-compliance
-- **Empty output is valid data** - it means "nothing found" which often indicates compliance for "should not exist" checks
-- **READ THE AUDIT PROCEDURE CAREFULLY** to understand the step-by-step logic and overall compliance determination
+- If the procedure shows expected output after remediation, compare actual output to expected
+- If the procedure says "Verify configuration is applied", check that settings are in place
+- Use the expected outputs shown in the procedure to determine APPLIED/FAILED/SKIPPED status
+- The procedure defines what changes must be applied
+- **Empty output is valid data** - it may mean "no change needed" or "nothing found"
+- **READ THE REMEDIATION PROCEDURE CAREFULLY** to understand the step-by-step logic and overall remediation determination
 
 """
     
@@ -3130,7 +3440,7 @@ The following is the actual playbook YAML that was executed:
 """
     
     # Build analysis prompt without f-string to avoid issues with curly braces in test_output
-    analysis_prompt = """You are an expert Ansible compliance auditor. Your task is to analyze whether a playbook CORRECTLY REPORTS compliance status based on what it found.
+    analysis_prompt = """You are an expert Ansible remediation auditor. Your task is to analyze whether a remediation playbook CORRECTLY APPLIED fixes based on execution results.
 
 **Original Objective:**
 {objective}
@@ -3145,175 +3455,139 @@ The following is the actual playbook YAML that was executed:
 {output}
 ```
 
-**CRITICAL TASK:** Analyze the COMPLIANCE REPORT and verify the status/rationale for each requirement.
+**CRITICAL TASK:** Analyze the REMEDIATION REPORT and verify the status/rationale for each requirement.
 
-**NEW APPROACH - INTELLIGENT COMPLIANCE ANALYSIS:**
-- Playbooks now ONLY collect data (no compliance determination)
-- YOU (AI) will analyze the collected data and determine compliance
-- This approach is MORE INTELLIGENT and works across various servers
-- **USE THE AUDIT PROCEDURE** (if provided above) to understand expected outputs and pass/fail criteria
+**REMEDIATION VERIFICATION APPROACH:**
+- Playbooks apply remediation changes and collect execution results
+- YOU (AI) will verify if remediation was correctly applied
+- **USE THE REMEDIATION PROCEDURE** (if provided above) to understand expected changes and verification criteria
 
-**YOUR TASK - COMPLIANCE ANALYSIS:**
+**YOUR TASK - REMEDIATION VERIFICATION:**
 
-**NOTE: Data collection has already been verified as sufficient. Proceed directly to compliance analysis.**
-If the report contains real data for all requirements, then determine compliance:
-1. Review each requirement and the data collected
-2. Determine if requirement is met based on the data:
-   - **COMPLIANT**: Data shows requirement is definitively met
-   - **NON-COMPLIANT**: Data shows requirement is definitively not met
-   - **UNKNOWN**: Cannot determine from data (error collecting, ambiguous requirement)
-   - **NA**: Skip related task or Did not execute the related task
+**NOTE: Execution has already been verified as sufficient. Proceed directly to remediation verification.**
+If the report contains results for all requirements, then verify remediation:
+1. Review each requirement and the execution results
+2. Determine if remediation step was applied based on results:
+   - **APPLIED**: Remediation was successfully applied
+   - **FAILED**: Remediation could not be applied
+   - **SKIPPED**: Remediation is not applicable (e.g., required software/package not installed — do NOT install it)
+   - **UNKNOWN**: Cannot determine from data (error during execution, ambiguous requirement)
 3. Provide reasoning for each determination
 
 **ANALYSIS GUIDELINES:**
-- If data shows "Docker version 20.10.24 installed" and requirement is "Docker must be installed" → COMPLIANT
-- If data shows "Docker is not installed" and requirement is "Docker must be installed" → NON-COMPLIANT
-- If data shows "Error collecting Docker info" → UNKNOWN (unable to verify)
-- If data shows "Service httpd is active" and requirement is "Service must be running" → COMPLIANT
-- If data shows "Service httpd is stopped" and requirement is "Service must be running" → NON-COMPLIANT
-- If data shows version numbers, compare them intelligently
+- If results show configuration was changed and verification confirms it → APPLIED
+- If results show an error applying the fix → FAILED
+- If required software is not installed and remediation depends on it → SKIPPED (do NOT install the software)
+- If results show manual action is needed (disk partitioning, hardware, vendor) → SKIPPED (with details explaining what manual action is needed)
+- If results show "Error during remediation" → UNKNOWN (unable to verify)
+- If results show the setting was already compliant → APPLIED (no change needed, already in desired state)
 - If requirement is unclear/ambiguous → UNKNOWN (requirement needs clarification)
 
-**CRITICAL - EMPTY OUTPUT = "NOTHING RETURNED":**
-- **Empty output (Data: "", exit code 0 or 1) = "nothing returned"** per CIS benchmark
-- For checks like "module should NOT be available": Empty output = module not found = COMPLIANT
-- For checks like "module should be available": Empty output = module not found = NON-COMPLIANT
-- **If CIS procedure states "If nothing is returned, [condition] and no further audit steps are required":**
-  - Empty output means the condition is met (typically COMPLIANT)
-  - Subsequent requirements should NOT be executed when nothing is returned
-  - Example: If Requirement 1 (check if module exists) returns empty, and procedure says "no further steps required", then Requirements 2 and 3 should NOT have been executed
-- **Empty output is VALID DATA** - it provides clear information: "nothing found"
-- Do NOT treat empty output as "insufficient data" - it is sufficient data meaning "not found"
+**CRITICAL - EMPTY OUTPUT AND SKIPPING:**
+- **Empty output (Data: "", exit code 0 or 1) may indicate** the system is already compliant
+- For SKIPPED status: If required software/package is not installed, mark as SKIPPED
+- **If the remediation depends on software that is not installed:**
+  - Do NOT attempt to install it
+  - Mark as SKIPPED with explanation
+- **Empty output is VALID DATA** - it provides clear information about the system state
+- Do NOT treat empty output as "insufficient data" - it is sufficient data
 
 **Verification Checklist:**
-1. Does the playbook collect data for EVERY requirement listed above?
-2. **Is the playbook ONLY collecting data (not determining compliance)?** ✅ This is correct!
-3. For each requirement, is relevant data collected OR error message provided?
-4. Based on the collected data, can you determine compliance?
-5. **YOUR ANALYSIS - For EACH requirement (including the OVERALL Verify requirement), determine:**
+1. Does the playbook execution show results for EVERY requirement listed above?
+2. For each requirement, were remediation steps applied OR properly skipped?
+3. Based on the execution results, can you determine remediation status?
+4. **YOUR ANALYSIS - For EACH requirement (including the OVERALL Verify requirement), determine:**
    - **CRITICAL: You MUST analyze ALL requirements, including the OVERALL Verify requirement (usually the last requirement)**
    - **Do NOT skip the OVERALL Verify requirement even if it says "N/A - Calculated from previous requirements"**
-   - **For the OVERALL Verify requirement, analyze it based on the playbook's reported status and the overall compliance logic**
-   - COMPLIANT: Data shows requirement is definitively met
-   - NON-COMPLIANT: Data shows requirement is definitively not met
-   - UNKNOWN: Cannot determine from data (error collecting, ambiguous requirement)
-   - NA: Skip related task or Did not execute the related task
+   - **For the OVERALL Verify requirement, analyze it based on the playbook's reported status and the overall remediation logic**
+   - APPLIED: Remediation was successfully applied
+   - FAILED: Remediation could not be applied
+   - SKIPPED: Remediation is not applicable (required software/package not installed)
+   - UNKNOWN: Cannot determine from data (error during execution, ambiguous requirement)
 
-**PASS Examples (Correct Data Collection - AI determines compliance):**
+**PASS Examples (Correct Remediation Execution):**
 
-**Playbook Collects Data:**
-✅ Requirement: "Docker must be installed" → Collected: "Docker version 20.10.24 is installed" → AI Determines: COMPLIANT
-✅ Requirement: "Service must be running" → Collected: "Service httpd is stopped" → AI Determines: NON-COMPLIANT  
-✅ Requirement: "RHEL 7 required" → Collected: "RHEL 8.6" → AI Determines: NON-COMPLIANT
-✅ Requirement: "Image pullable" → Collected: "Error: no credentials" → AI Determines: UNKNOWN
-✅ Requirement: "Check packages" → Collected: "docker-20.10.24, nginx-1.20.1..." → AI Determines: Based on requirement
-
-**FAIL Examples (Incorrect Playbook Behavior):**
-❌ Playbook determines compliance itself (should only collect data!)
-❌ Playbook reports "COMPLIANT" or "NON-COMPLIANT" (AI's job, not playbook's!)
-❌ Playbook skips data collection
-❌ Playbook doesn't handle errors (should report error message as data)
+✅ Requirement: "Apply sshd configuration" → Result: "Configuration applied, sshd restarted" → Status: APPLIED
+✅ Requirement: "Set file permissions" → Result: "Permissions set to 0600" → Status: APPLIED
+✅ Requirement: "Configure GDM settings" → Result: "GDM not installed" → Status: SKIPPED
+✅ Requirement: "Apply kernel parameter" → Result: "Error: permission denied" → Status: FAILED
+✅ Requirement: "Create /var/tmp partition" → Result: "No disk resources for automated partition creation" → Status: SKIPPED
 
 **FAIL Examples (Incorrect Reporting Logic):**
-❌ Requirement: "Package installed" → Found: 0 packages → Reports: COMPLIANT (WRONG!)
-❌ Requirement: "Service running" → Didn't check status → Reports: COMPLIANT (WRONG!)
-❌ Requirement: "Version >= 2.0" → Found: Version 1.5 → Reports: COMPLIANT (WRONG!)
+❌ Requirement: "Apply fix" → Package not installed → Reports: FAILED (WRONG! Should be SKIPPED)
+❌ Requirement: "Create partition" → No disk resources → Reports: FAILED (WRONG! Should be SKIPPED - manual action needed)
 ❌ Report missing a requirement check entirely
-❌ Requirement: "Image pullable" → Auth failed → Reports: COMPLIANT (WRONG! Should be UNKNOWN)
-❌ Requirement: "Check API" → Connection refused → Reports: COMPLIANT (WRONG! Should be UNKNOWN)
-❌ Requirement: "Service check" → No permissions → Reports: NON-COMPLIANT (MISLEADING! Should be UNKNOWN)
-
-**APPROACH: DATA COLLECTION + AI ANALYSIS**
-
-**Playbook Role**: Collect data only (no intelligence)
-- Just gather facts, run commands, collect information
-- Report what was found OR error message
-- NO compliance determination in playbook
-
-**AI Role**: Analyze data and determine compliance (intelligence here!)
-- Review collected data for each requirement
-- Determine: COMPLIANT / NON-COMPLIANT / UNKNOWN
-- Provide reasoning for determination
-- This approach works across various servers
-
-**Why This Works Better:**
-- Playbooks are generic (just data collection)
-- AI has intelligence to interpret data in context
-- Same playbook works for different compliance standards
-- AI can handle nuances and edge cases
-
-**Key Point:** Playbook collects data, AI judges compliance!
+❌ Requirement: "Configure service" → Service not available → Attempts to install (WRONG! Should SKIP)
 
 **Response Formats:**
 
-**Provide compliance analysis using this EXACT FORMAT:**
+**Provide remediation analysis using this EXACT FORMAT:**
 ```
-## STAGE 2: COMPLIANCE ANALYSIS
+## STAGE 2: REMEDIATION VERIFICATION
 
-Based on the collected data, here is the compliance analysis for each requirement:
+Based on the execution results, here is the remediation verification for each requirement:
 
 **CRITICAL - ANALYZE ALL REQUIREMENTS:**
 - **MANDATORY: You MUST analyze ALL requirements, including the OVERALL Verify requirement (usually the last requirement)**
-- **The OVERALL Verify requirement (e.g., "Requirement 4 - OVERALL Verify: Ensure cramfs kernel module is not available") MUST be included in your analysis**
+- **The OVERALL Verify requirement MUST be included in your analysis**
 - **Do NOT skip the last requirement even if it says "OVERALL Verify" or "N/A - Calculated from previous requirements"**
 - **For the OVERALL Verify requirement, analyze it based on:**
-  - The playbook's reported status (PASS/FAIL)
-  - The rationale provided (e.g., "PASS when (req_1 returns nothing) OR (req_1 returns output AND req_2=PASS AND req_3=PASS), FAIL otherwise")
-  - Whether the overall compliance logic correctly implements the CIS audit procedure
+  - The playbook's reported status (APPLIED/FAILED/SKIPPED)
+  - The rationale provided
+  - Whether the overall remediation logic correctly implements the CIS remediation procedure
 
 **Requirement 1: [requirement description]**
-- **Data Collected**: [Exit code: X, Output: "actual output"]
-- **Compliance Status**: COMPLIANT / NON-COMPLIANT / UNKNOWN / NA
-- **Reasoning**: [detailed explanation referencing the requirement rationale]
+- **Execution Result**: [Exit code: X, Output: "actual output"]
+- **Remediation Status**: APPLIED / FAILED / SKIPPED / UNKNOWN
+- **Reasoning**: [detailed explanation referencing the requirement]
 
 **Requirement 2: [requirement description]**
-- **Data Collected**: [Exit code: X, Output: "actual output" or "N/A - Task skipped"]
-- **Compliance Status**: COMPLIANT / NON-COMPLIANT / UNKNOWN / NA
-- **Reasoning**: [detailed explanation referencing the requirement rationale]
-- **Note**: **Status Standard (Both Playbook and AI must follow):**
-  - **COMPLIANT** (AI) / **PASS** (Playbook): Data shows requirement is definitively met
-  - **NON-COMPLIANT** (AI) / **FAIL** (Playbook): Data shows requirement is definitively not met
-  - **UNKNOWN** (Both): Cannot determine from data (error collecting, ambiguous requirement)
-  - **NA** (Both): Skip related task or Did not execute the related task
-  - If playbook status is 'NA' (task was skipped or did not execute), AI Compliance Status should be 'NA' (task was not executed)
+- **Execution Result**: [Exit code: X, Output: "actual output" or "SKIPPED - prerequisite not met"]
+- **Remediation Status**: APPLIED / FAILED / SKIPPED / UNKNOWN
+- **Reasoning**: [detailed explanation referencing the requirement]
 
 ... (continue for ALL requirements, including the OVERALL Verify requirement)
 
 **Requirement N (OVERALL Verify): [overall verify description]**
-- **Data Collected**: [Exit code: X, Output: "N/A - Calculated from previous requirements" or similar]
-- **Compliance Status**: COMPLIANT / NON-COMPLIANT / UNKNOWN
-- **Reasoning**: [Analyze based on the overall compliance logic. For example: "According to the audit procedure logic: Step 1 (Requirement 1) returned output = FAIL/NON-COMPLIANT, Step 2 (Requirements 2 and 3) both passed = PASS/COMPLIANT. Since Step 2 passes, the overall status is COMPLIANT, even though Step 1 failed. The system meets CIS requirements because while the module is available on the filesystem, it is properly configured to prevent loading (not loaded and blacklisted)."]
+- **Execution Result**: [Exit code: X, Output: verification result]
+- **Remediation Status**: APPLIED / FAILED / SKIPPED / UNKNOWN
+- **Reasoning**: [Analyze based on the overall remediation logic. For example: "All remediation steps were applied successfully and verification confirms the system is now compliant."]
 
 ## OVERALL ASSESSMENT
 
-- **DATA COLLECTION**: PASS or FAIL
-  - PASS: Playbook successfully collected sufficient data for all requirements. ✅
-  - The report includes actual command outputs, exit codes, and task details. ✅
-  - Empty outputs are correctly reported as valid data (e.g., Requirement 2 shows empty output). ✅
-  - FAIL: Data collection is insufficient, missing, or incomplete.
+- **REMEDIATION EXECUTION**: PASS or FAIL
+  - PASS: Playbook successfully executed all remediation steps. ✅
+  - The report includes actual execution results, exit codes, and task details. ✅
+  - FAIL: Execution is insufficient, missing, or incomplete.
   
-- **COMPLIANCE ANALYSIS**: PASS or FAIL
+- **REMEDIATION VERIFICATION**: PASS or FAIL
   - **PASS**: When ALL of the following are true:
+    - The overall remediation status is **APPLIED** or **SKIPPED** (NOT FAILED)
     - All steps and requirements results from playbook and AI match each other (status alignment verified)
-    - The audit procedure logic matches correctly
-    - All individual requirement statuses align (PASS=COMPLIANT, FAIL=NON-COMPLIANT, NA=UNKNOWN)
-    - Overall status aligns (PASS=COMPLIANT, FAIL=NON-COMPLIANT, NA=UNKNOWN)
+    - The remediation procedure logic matches correctly
+    - All individual requirement statuses align (APPLIED/FAILED/SKIPPED)
+    - Overall status aligns
+    - **ZERO ❌ misalignment markers in the Status Alignment Verification section**
   - **FAIL**: When ANY of the following are true:
+    - **The overall remediation status is FAILED** (remediation did not succeed — playbook must be enhanced)
+    - **ANY ❌ misalignment exists in the Status Alignment Verification (even ONE ❌ = FAIL)**
     - Any step or requirement result from playbook does NOT match AI analysis (status misalignment)
-    - The audit procedure logic does NOT match correctly
+    - The remediation procedure logic does NOT match correctly
     - Any individual requirement status misalignment
     - Overall status misalignment
+  - **CRITICAL RULE - FAILED OVERALL = FAIL**: If the overall remediation status is FAILED (even if playbook and AI both agree on FAILED with perfect alignment), REMEDIATION VERIFICATION MUST be FAIL. The remediation did not succeed, so the playbook needs to be enhanced to fix the issue.
+  - **CRITICAL RULE - MISALIGNMENT = FAIL**: If you find ANY requirement where PLAYBOOK_STATUS does NOT match AI_STATUS (e.g., FAILED/APPLIED ❌), then REMEDIATION VERIFICATION MUST be FAIL. The playbook has a bug that needs to be fixed. Do NOT rationalize away misalignments.
   - **MANDATORY FORMAT**: You MUST use this EXACT format:
     ```
-    - **COMPLIANCE ANALYSIS**: PASS
-      COMPLIANCE STATUS: [COMPLIANT or NON-COMPLIANT] ✅
-      - According to the audit procedure logic:
+    - **REMEDIATION VERIFICATION**: PASS
+      REMEDIATION STATUS: [APPLIED or FAILED or SKIPPED] ✅
+      - According to the remediation procedure logic:
         - Step 1 (Requirement 1) [description] = PLAYBOOK_STATUS/AI_STATUS ✅
         - Step 2 (Requirements 2 and 3) results:
           - Requirement 2: [description] = PLAYBOOK_STATUS/AI_STATUS ✅
           - Requirement 3: [description] = PLAYBOOK_STATUS/AI_STATUS ✅
-        - Since Step [N] [passes/fails], the overall status is PLAYBOOK_STATUS/AI_STATUS. ✅
-      - The system [does/does NOT] meet CIS requirements because:
+        - Since [all steps applied/prerequisite not met], the overall status is PLAYBOOK_STATUS/AI_STATUS. ✅
+      - The system [has been/has NOT been] remediated because:
         1) [reason one]
         2) [reason two]
         3) [reason three if applicable]
@@ -3321,17 +3595,19 @@ Based on the collected data, here is the compliance analysis for each requiremen
         - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = [status]/[status] ✅
         - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = [status]/[status] ✅
         - Requirement 3: PLAYBOOK_STATUS/AI_STATUS = [status]/[status] ✅
-        - Requirement 4 (Overall): PLAYBOOK_STATUS/AI_STATUS = [status]/[status] ✅
+        - Requirement N (Overall): PLAYBOOK_STATUS/AI_STATUS = [status]/[status] ✅
     ```
-  - **CRITICAL**: Follow the audit procedure logic carefully:
-    - If Step 1 returns nothing (empty) → Overall: COMPLIANT
-    - If Step 1 returns output AND Step 2 passes (all Step 2 requirements pass) → Overall: COMPLIANT
-    - If Step 1 returns output AND Step 2 fails (any Step 2 requirement fails) → Overall: NON-COMPLIANT
-  - **Status mapping**: PASS -> COMPLIANT, FAIL -> NON-COMPLIANT, NA -> UNKNOWN
-  - **DO NOT** incorrectly report NON-COMPLIANT when Step 1 fails but Step 2 passes - in that case, overall should be COMPLIANT
+  - **CRITICAL**: Follow the remediation procedure logic carefully:
+    - If prerequisite not met (e.g., required software not installed) → Overall: SKIPPED
+    - If all remediation steps applied → Overall: APPLIED
+    - If any remediation step failed → Overall: FAILED
+    - If manual action required (e.g., disk partitioning, hardware changes) → Overall: SKIPPED (with details explaining what manual action is needed)
+  - **DO NOT** report FAILED when prerequisite is not met - in that case, overall should be SKIPPED
+  - **DO NOT** report FAILED when manual action is needed - in that case, overall should be SKIPPED
+  - **ABSOLUTE RULE**: After completing the Status Alignment Verification, count the ❌ markers. If there is even ONE ❌, REMEDIATION VERIFICATION MUST be FAIL. A misalignment means the playbook's status logic is wrong and must be fixed.
     
 - **RECOMMENDATION**: 
-  To achieve compliance: 
+  For next steps: 
   1) [First action to take], 
   2) [Second action to take], 
   3) [Third action if needed].
@@ -3339,9 +3615,9 @@ Based on the collected data, here is the compliance analysis for each requiremen
 ```
 
 IMPORTANT: Always use this exact format with:
-- "## STAGE 2: COMPLIANCE ANALYSIS" header
+- "## STAGE 2: REMEDIATION VERIFICATION" header
 - "**Requirement N:**" with bold formatting
-- "- **Data Collected**:", "- **Compliance Status**:", "- **Reasoning**:" sub-items
+- "- **Execution Result**:", "- **Remediation Status**:", "- **Reasoning**:" sub-items
 - "## OVERALL ASSESSMENT" header with proper indentation:
   * Main items: "- **ITEM**:" 
   * Sub-bullets: "  - details" (2 spaces indent)
@@ -3349,48 +3625,48 @@ IMPORTANT: Always use this exact format with:
 
 **Examples:**
 
-✅ SUFFICIENT DATA Example:
+✅ SUCCESSFUL REMEDIATION Example:
 ```
-## STAGE 2: COMPLIANCE ANALYSIS
+## STAGE 2: REMEDIATION VERIFICATION
 
-Based on the collected data, here is the compliance analysis for each requirement:
+Based on the execution results, here is the remediation verification for each requirement:
 
-**Requirement 1: Docker must be installed**
-- **Data Collected**: Exit code: 0, Output: "Docker version 20.10.24, build 297e128"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: Data shows Docker is installed with specific version 20.10.24. According to the requirement, Docker must be installed, and it is.
+**Requirement 1: Apply SSH configuration hardening**
+- **Execution Result**: Exit code: 0, Output: "Configuration applied to /etc/ssh/sshd_config"
+- **Remediation Status**: APPLIED
+- **Reasoning**: SSH configuration was successfully updated with the required settings.
 
-**Requirement 2: Service httpd must be running**
-- **Data Collected**: Exit code: 0, Output: "Service httpd state: stopped"
-- **Compliance Status**: NON-COMPLIANT
-- **Reasoning**: Data clearly shows service is stopped. According to the requirement rationale, the service must be running.
+**Requirement 2: Restart SSHD service**
+- **Execution Result**: Exit code: 0, Output: "sshd service restarted successfully"
+- **Remediation Status**: APPLIED
+- **Reasoning**: Service was restarted to apply the new configuration.
 
-**Requirement 3: Image registry must be accessible**
-- **Data Collected**: Exit code: 1, Output: "Error: authentication required but no credentials provided"
-- **Compliance Status**: UNKNOWN
-- **Reasoning**: Cannot determine accessibility without proper credentials. This is an error condition, not a compliance determination.
+**Requirement 3: Verify SSH configuration**
+- **Execution Result**: Exit code: 0, Output: "PermitRootLogin no"
+- **Remediation Status**: APPLIED
+- **Reasoning**: Verification confirms the remediation was applied correctly.
 
 ## OVERALL ASSESSMENT
 
-- **DATA COLLECTION**: PASS 
-  - Playbook successfully collected sufficient data for all requirements. 
-  - The report includes actual command outputs, exit codes, and task details.
+- **REMEDIATION EXECUTION**: PASS 
+  - Playbook successfully executed all remediation steps.
+  - The report includes actual execution results, exit codes, and task details.
   
-- **COMPLIANCE ANALYSIS**: PASS
-  COMPLIANCE STATUS: NON-COMPLIANT ✅
-  - According to the audit procedure logic:
-    - Requirement 1: Docker must be installed = PASS/COMPLIANT ✅
-    - Requirement 2: Service httpd must be running = FAIL/NON-COMPLIANT ✅
-    - Requirement 3: Image registry must be accessible = UNKNOWN/UNKNOWN ✅
-    - Since Requirement 2 fails, the overall status is FAIL/NON-COMPLIANT. ✅
-  - The system does NOT meet CIS requirements because:
-    1) Service httpd is not running (Requirement 2 = FAIL/NON-COMPLIANT)
-    2) Registry accessibility cannot be verified (Requirement 3 = UNKNOWN)
+- **REMEDIATION VERIFICATION**: PASS
+  REMEDIATION STATUS: APPLIED ✅
+  - According to the remediation procedure logic:
+    - Requirement 1: Apply SSH configuration = APPLIED/APPLIED ✅
+    - Requirement 2: Restart SSHD service = APPLIED/APPLIED ✅
+    - Requirement 3: Verify configuration = APPLIED/APPLIED ✅
+    - Since all steps applied, the overall status is APPLIED. ✅
+  - The system has been remediated because:
+    1) SSH configuration was hardened (Requirement 1 = APPLIED)
+    2) Service was restarted (Requirement 2 = APPLIED)
+    3) Verification confirms compliance (Requirement 3 = APPLIED)
   - **Status Alignment Verification**:
-    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
-    - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = FAIL/NON-COMPLIANT ✅
-    - Requirement 3: PLAYBOOK_STATUS/AI_STATUS = UNKNOWN/UNKNOWN ✅
-    - Requirement 4 (Overall): PLAYBOOK_STATUS/AI_STATUS = FAIL/NON-COMPLIANT ✅
+    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = APPLIED/APPLIED ✅
+    - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = APPLIED/APPLIED ✅
+    - Requirement 3: PLAYBOOK_STATUS/AI_STATUS = APPLIED/APPLIED ✅
     
 - **RECOMMENDATION**: 
   To achieve compliance: 
@@ -3398,180 +3674,77 @@ Based on the collected data, here is the compliance analysis for each requiremen
   2) Configure registry authentication credentials and re-run the check.
 ```
 
-✅ CORRECT AUDIT PROCEDURE LOGIC Example:
+✅ SKIPPED REMEDIATION Example (software not installed):
 ```
-## STAGE 2: COMPLIANCE ANALYSIS
+## STAGE 2: REMEDIATION VERIFICATION
 
-Based on the collected data, here is the compliance analysis for each requirement:
+Based on the execution results, here is the remediation verification for each requirement:
 
-**Requirement 1: Run script to check if cramfs kernel module is available on filesystem**
-- **Data Collected**: Exit code: 0, Output: "cramfs exists in /usr/lib/modules/..."
-- **Compliance Status**: NON-COMPLIANT
-- **Reasoning**: According to CIS benchmark: "PASS when script returns no output (module not available) OR system has cramfs built into kernel, FAIL when script returns output indicating cramfs module is available." The script returned output showing the module exists, so this is FAIL/NON-COMPLIANT.
+**Requirement 1: Check if GDM/GNOME is installed**
+- **Execution Result**: Exit code: 1, Output: "GDM/GNOME is not installed"
+- **Remediation Status**: SKIPPED
+- **Reasoning**: Required software (GDM/GNOME) is not installed. Remediation is not applicable for this server.
 
-**Requirement 2: Verify the cramfs kernel module is not loaded**
-- **Data Collected**: Exit code: 1, Output: "" (empty)
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: According to CIS benchmark: "PASS when the command returns no output, FAIL when it returns any output." The command returned empty output (nothing found), so this is PASS/COMPLIANT.
+**Requirement 2: Configure GDM settings**
+- **Execution Result**: N/A - Task skipped
+- **Remediation Status**: SKIPPED
+- **Reasoning**: Prerequisite not met (GDM not installed). Configuration files may have been created but dconf update was not run.
 
-**Requirement 3: Verify the cramfs kernel module is not loadable**
-- **Data Collected**: Exit code: 0, Output: "install cramfs /bin/false blacklist cramfs"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: According to CIS benchmark: "PASS when the output includes 'blacklist cramfs' AND EITHER 'install cramfs /bin/false' OR 'install cramfs /bin/true', FAIL otherwise." The output contains both "blacklist cramfs" AND "install cramfs /bin/false", so this is PASS/COMPLIANT.
-
-**Requirement 4: OVERALL Verify: Ensure cramfs kernel module is not available**
-- **Data Collected**: Exit code: 0, Output: "N/A - Calculated from previous requirements"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: According to the audit procedure logic: Step 1 (Requirement 1) returned output (module is available) = FAIL/NON-COMPLIANT, Step 2 (Requirements 2 and 3) both passed: Requirement 2 (Module is not loaded) = PASS/COMPLIANT, Requirement 3 (Module is not loadable/blacklisted) = PASS/COMPLIANT. Since Step 2 passes (both requirements pass), the overall status is PASS/COMPLIANT, even though Step 1 failed. The system meets CIS requirements because while the module is available on the filesystem, it is properly configured to prevent loading (not loaded and blacklisted).
+**Requirement 3: OVERALL Verify: Verify GDM configuration**
+- **Execution Result**: Exit code: 0, Output: "All remediation steps were skipped"
+- **Remediation Status**: SKIPPED
+- **Reasoning**: All remediation steps were skipped because GDM/GNOME is not installed. This is expected and correct.
 
 ## OVERALL ASSESSMENT
 
-- **DATA COLLECTION**: PASS
-  - Playbook successfully collected sufficient data for all requirements. ✅
-  - The report includes actual command outputs, exit codes, and task details. ✅
-  - Empty outputs are correctly reported as valid data (Requirement 2 shows empty output). ✅
+- **REMEDIATION EXECUTION**: PASS
+  - Playbook successfully executed and correctly identified that remediation is not applicable. ✅
 
-- **COMPLIANCE ANALYSIS**: PASS
-  COMPLIANCE STATUS: COMPLIANT ✅
-  - According to the audit procedure logic:
-    - Step 1 (Requirement 1) returned output (module is available) = FAIL/NON-COMPLIANT ✅
-    - Step 2 (Requirements 2 and 3) results:
-      - Requirement 2: Module is not loaded = PASS/COMPLIANT ✅
-      - Requirement 3: Module is not loadable (blacklisted) = PASS/COMPLIANT ✅
-    - Since Step 2 passes (both requirements pass), the overall status is PASS/COMPLIANT, even though Step 1 failed. ✅
-  - The system meets CIS requirements because while the module is available on the filesystem, it is properly configured to prevent loading (not loaded and blacklisted). ✅
+- **REMEDIATION VERIFICATION**: PASS
+  REMEDIATION STATUS: SKIPPED ✅
+  - According to the remediation procedure logic:
+    - Step 1 (Requirement 1) detected GDM not installed = SKIPPED ✅
+    - Since prerequisite is not met, all subsequent steps are SKIPPED. ✅
+  - The remediation was correctly SKIPPED because GDM/GNOME is not installed. Do NOT install it. ✅
   - **Status Alignment Verification**:
-    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = FAIL/NON-COMPLIANT ✅
-    - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
-    - Requirement 3: PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
-    - Requirement 4 (Overall): PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
+    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = SKIPPED/SKIPPED ✅
+    - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = SKIPPED/SKIPPED ✅
+    - Requirement 3 (Overall): PLAYBOOK_STATUS/AI_STATUS = SKIPPED/SKIPPED ✅
 
 - **RECOMMENDATION**:
-  No remediation needed - the system is compliant. The module is properly disabled even though it exists on the filesystem.
+  No action needed - remediation is not applicable. GDM/GNOME is not installed on this server.
 ```
 
-❌ COMPLIANCE ANALYSIS: FAIL Example:
+❌ REMEDIATION VERIFICATION: FAIL Example:
 ```
-## STAGE 2: COMPLIANCE ANALYSIS
+## STAGE 2: REMEDIATION VERIFICATION
 
-Based on the collected data, here is the compliance analysis for each requirement:
+Based on the execution results, here is the remediation verification for each requirement:
 
-**Requirement 1: Check if freevxfs kernel module is available**
-- **Data Collected**: Exit code: 1, Output: "" (empty - nothing returned)
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: According to CIS benchmark: "If nothing is returned, the freevxfs kernel module is not available on the system and no further audit steps are required." Empty output means "nothing returned" = module not available = COMPLIANT.
+**Requirement 1: Apply sshd configuration**
+- **Execution Result**: Exit code: 0, Output: "Configuration applied"
+- **Remediation Status**: APPLIED
+- **Reasoning**: SSH configuration was successfully updated.
 
-**Requirement 2: Verify module is not loaded**
-- **Data Collected**: Exit code: 0, Output: "Module not loaded"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: Module is not loaded, which is correct.
-
-**Requirement 3: Verify module cannot be loaded**
-- **Data Collected**: Exit code: 0, Output: "Module cannot be loaded"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: Module cannot be loaded, which is correct.
+**Requirement 2: Restart SSHD service**
+- **Execution Result**: Exit code: 1, Output: "Failed to restart sshd.service"
+- **Remediation Status**: FAILED
+- **Reasoning**: Service restart failed, remediation may not be fully applied.
 
 ## OVERALL ASSESSMENT
 
-- **DATA COLLECTION**: PASS 
-  - Playbook successfully collected sufficient data for all requirements.
+- **REMEDIATION EXECUTION**: PASS 
+  - Playbook executed all remediation steps.
   
-- **COMPLIANCE ANALYSIS**: PASS
-  COMPLIANCE STATUS: COMPLIANT ✅
-  - According to the audit procedure logic:
-    - Step 1 (Requirement 1) returned nothing (module not available) = PASS/COMPLIANT ✅
-    - Since Step 1 returns nothing, no further audit steps are required. ✅
-  - The system meets CIS requirements because the module is not available as required. ✅
+- **REMEDIATION VERIFICATION**: FAIL
+  REMEDIATION STATUS: FAILED ❌
+  - Requirement 2 failed to restart the service.
   - **Status Alignment Verification**:
-    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
-    - Requirement 2: Task was skipped (not executed) = NA/NA ✅
-    - Requirement 3: Task was skipped (not executed) = NA/NA ✅
-    - Requirement 4 (Overall): PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
+    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = APPLIED/APPLIED ✅
+    - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = FAILED/FAILED ❌
   
 - **RECOMMENDATION**: 
-  No remediation needed - the system is compliant. The freevxfs module is not available as required.
-```
-
-❌ COMPLIANCE ANALYSIS: FAIL Example (with incorrect reporting):
-```
-## STAGE 2: COMPLIANCE ANALYSIS
-
-Based on the collected data, here is the compliance analysis for each requirement:
-
-**Requirement 1: Check if cramfs kernel module is available**
-- **Data Collected**: Exit code: 0, Output: "cramfs"
-- **Compliance Status**: NON-COMPLIANT
-- **Reasoning**: Module is available, which means it should be disabled/blacklisted.
-
-**Requirement 2: Verify module is not loaded**
-- **Data Collected**: Exit code: 0, Output: "Module not loaded"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: Module is not currently loaded, which is correct.
-
-**Requirement 3: Verify module is blacklisted**
-- **Data Collected**: Exit code: 0, Output: "install cramfs /bin/false blacklist cramfs"
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: The output shows the module is properly blacklisted with "install cramfs /bin/false blacklist cramfs", which meets the requirement.
-
-## OVERALL ASSESSMENT
-
-- **DATA COLLECTION**: PASS 
-  - Playbook successfully collected sufficient data for all requirements.
-  
-- **COMPLIANCE ANALYSIS**: FAIL
-  COMPLIANCE STATUS: NON-COMPLIANT ✅
-  - According to the audit procedure logic:
-    - Step 1 (Requirement 1) returned output (module is available) = FAIL/NON-COMPLIANT ✅
-    - Step 2 (Requirements 2 and 3) results:
-      - Requirement 2: Module is not loaded = PASS/COMPLIANT ✅
-      - Requirement 3: Module is not loadable (blacklisted) = FAIL/NON-COMPLIANT ❌ (Playbook incorrectly reported FAIL, but should be PASS based on data)
-    - Since Step 2 fails (Requirement 3 fails), the overall status is FAIL/NON-COMPLIANT. ✅
-  - The system does NOT meet CIS requirements because:
-    1) The cramfs module is available on the filesystem (Requirement 1 = FAIL/NON-COMPLIANT)
-    2) The module is not properly blacklisted to prevent loading (Requirement 3 = FAIL/NON-COMPLIANT)
-  - **Status Alignment Verification**:
-    - Requirement 1: PLAYBOOK_STATUS/AI_STATUS = FAIL/NON-COMPLIANT ✅
-    - Requirement 2: PLAYBOOK_STATUS/AI_STATUS = PASS/COMPLIANT ✅
-    - Requirement 3: PLAYBOOK_STATUS/AI_STATUS = FAIL/COMPLIANT ❌ (MISALIGNED - playbook reported FAIL but AI determined COMPLIANT)
-    - Requirement 4 (Overall): PLAYBOOK_STATUS/AI_STATUS = FAIL/NON-COMPLIANT ✅
-  
-- **RECOMMENDATION**: 
-  To achieve compliance:
-  1) Remove the cramfs module from the filesystem, or
-  2) Ensure the module is properly blacklisted to prevent loading.
-```
-
-✅ EMPTY OUTPUT = "NOTHING RETURNED" Example (CIS Benchmark Logic):
-```
-## STAGE 2: COMPLIANCE ANALYSIS
-
-Based on the collected data, here is the compliance analysis for each requirement:
-
-**Requirement 1: Check if freevxfs kernel module is available**
-- **Data Collected**: Exit code: 1, Output: "" (empty - nothing returned)
-- **Compliance Status**: COMPLIANT
-- **Reasoning**: According to CIS benchmark: "If nothing is returned, the freevxfs kernel module is not available on the system and no further audit steps are required." Empty output means "nothing returned" = module not available = COMPLIANT (module should NOT be available).
-
-**Requirement 2: Verify module is not loaded**
-- **Data Collected**: Not executed (correctly skipped)
-- **Compliance Status**: N/A
-- **Reasoning**: According to CIS procedure, when Requirement 1 returns nothing, "no further audit steps are required". The playbook correctly skipped this requirement, which is the expected behavior.
-
-**Requirement 3: Verify module cannot be loaded**
-- **Data Collected**: Not executed (correctly skipped)
-- **Compliance Status**: N/A
-- **Reasoning**: According to CIS procedure, when Requirement 1 returns nothing, "no further audit steps are required". The playbook correctly skipped this requirement, which is the expected behavior.
-
-## OVERALL ASSESSMENT
-
-- **DATA COLLECTION**: PASS 
-  - Playbook successfully collected sufficient data. Empty output is valid data meaning "nothing found".
-  - The playbook correctly followed CIS procedure by skipping subsequent requirements when nothing was returned.
-  
-- **COMPLIANCE STATUS**: COMPLIANT 
-  - The system is compliant because: 
-    1) Requirement 1 returned empty output, which means the module is not available (as required).
-    2) The playbook correctly did not execute Requirements 2 and 3, following CIS procedure.
+  Fix the service restart issue and re-run the remediation.
 ```
 
 **Your Analysis:**"""
@@ -3597,25 +3770,25 @@ Based on the collected data, here is the compliance analysis for each requiremen
                 response = model.invoke(analysis_prompt)
                 analysis_result = response.content.strip()
                 
-                # Prepend DATA COLLECTION analysis to the full compliance analysis
+                # Prepend DATA COLLECTION analysis to the full remediation verification
                 # This ensures the final message includes both stages
                 if data_collection_analysis and "DATA_COLLECTION: PASS" in data_collection_analysis.upper():
                     # Insert DATA COLLECTION section at the beginning of the analysis
-                    if "## STAGE 2: COMPLIANCE ANALYSIS" in analysis_result:
+                    if "## STAGE 2: REMEDIATION VERIFICATION" in analysis_result:
                         # Insert before STAGE 2
                         analysis_result = analysis_result.replace(
-                            "## STAGE 2: COMPLIANCE ANALYSIS",
-                            f"## STAGE 1: DATA COLLECTION ANALYSIS\n\n{data_collection_analysis}\n\n## STAGE 2: COMPLIANCE ANALYSIS"
+                            "## STAGE 2: REMEDIATION VERIFICATION",
+                            f"## STAGE 1: REMEDIATION EXECUTION ANALYSIS\n\n{data_collection_analysis}\n\n## STAGE 2: REMEDIATION VERIFICATION"
                         )
                     elif "## OVERALL ASSESSMENT" in analysis_result:
                         # Insert before OVERALL ASSESSMENT
                         analysis_result = analysis_result.replace(
                             "## OVERALL ASSESSMENT",
-                            f"## STAGE 1: DATA COLLECTION ANALYSIS\n\n{data_collection_analysis}\n\n## OVERALL ASSESSMENT"
+                            f"## STAGE 1: REMEDIATION EXECUTION ANALYSIS\n\n{data_collection_analysis}\n\n## OVERALL ASSESSMENT"
                         )
                     else:
                         # Prepend at the beginning
-                        analysis_result = f"## STAGE 1: DATA COLLECTION ANALYSIS\n\n{data_collection_analysis}\n\n{analysis_result}"
+                        analysis_result = f"## STAGE 1: REMEDIATION EXECUTION ANALYSIS\n\n{data_collection_analysis}\n\n{analysis_result}"
                 
                 break  # Success, exit retry loop
             except Exception as e:
@@ -3646,79 +3819,46 @@ Based on the collected data, here is the compliance analysis for each requiremen
             print("   AI provided specific advice to improve data collection.")
             return False, analysis_result
         
-        # Check the two critical sections: DATA COLLECTION, COMPLIANCE ANALYSIS
+        # Check the three critical sections: DATA_COLLECTION, REMEDIATION EXECUTION, REMEDIATION VERIFICATION
         # NOTE: PLAYBOOK ANALYSIS is now handled separately (after syntax check, before test execution)
         analysis_upper = analysis_result.upper()
         import re
         
-        # Extract status from each section
-        data_collection_status = None
-        compliance_analysis_status = None
+        # Use extract_analysis_statuses for consistent status extraction
+        analysis_statuses = extract_analysis_statuses(analysis_result)
         
-        # Check DATA COLLECTION status
-        data_collection_patterns = [
-            r'DATA\s+COLLECTION[:\s]*PASS',
-            r'\*\*DATA\s+COLLECTION\*\*[:\s]*PASS',
-            r'-\s*\*\*DATA\s+COLLECTION\*\*[:\s]*PASS',
-        ]
-        for pattern in data_collection_patterns:
-            if re.search(pattern, analysis_upper):
-                data_collection_status = 'PASS'
-                break
+        data_collection_status = analysis_statuses.get('data_collection')
+        remediation_execution_status = analysis_statuses.get('remediation_execution')
+        remediation_verification_status = analysis_statuses.get('remediation_verification')
         
-        if not data_collection_status:
-            data_collection_fail_patterns = [
-                r'DATA\s+COLLECTION[:\s]*FAIL',
-                r'\*\*DATA\s+COLLECTION\*\*[:\s]*FAIL',
-            ]
-            for pattern in data_collection_fail_patterns:
-                if re.search(pattern, analysis_upper):
-                    data_collection_status = 'FAIL'
-                    break
-        
-        # Check COMPLIANCE ANALYSIS (PASS/FAIL, not COMPLIANT/NON-COMPLIANT)
-        compliance_analysis_patterns = [
-            r'COMPLIANCE\s+ANALYSIS[:\s]*PASS',
-            r'\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*PASS',
-            r'-\s*\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*PASS',
-        ]
-        for pattern in compliance_analysis_patterns:
-            if re.search(pattern, analysis_upper):
-                compliance_analysis_status = 'PASS'
-                break
-        
-        if not compliance_analysis_status:
-            compliance_analysis_fail_patterns = [
-                r'COMPLIANCE\s+ANALYSIS[:\s]*FAIL',
-                r'\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*FAIL',
-                r'-\s*\*\*COMPLIANCE\s+ANALYSIS\*\*[:\s]*FAIL',
-            ]
-            for pattern in compliance_analysis_fail_patterns:
-                if re.search(pattern, analysis_upper):
-                    compliance_analysis_status = 'FAIL'
-                    break
-        
-        # Determine if both sections are correct
+        # Determine if all sections are correct:
+        # 1. DATA_COLLECTION: PASS
+        # 2. REMEDIATION EXECUTION: PASS
+        # 3. REMEDIATION VERIFICATION: PASS
         all_sections_pass = (
             data_collection_status == 'PASS' and
-            compliance_analysis_status == 'PASS'
+            remediation_execution_status == 'PASS' and
+            remediation_verification_status == 'PASS'
         )
 
         if all_sections_pass:
-            print("\n✅ AI Compliance Analysis: COMPLETE")
+            print("\n✅ AI Remediation Analysis: COMPLETE")
             print("   All sections passed:")
             print(f"   - DATA COLLECTION: {data_collection_status}")
-            print(f"   - COMPLIANCE ANALYSIS: {compliance_analysis_status}")
+            print(f"   - REMEDIATION EXECUTION: {remediation_execution_status}")
+            print(f"   - REMEDIATION VERIFICATION: {remediation_verification_status}")
             return True, analysis_result
         else:
             # Check which sections failed
             failed_sections = []
             if data_collection_status != 'PASS':
                 failed_sections.append(f"DATA COLLECTION: {data_collection_status or 'NOT FOUND'}")
-            if compliance_analysis_status != 'PASS':
-                failed_sections.append(f"COMPLIANCE ANALYSIS: {compliance_analysis_status or 'NOT FOUND'}")
+            if remediation_execution_status != 'PASS':
+                failed_sections.append(f"REMEDIATION EXECUTION: {remediation_execution_status or 'NOT FOUND'}")
+            if remediation_verification_status != 'PASS':
+                failed_sections.append(f"REMEDIATION VERIFICATION: {remediation_verification_status or 'NOT FOUND'}")
             
-            print("\n❌ AI Compliance Analysis: Issues Found")
+            print("\n❌ AI Remediation Analysis: Issues Found")
             print("   The following sections have problems:")
             for section in failed_sections:
                 print(f"   - {section}")
@@ -3954,7 +4094,7 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
             current_playbook_content = playbook
             
             # Check syntax
-            is_valid, error_msg = check_playbook_syntax(filename, test_host)
+            is_valid, error_msg = check_playbook_syntax(filename, test_host, remote_user=become_user)
             
             if not is_valid:
                 # Syntax check failed
@@ -3993,7 +4133,7 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
             print("=" * 80)
             
             # Execute on test host first (skip debug tasks for cleaner analysis)
-            test_success, test_output = test_playbook_on_server(filename, test_host, check_mode=False, verbose="v", skip_debug=True)
+            test_success, test_output = test_playbook_on_server(filename, test_host, check_mode=False, verbose="v", skip_debug=True, remote_user=become_user)
             
             # Check if it's a connection error (cannot validate on host)
             if not test_success and test_output.startswith("CONNECTION_ERROR:"):
@@ -4075,23 +4215,24 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
                 # Check for PLAYBOOK ANALYSIS: FAIL status (STAGE 2)
                 has_issues, extracted_advice = extract_playbook_issues_from_analysis(analysis_message)
                 
-                # Check if COMPLIANCE ANALYSIS is missing, invalid, or FAIL (STAGE 2)
-                # COMPLIANCE ANALYSIS should be PASS or FAIL
-                # Check if the analysis message indicates COMPLIANCE ANALYSIS failure
-                compliance_analysis_fail = "COMPLIANCE ANALYSIS: FAIL" in analysis_message.upper()
-                compliance_analysis_missing = (
-                    "COMPLIANCE ANALYSIS: NOT FOUND" in analysis_message.upper() or
-                    ("COMPLIANCE ANALYSIS" in analysis_message.upper() and 
-                     "COMPLIANCE ANALYSIS: PASS" not in analysis_message.upper() and
-                     "COMPLIANCE ANALYSIS: FAIL" not in analysis_message.upper())
+                # Check if REMEDIATION VERIFICATION is missing, invalid, or FAIL
+                # REMEDIATION VERIFICATION should be PASS or FAIL
+                remediation_verification_fail = (
+                    "REMEDIATION VERIFICATION: FAIL" in analysis_message.upper() or
+                    "REMEDIATION EXECUTION: FAIL" in analysis_message.upper()
+                )
+                remediation_verification_missing = (
+                    "REMEDIATION VERIFICATION: NOT FOUND" in analysis_message.upper() or
+                    ("REMEDIATION VERIFICATION" not in analysis_message.upper() and
+                     "REMEDIATION EXECUTION" not in analysis_message.upper())
                 )
                 
-                is_compliance_analysis_failure = (
+                is_remediation_verification_failure = (
                     not analysis_passed and 
                     not is_structure_failure and  # Not a structure failure
                     not is_data_collection_failure and  # Not a data collection failure
                     not has_issues and  # Not a PLAYBOOK ANALYSIS failure
-                    (compliance_analysis_fail or compliance_analysis_missing)  # COMPLIANCE ANALYSIS is FAIL, missing, or invalid
+                    (remediation_verification_fail or remediation_verification_missing)  # REMEDIATION VERIFICATION is FAIL, missing, or invalid
                 )
                 
                 # Verify status alignment between playbook output and AI analysis
@@ -4121,8 +4262,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
                         print(f"\n⚠️  PLAYBOOK STRUCTURE ANALYSIS: FAIL - will regenerate playbook")
                     elif is_data_collection_failure:
                         print(f"\n⚠️  DATA COLLECTION ANALYSIS: FAIL - will regenerate playbook")
-                    elif is_compliance_analysis_failure:
-                        print(f"\n⚠️  COMPLIANCE ANALYSIS: MISSING or INVALID - will enhance playbook")
+                    elif is_remediation_verification_failure:
+                        print(f"\n⚠️  REMEDIATION VERIFICATION: MISSING or INVALID - will enhance playbook")
                     elif has_issues:
                         print(f"\n⚠️  PLAYBOOK ANALYSIS: FAIL - will enhance playbook")
                     else:
@@ -4135,8 +4276,8 @@ root     2822221 2819327  0 13:07 pts/1    00:00:00 grep --color=auto -i 2290657
                             print(f"\n⚠️  PLAYBOOK STRUCTURE ANALYSIS: FAIL on attempt {attempt}/{max_retries}")
                         elif is_data_collection_failure:
                             print(f"\n⚠️  DATA COLLECTION ANALYSIS: FAIL on attempt {attempt}/{max_retries}")
-                        elif is_compliance_analysis_failure:
-                            print(f"\n⚠️  COMPLIANCE ANALYSIS: MISSING or INVALID on attempt {attempt}/{max_retries}")
+                        elif is_remediation_verification_failure:
+                            print(f"\n⚠️  REMEDIATION VERIFICATION: MISSING or INVALID on attempt {attempt}/{max_retries}")
                         elif has_issues:
                             print(f"\n⚠️  PLAYBOOK ANALYSIS: FAIL on attempt {attempt}/{max_retries}")
                         else:
@@ -4200,35 +4341,38 @@ INSTRUCTIONS TO FIX:
                             # Continue to next attempt
                             continue
                         
-                        # Prepare feedback message for COMPLIANCE ANALYSIS failure
-                        if is_compliance_analysis_failure:
+                        # Prepare feedback message for REMEDIATION VERIFICATION failure
+                        if is_remediation_verification_failure:
                             # Escape curly braces in feedback
-                            compliance_analysis_feedback_escaped = analysis_message.replace('{', '{{').replace('}', '}}')
-                            compliance_analysis_feedback = f"""CRITICAL FIX REQUIRED: COMPLIANCE ANALYSIS: MISSING or FAIL - The AI analysis did not provide a valid COMPLIANCE ANALYSIS (PASS or FAIL).
+                            remediation_verification_feedback_escaped = analysis_message.replace('{', '{{').replace('}', '}}')
+                            remediation_verification_feedback = f"""CRITICAL FIX REQUIRED: REMEDIATION VERIFICATION: MISSING or FAIL - The AI analysis did not provide a valid REMEDIATION VERIFICATION (PASS or FAIL).
 
 Analysis Result:
-{compliance_analysis_feedback_escaped}
+{remediation_verification_feedback_escaped}
 
 INSTRUCTIONS TO FIX:
-1. Review the COMPLIANCE ANALYSIS feedback carefully
-2. The AI analysis MUST include a "COMPLIANCE ANALYSIS" section in the OVERALL ASSESSMENT with value PASS or FAIL
-3. COMPLIANCE ANALYSIS: PASS when:
+1. Review the REMEDIATION VERIFICATION feedback carefully
+2. The AI analysis MUST include a "REMEDIATION VERIFICATION" section in the OVERALL ASSESSMENT with value PASS or FAIL
+3. REMEDIATION VERIFICATION: PASS when:
+   - The overall remediation status is APPLIED or SKIPPED (NOT FAILED)
    - All steps and requirements results from playbook and AI match each other (status alignment verified)
-   - The audit procedure logic matches correctly
-   - All individual requirement statuses align (PASS=COMPLIANT, FAIL=NON-COMPLIANT, NA=UNKNOWN)
-   - Overall status aligns (PASS=COMPLIANT, FAIL=NON-COMPLIANT, NA=UNKNOWN)
-4. COMPLIANCE ANALYSIS: FAIL when:
+   - The remediation procedure logic matches correctly
+   - All individual requirement statuses align (APPLIED=APPLIED, FAILED=FAILED, SKIPPED=SKIPPED)
+   - Overall status aligns
+4. REMEDIATION VERIFICATION: FAIL when:
+   - The overall remediation status is FAILED (remediation did not succeed - playbook must be enhanced)
    - Any step or requirement result from playbook does NOT match AI analysis (status misalignment)
-   - The audit procedure logic does NOT match correctly
+   - The remediation procedure logic does NOT match correctly
    - Any individual requirement status misalignment
    - Overall status misalignment
-5. Ensure the playbook's overall compliance logic correctly determines the final status based on:
-   - Individual requirement statuses (PASS/FAIL/NA/UNKNOWN)
-   - The audit procedure logic (if provided)
-   - The overall compliance criteria
-6. The COMPLIANCE ANALYSIS should verify that playbook statuses align with AI analysis statuses
-7. Fix all issues identified in the analysis before proceeding"""
-                            requirements.append(compliance_analysis_feedback)
+5. CRITICAL: Even if playbook and AI both agree on FAILED with perfect alignment, REMEDIATION VERIFICATION is still FAIL because the remediation did not succeed
+6. Ensure the playbook's overall remediation logic correctly determines the final status based on:
+   - Individual requirement statuses (APPLIED/FAILED/SKIPPED/UNKNOWN)
+   - The remediation procedure logic (if provided)
+   - The overall remediation criteria
+8. The REMEDIATION VERIFICATION should verify that playbook statuses align with AI analysis statuses
+9. Fix all issues identified in the analysis before proceeding"""
+                            requirements.append(remediation_verification_feedback)
                             # Continue to next attempt
                             continue
                         
@@ -4244,10 +4388,11 @@ Status Alignment Issues:
 INSTRUCTIONS TO FIX:
 1. Review the status alignment issues above
 2. Ensure playbook status determination logic matches AI analysis:
-   - PASS should correspond to COMPLIANT
-   - FAIL should correspond to NON-COMPLIANT
+   - APPLIED should correspond to APPLIED
+   - FAILED should correspond to FAILED
+   - SKIPPED should correspond to SKIPPED
 3. Fix the status determination logic in the playbook to align with AI analysis
-4. Verify overall compliance logic matches CIS requirements exactly
+4. Verify overall remediation logic matches CIS requirements exactly
 """
                             requirements.append(alignment_feedback)
                         
@@ -4329,7 +4474,7 @@ INSTRUCTIONS TO FIX:
                     print(f"\n📍 Executing on: {target_host}")
                     print()
                     
-                    final_success, final_output = test_playbook_on_server(filename, target_host, check_mode=False, verbose="v", skip_debug=True)
+                    final_success, final_output = test_playbook_on_server(filename, target_host, check_mode=False, verbose="v", skip_debug=True, remote_user=become_user)
                     
                     if final_success:
                         print("\n" + "=" * 80)

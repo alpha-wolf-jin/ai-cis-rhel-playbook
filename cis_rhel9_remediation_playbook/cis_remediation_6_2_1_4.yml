@@ -1,0 +1,653 @@
+---
+- name: Remediation for CIS 6.2.1.4 - Ensure only one logging system is in use
+  hosts: all
+  become: yes
+  gather_facts: false
+  
+  vars:
+    checkpoint_id: "cis_6_2_1_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.1.4"
+    
+    # Requirement definitions - MUST be quoted strings
+    req_1: "Check if rsyslog is installed"
+    req_2: "Check if systemd-journald is installed"
+    req_3: "Apply decision to use either journald OR rsyslog based on site needs"
+    req_4: "IF journald is chosen, configure systemd-journald.service as per site needs"
+    req_5: "IF journald is chosen AND remote logging is needed, configure systemd-journal-remote"
+    req_6: "IF rsyslog is chosen, configure rsyslog as per site needs"
+    req_7: "Ensure only one logging service is actively configured and running"
+    req_8: "VERIFY: Confirm only one primary logging system is active"
+    
+    # Configuration variables - set these based on your site needs
+    chosen_logging_system: "journald"  # Options: "journald" or "rsyslog"
+    enable_journald_remote: false      # Set to true if remote logging is needed for journald
+
+  pre_tasks:
+    # === Check sudo/privilege escalation first ===
+    - name: "Check sudo access"
+      command: whoami
+      register: sudo_check
+      changed_when: false
+      become: yes
+      ignore_errors: true
+
+    - name: "Set sudo_available fact"
+      set_fact:
+        sudo_available: "{{ not sudo_check.failed and sudo_check.stdout == 'root' }}"
+      ignore_errors: true
+
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      ignore_errors: true
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state
+    - name: "State Guard - Undo service state changes"
+      shell: |
+        # Stop any services that might have been started by previous remediation
+        systemctl stop rsyslog.service 2>/dev/null || true
+        systemctl stop systemd-journald.service 2>/dev/null || true
+        systemctl stop systemd-journal-upload.service 2>/dev/null || true
+        # Disable any services that might have been enabled by previous remediation
+        systemctl disable rsyslog.service 2>/dev/null || true
+        systemctl disable systemd-journald.service 2>/dev/null || true
+        systemctl disable systemd-journal-upload.service 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      when: "_sg_flag.stat.exists | default(false) and (sudo_available | default(false))"
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag.stat.exists | default(false)"
+      ignore_errors: true
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      when: sudo_available | default(false)
+      ignore_errors: true
+
+    - name: "State Guard - Capture current service states"
+      shell: |
+        systemctl is-active rsyslog.service 2>/dev/null || echo "inactive"
+        systemctl is-active systemd-journald.service 2>/dev/null || echo "inactive"
+        systemctl is-enabled rsyslog.service 2>/dev/null || echo "disabled"
+        systemctl is-enabled systemd-journald.service 2>/dev/null || echo "disabled"
+      args:
+        executable: /bin/bash
+      register: _sg_service_state
+      when: sudo_available | default(false)
+      ignore_errors: true
+
+    - name: "State Guard - Save service state backup"
+      copy:
+        content: |
+          rsyslog_active: "{{ (_sg_service_state.stdout_lines[0] | default('inactive')).split()[0] }}"
+          journald_active: "{{ (_sg_service_state.stdout_lines[1] | default('inactive')).split()[0] }}"
+          rsyslog_enabled: "{{ (_sg_service_state.stdout_lines[2] | default('disabled')).split()[0] }}"
+          journald_enabled: "{{ (_sg_service_state.stdout_lines[3] | default('disabled')).split()[0] }}"
+        dest: "{{ state_guard_dir }}/service_state.yaml"
+      when: sudo_available | default(false)
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      when: sudo_available | default(false)
+      ignore_errors: true
+
+  tasks:
+    - name: "Initialize data variables"
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_4: ""
+        status_4: "UNKNOWN"
+        rationale_4: "Not evaluated"
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        data_5: ""
+        status_5: "UNKNOWN"
+        rationale_5: "Not evaluated"
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        data_6: ""
+        status_6: "UNKNOWN"
+        rationale_6: "Not evaluated"
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        data_7: ""
+        status_7: "UNKNOWN"
+        rationale_7: "Not evaluated"
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        data_8: ""
+        status_8: "UNKNOWN"
+        rationale_8: "Not evaluated"
+
+    # Requirement 1: Check if rsyslog is installed
+    - name: "Req 1 - Check rsyslog installation"
+      shell: rpm -q rsyslog
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+      when: sudo_available | default(false)
+
+    - name: "Store requirement 1 details"
+      set_fact:
+        task_1_name: "Check if rsyslog is installed"
+        task_1_cmd: "rpm -q rsyslog"
+        task_1_rc: "{{ (result_1 | default({})).get('rc', -1) }}"
+        data_1: "{{ (result_1 | default({})).get('stdout', '') | trim }}"
+        rsyslog_installed: "{{ (result_1 | default({})).get('rc', 1) == 0 }}"
+      ignore_errors: true
+
+    - name: "Set requirement 1 status"
+      set_fact:
+        status_1: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% else %}
+            {% set rc = (result_1 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED
+            {% elif rc == 1 %}
+              SKIPPED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_1: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot check rsyslog installation due to insufficient sudo privileges
+          {% else %}
+            {% set rc = (result_1 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED: rsyslog package is installed
+            {% elif rc == 1 %}
+              SKIPPED: rsyslog package is not installed
+            {% else %}
+              FAILED: Could not check rsyslog installation
+            {% endif %}
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 2: Check if systemd-journald is installed
+    - name: "Req 2 - Check systemd installation"
+      shell: rpm -q systemd
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: sudo_available | default(false)
+
+    - name: "Store requirement 2 details"
+      set_fact:
+        task_2_name: "Check if systemd-journald is installed"
+        task_2_cmd: "rpm -q systemd"
+        task_2_rc: "{{ (result_2 | default({})).get('rc', -1) }}"
+        data_2: "{{ (result_2 | default({})).get('stdout', '') | trim }}"
+        systemd_installed: "{{ (result_2 | default({})).get('rc', 1) == 0 }}"
+      ignore_errors: true
+
+    - name: "Set requirement 2 status"
+      set_fact:
+        status_2: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% else %}
+            {% set rc = (result_2 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED
+            {% elif rc == 1 %}
+              SKIPPED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_2: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot check systemd installation due to insufficient sudo privileges
+          {% else %}
+            {% set rc = (result_2 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED: systemd package is installed (provides journald)
+            {% elif rc == 1 %}
+              SKIPPED: systemd package is not installed
+            {% else %}
+              FAILED: Could not check systemd installation
+            {% endif %}
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 3: Apply decision to use either journald OR rsyslog
+    - name: "Req 3 - Apply logging system decision"
+      set_fact:
+        task_3_name: "Apply decision to use {{ chosen_logging_system }}"
+        task_3_cmd: "N/A (configuration decision)"
+        task_3_rc: 0
+        data_3: "Chosen logging system: {{ chosen_logging_system }}, Remote logging: {{ enable_journald_remote }}"
+        status_3: "APPLIED"
+        rationale_3: "APPLIED: Decision applied to use {{ chosen_logging_system }} based on site needs"
+      ignore_errors: true
+
+    # Requirement 4: IF journald is chosen, configure systemd-journald.service
+    - name: "Req 4 - Configure journald if chosen"
+      block:
+        - name: "Req 4 - Ensure journald is enabled and started"
+          shell: |
+            systemctl enable --now systemd-journald.service
+            systemctl is-active systemd-journald.service
+          args:
+            executable: /bin/bash
+          register: result_4
+          ignore_errors: true
+          when: "chosen_logging_system == 'journald' and systemd_installed | default(false) and sudo_available | default(false)"
+      when: "chosen_logging_system == 'journald' and systemd_installed | default(false)"
+
+    - name: "Store requirement 4 details"
+      set_fact:
+        task_4_name: "Configure systemd-journald.service"
+        task_4_cmd: "systemctl enable --now systemd-journald.service"
+        task_4_rc: "{{ (result_4 | default({})).get('rc', -1) }}"
+        data_4: "{{ (result_4 | default({})).get('stdout', '') | trim }}"
+      ignore_errors: true
+
+    - name: "Set requirement 4 status"
+      set_fact:
+        status_4: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% elif chosen_logging_system == 'journald' and systemd_installed | default(false) %}
+            {% set rc = (result_4 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot configure systemd-journald due to insufficient sudo privileges
+          {% elif chosen_logging_system == 'journald' and systemd_installed | default(false) %}
+            {% set rc = (result_4 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED: systemd-journald configured and started
+            {% else %}
+              FAILED: Could not configure systemd-journald
+            {% endif %}
+          {% else %}
+            SKIPPED: journald not chosen or systemd not installed
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 5: IF journald is chosen AND remote logging is needed, configure systemd-journal-remote
+    - name: "Req 5 - Configure journald remote logging if needed"
+      block:
+        - name: "Req 5 - Enable and start journald remote upload service"
+          shell: |
+            systemctl enable --now systemd-journal-upload.service
+            systemctl is-active systemd-journal-upload.service
+          args:
+            executable: /bin/bash
+          register: result_5
+          ignore_errors: true
+          when: "chosen_logging_system == 'journald' and enable_journald_remote and systemd_installed | default(false) and sudo_available | default(false)"
+      when: "chosen_logging_system == 'journald' and enable_journald_remote and systemd_installed | default(false)"
+
+    - name: "Store requirement 5 details"
+      set_fact:
+        task_5_name: "Configure systemd-journal-remote for remote logging"
+        task_5_cmd: "systemctl enable --now systemd-journal-upload.service"
+        task_5_rc: "{{ (result_5 | default({})).get('rc', -1) }}"
+        data_5: "{{ (result_5 | default({})).get('stdout', '') | trim }}"
+      ignore_errors: true
+
+    - name: "Set requirement 5 status"
+      set_fact:
+        status_5: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% elif chosen_logging_system == 'journald' and enable_journald_remote and systemd_installed | default(false) %}
+            {% set rc = (result_5 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot configure systemd-journal-upload due to insufficient sudo privileges
+          {% elif chosen_logging_system == 'journald' and enable_journald_remote and systemd_installed | default(false) %}
+            {% set rc = (result_5 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED: systemd-journal-upload service enabled and started for remote journal upload
+            {% else %}
+              FAILED: Could not configure systemd-journal-upload service
+            {% endif %}
+          {% else %}
+            SKIPPED: journald remote logging not required or journald not chosen
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 6: IF rsyslog is chosen, configure rsyslog
+    - name: "Req 6 - Configure rsyslog if chosen"
+      block:
+        - name: "Req 6 - Ensure rsyslog is enabled and started"
+          shell: |
+            systemctl enable --now rsyslog.service
+            systemctl is-active rsyslog.service
+          args:
+            executable: /bin/bash
+          register: result_6
+          ignore_errors: true
+          when: "chosen_logging_system == 'rsyslog' and rsyslog_installed | default(false) and sudo_available | default(false)"
+      when: "chosen_logging_system == 'rsyslog' and rsyslog_installed | default(false)"
+
+    - name: "Store requirement 6 details"
+      set_fact:
+        task_6_name: "Configure rsyslog"
+        task_6_cmd: "systemctl enable --now rsyslog.service"
+        task_6_rc: "{{ (result_6 | default({})).get('rc', -1) }}"
+        data_6: "{{ (result_6 | default({})).get('stdout', '') | trim }}"
+      ignore_errors: true
+
+    - name: "Set requirement 6 status"
+      set_fact:
+        status_6: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% elif chosen_logging_system == 'rsyslog' and rsyslog_installed | default(false) %}
+            {% set rc = (result_6 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_6: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot configure rsyslog due to insufficient sudo privileges
+          {% elif chosen_logging_system == 'rsyslog' and rsyslog_installed | default(false) %}
+            {% set rc = (result_6 | default({})).get('rc', -1) %}
+            {% if rc == 0 %}
+              APPLIED: rsyslog configured and started
+            {% else %}
+              FAILED: Could not configure rsyslog
+            {% endif %}
+          {% else %}
+            SKIPPED: rsyslog not chosen or not installed
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 7: Ensure only one logging service is actively configured and running
+    - name: "Req 7 - Disable unused logging service"
+      block:
+        - name: "Req 7 - Disable and stop rsyslog if journald is chosen"
+          shell: |
+            systemctl disable rsyslog.service 2>/dev/null || true
+            systemctl stop rsyslog.service 2>/dev/null || true
+            echo "rsyslog disabled and stopped"
+          args:
+            executable: /bin/bash
+          register: result_7_journald
+          ignore_errors: true
+          when: "chosen_logging_system == 'journald' and rsyslog_installed | default(false) and sudo_available | default(false)"
+        
+        - name: "Req 7 - Disable and stop journald if rsyslog is chosen"
+          shell: |
+            systemctl disable systemd-journald.service 2>/dev/null || true
+            systemctl stop systemd-journald.service 2>/dev/null || true
+            echo "journald disabled and stopped"
+          args:
+            executable: /bin/bash
+          register: result_7_rsyslog
+          ignore_errors: true
+          when: "chosen_logging_system == 'rsyslog' and systemd_installed | default(false) and sudo_available | default(false)"
+      when: "(chosen_logging_system == 'journald' and rsyslog_installed | default(false)) or (chosen_logging_system == 'rsyslog' and systemd_installed | default(false))"
+
+    - name: "Store requirement 7 details"
+      set_fact:
+        task_7_name: "Ensure only one logging service is active"
+        task_7_cmd: "{% if chosen_logging_system == 'journald' %}systemctl disable rsyslog.service; systemctl stop rsyslog.service{% elif chosen_logging_system == 'rsyslog' %}systemctl disable systemd-journald.service; systemctl stop systemd-journald.service{% else %}N/A{% endif %}"
+        task_7_rc: "{% if chosen_logging_system == 'journald' %}{{ (result_7_journald | default({})).get('rc', -1) }}{% elif chosen_logging_system == 'rsyslog' %}{{ (result_7_rsyslog | default({})).get('rc', -1) }}{% else %}-1{% endif %}"
+        data_7: "{% if chosen_logging_system == 'journald' %}{{ (result_7_journald | default({})).get('stdout', '') | trim }}{% elif chosen_logging_system == 'rsyslog' %}{{ (result_7_rsyslog | default({})).get('stdout', '') | trim }}{% else %}N/A{% endif %}"
+      ignore_errors: true
+
+    - name: "Set requirement 7 status"
+      set_fact:
+        status_7: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% elif (chosen_logging_system == 'journald' and rsyslog_installed | default(false)) or (chosen_logging_system == 'rsyslog' and systemd_installed | default(false)) %}
+            {% if chosen_logging_system == 'journald' %}
+              {% set rc = (result_7_journald | default({})).get('rc', -1) %}
+            {% elif chosen_logging_system == 'rsyslog' %}
+              {% set rc = (result_7_rsyslog | default({})).get('rc', -1) %}
+            {% else %}
+              {% set rc = -1 %}
+            {% endif %}
+            {% if rc == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_7: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot disable/stop unused logging service due to insufficient sudo privileges
+          {% elif (chosen_logging_system == 'journald' and rsyslog_installed | default(false)) or (chosen_logging_system == 'rsyslog' and systemd_installed | default(false)) %}
+            {% if chosen_logging_system == 'journald' %}
+              {% set rc = (result_7_journald | default({})).get('rc', -1) %}
+            {% elif chosen_logging_system == 'rsyslog' %}
+              {% set rc = (result_7_rsyslog | default({})).get('rc', -1) %}
+            {% else %}
+              {% set rc = -1 %}
+            {% endif %}
+            {% if rc == 0 %}
+              APPLIED: rsyslog disabled and stopped (journald is the chosen logging system)
+            {% else %}
+              FAILED: Could not disable/stop the unused logging service
+            {% endif %}
+          {% else %}
+            SKIPPED: No unused logging service to disable (one or both not installed)
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 8: VERIFY - Confirm only one primary logging system is active
+    - name: "Req 8 - Verify only one logging system is active"
+      shell: |
+        systemctl is-active rsyslog.service systemd-journald.service 2>/dev/null | grep -c "^active"
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      changed_when: false
+      when: sudo_available | default(false)
+
+    - name: "Store requirement 8 details"
+      set_fact:
+        task_8_name: "VERIFY: Confirm only one primary logging system is active"
+        task_8_cmd: "systemctl is-active rsyslog.service systemd-journald.service 2>/dev/null | grep -c '^active'"
+        task_8_rc: "{{ (result_8 | default({})).get('rc', -1) }}"
+        data_8: "{{ (result_8 | default({})).get('stdout', '') | trim }}"
+      ignore_errors: true
+
+    - name: "Set requirement 8 status and overall remediation"
+      set_fact:
+        status_8: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% else %}
+            {% set rc = (result_8 | default({})).get('rc', -1) %}
+            {% set output = (result_8 | default({})).get('stdout', '') | trim %}
+            {% if rc == 0 and output == '1' %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_8: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot verify logging system status due to insufficient sudo privileges
+          {% else %}
+            {% set rc = (result_8 | default({})).get('rc', -1) %}
+            {% set output = (result_8 | default({})).get('stdout', '') | trim %}
+            {% if rc == 0 and output == '1' %}
+              APPLIED: Only one logging system is active (output: {{ output }})
+            {% else %}
+              FAILED: Expected exactly 1 active logging system, got: {{ output }}
+            {% endif %}
+          {% endif %}
+        # Overall remediation status
+        overall_status: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED
+          {% elif status_8 | default('FAILED') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('FAILED') | trim == 'SKIPPED' and status_2 | default('FAILED') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_8 | default('FAILED') | trim == 'FAILED' and (status_1 | default('FAILED') | trim == 'APPLIED' or status_2 | default('FAILED') | trim == 'APPLIED') %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if not (sudo_available | default(false)) %}
+            SKIPPED: Cannot perform remediation due to insufficient sudo privileges
+          {% elif status_8 | default('FAILED') | trim == 'APPLIED' %}
+            Remediation successfully applied: Only one logging system ({{ chosen_logging_system }}) is now active
+          {% elif status_1 | default('FAILED') | trim == 'SKIPPED' and status_2 | default('FAILED') | trim == 'SKIPPED' %}
+            SKIPPED: Neither rsyslog nor systemd-journald is installed on this system
+          {% elif status_8 | default('FAILED') | trim == 'FAILED' and (status_1 | default('FAILED') | trim == 'APPLIED' or status_2 | default('FAILED') | trim == 'APPLIED') %}
+            PARTIALLY APPLIED: Some changes were made but verification failed - check service states manually
+          {% else %}
+            FAILED: Remediation could not be fully applied
+          {% endif %}
+      ignore_errors: true
+
+    # Final report
+    - name: "Generate remediation report"
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 6.2.1.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.2.1.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | default('') }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name }}"
+          - "  Command: {{ task_5_cmd }}"
+          - "  Exit code: {{ task_5_rc }}"
+          - "  Data: {{ data_5 | default('') }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name }}"
+          - "  Command: {{ task_6_cmd }}"
+          - "  Exit code: {{ task_6_rc }}"
+          - "  Data: {{ data_6 | default('') }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name }}"
+          - "  Command: {{ task_7_cmd }}"
+          - "  Exit code: {{ task_7_rc }}"
+          - "  Data: {{ data_7 | default('') }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name }}"
+          - "  Command: {{ task_8_cmd }}"
+          - "  Exit code: {{ task_8_rc }}"
+          - "  Data: {{ data_8 | default('') }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

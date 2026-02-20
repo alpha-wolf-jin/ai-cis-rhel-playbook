@@ -1,0 +1,8 @@
+
+
+5.4.1.5 Ensure inactive password lock is configured (Automated)
+
+will make ansi and root account expired
+
+# chage -l ansi
+# usemod -e "" ansi

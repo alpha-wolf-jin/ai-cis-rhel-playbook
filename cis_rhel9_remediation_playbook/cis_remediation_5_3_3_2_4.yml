@@ -1,0 +1,520 @@
+---
+- name: Remediation for CIS 5.3.3.2.4
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_2_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.2.4"
+    req_1: "Create or modify pwquality configuration file to set maxrepeat = 3"
+    req_2: "Execute bash script to remove maxrepeat from pam_pwquality.so module in PAM files"
+    req_3: "Verify password same consecutive characters is configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # For pwquality.conf (present backup): restore file from backup
+    - name: "State Guard - Restore /etc/security/pwquality.conf from backup"
+      copy:
+        src: "{{ state_guard_dir }}/pwquality.conf.present"
+        dest: "/etc/security/pwquality.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # For pwrepeat.conf (absent marker): delete the config file created by previous remediation
+    - name: "State Guard - Delete /etc/security/pwquality.conf.d/50-pwrepeat.conf (created by remediation)"
+      file:
+        path: "/etc/security/pwquality.conf.d/50-pwrepeat.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # For PAM files: need to restore from backup if they exist
+    - name: "State Guard - Get custom authselect profile"
+      shell: |
+        {% raw %}
+        if [ -f /etc/authselect/authselect.conf ]; then
+          head -1 /etc/authselect/authselect.conf | grep 'custom/' || echo "no-custom"
+        else
+          echo "no-authselect"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: _sg_authselect_profile
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore system-auth from backup"
+      copy:
+        src: "{{ state_guard_dir }}/system-auth.present"
+        dest: "/etc/authselect/{{ _sg_authselect_profile.stdout | trim }}/system-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and _sg_authselect_profile.stdout is defined and _sg_authselect_profile.stdout | trim != "no-authselect" and _sg_authselect_profile.stdout | trim != "no-custom"
+      ignore_errors: true
+
+    - name: "State Guard - Restore password-auth from backup"
+      copy:
+        src: "{{ state_guard_dir }}/password-auth.present"
+        dest: "/etc/authselect/{{ _sg_authselect_profile.stdout | trim }}/password-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and _sg_authselect_profile.stdout is defined and _sg_authselect_profile.stdout | trim != "no-authselect" and _sg_authselect_profile.stdout | trim != "no-custom"
+      ignore_errors: true
+
+    - name: "State Guard - Apply authselect changes after restore"
+      shell: |
+        {% raw %}
+        if command -v authselect >/dev/null 2>&1; then
+          authselect apply-changes
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if each file exists before deciding backup suffix
+    - name: "State Guard - Check if /etc/security/pwquality.conf exists"
+      stat:
+        path: "/etc/security/pwquality.conf"
+      register: _sg_pwquality_stat
+
+    - name: "State Guard - Check if /etc/security/pwquality.conf.d/50-pwrepeat.conf exists"
+      stat:
+        path: "/etc/security/pwquality.conf.d/50-pwrepeat.conf"
+      register: _sg_pwrepeat_stat
+
+    - name: "State Guard - Get current authselect profile for backup"
+      shell: |
+        {% raw %}
+        if [ -f /etc/authselect/authselect.conf ]; then
+          head -1 /etc/authselect/authselect.conf | grep 'custom/' || echo "no-custom"
+        else
+          echo "no-authselect"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: _sg_current_profile
+      ignore_errors: true
+
+    - name: "State Guard - Check if system-auth exists"
+      stat:
+        path: "/etc/authselect/{{ _sg_current_profile.stdout | trim }}/system-auth"
+      register: _sg_system_auth_stat
+      when: _sg_current_profile.stdout is defined and _sg_current_profile.stdout | trim != "no-authselect" and _sg_current_profile.stdout | trim != "no-custom"
+      ignore_errors: true
+
+    - name: "State Guard - Check if password-auth exists"
+      stat:
+        path: "/etc/authselect/{{ _sg_current_profile.stdout | trim }}/password-auth"
+      register: _sg_password_auth_stat
+      when: _sg_current_profile.stdout is defined and _sg_current_profile.stdout | trim != "no-authselect" and _sg_current_profile.stdout | trim != "no-custom"
+      ignore_errors: true
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /etc/security/pwquality.conf (present)"
+      copy:
+        src: "/etc/security/pwquality.conf"
+        dest: "{{ state_guard_dir }}/pwquality.conf.present"
+        remote_src: true
+      when: _sg_pwquality_stat.stat.exists
+
+    - name: "State Guard - Backup /etc/security/pwquality.conf.d/50-pwrepeat.conf (present)"
+      copy:
+        src: "/etc/security/pwquality.conf.d/50-pwrepeat.conf"
+        dest: "{{ state_guard_dir }}/50-pwrepeat.conf.present"
+        remote_src: true
+      when: _sg_pwrepeat_stat.stat.exists
+
+    - name: "State Guard - Backup system-auth (present)"
+      copy:
+        src: "/etc/authselect/{{ _sg_current_profile.stdout | trim }}/system-auth"
+        dest: "{{ state_guard_dir }}/system-auth.present"
+        remote_src: true
+      when: _sg_system_auth_stat.stat.exists | default(false)
+
+    - name: "State Guard - Backup password-auth (present)"
+      copy:
+        src: "/etc/authselect/{{ _sg_current_profile.stdout | trim }}/password-auth"
+        dest: "{{ state_guard_dir }}/password-auth.present"
+        remote_src: true
+      when: _sg_password_auth_stat.stat.exists | default(false)
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /etc/security/pwquality.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/pwquality.conf.absent"
+      when: not _sg_pwquality_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/security/pwquality.conf.d/50-pwrepeat.conf as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/50-pwrepeat.conf.absent"
+      when: not _sg_pwrepeat_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Create or modify pwquality configuration file to set maxrepeat = 3
+    - name: "Req 1 - Create or modify pwquality configuration to set maxrepeat = 3"
+      shell: |
+        echo "=== BEFORE: /etc/security/pwquality.conf ==="
+        cat /etc/security/pwquality.conf 2>/dev/null || echo "File does not exist"
+        echo ""
+        echo "=== BEFORE: /etc/security/pwquality.conf.d/*.conf ==="
+        ls -la /etc/security/pwquality.conf.d/*.conf 2>/dev/null || echo "No files in pwquality.conf.d"
+        for f in /etc/security/pwquality.conf.d/*.conf; do
+          if [ -f "$f" ]; then
+            echo "--- $f ---"
+            cat "$f"
+          fi
+        done
+        echo ""
+        echo "=== APPLYING CHANGE ==="
+        # Comment out any existing maxrepeat line in main file
+        sed -ri 's/^\s*maxrepeat\s*=/# &/' /etc/security/pwquality.conf 2>/dev/null
+        # Ensure pwquality.conf.d directory exists
+        mkdir -p /etc/security/pwquality.conf.d
+        # Add maxrepeat = 3 to the .d directory file
+        printf '\n%s' "maxrepeat = 3" >> /etc/security/pwquality.conf.d/50-pwrepeat.conf
+        echo ""
+        echo "=== AFTER: /etc/security/pwquality.conf ==="
+        cat /etc/security/pwquality.conf 2>/dev/null || echo "File does not exist"
+        echo ""
+        echo "=== AFTER: /etc/security/pwquality.conf.d/50-pwrepeat.conf ==="
+        cat /etc/security/pwquality.conf.d/50-pwrepeat.conf 2>/dev/null || echo "File does not exist"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Create or modify pwquality configuration to set maxrepeat = 3"
+        task_1_cmd: |
+          sed -ri 's/^\s*maxrepeat\s*=/# &/' /etc/security/pwquality.conf; printf '\n%s' 'maxrepeat = 3' >> /etc/security/pwquality.conf.d/50-pwrepeat.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: maxrepeat set to 3 in pwquality configuration' if result_1.rc | default(-1) == 0 else 'FAILED: Could not configure maxrepeat in pwquality') | trim }}"
+
+    # Requirement 2: Execute bash script to remove maxrepeat from pam_pwquality.so module in PAM files
+    - name: "Req 2 - Execute CIS remediation script for PAM files"
+      copy:
+        dest: "/tmp/cis_remediation_pam_maxrepeat.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             for l_pam_file in system-auth password-auth; do
+               l_authselect_file="/etc/authselect/$(head -1 /etc/authselect/authselect.conf | grep 'custom/')/$l_pam_file"
+               sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_pwquality\.so.*)(\s+ maxrepeat\s*=\s*\S+)(.*$)/\1\4/' "$l_authselect_file"
+             done
+             authselect apply-changes
+          }
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+
+    - name: "Req 2 - Execute the PAM remediation script"
+      shell: |
+        echo "=== BEFORE PAM MODIFICATION ==="
+        if [ -f /etc/authselect/authselect.conf ]; then
+          custom_profile=$(head -1 /etc/authselect/authselect.conf | grep 'custom/')
+          if [ -n "$custom_profile" ]; then
+            echo "--- /etc/authselect/$custom_profile/system-auth ---"
+            cat "/etc/authselect/$custom_profile/system-auth" 2>/dev/null || echo "File not found"
+            echo ""
+            echo "--- /etc/authselect/$custom_profile/password-auth ---"
+            cat "/etc/authselect/$custom_profile/password-auth" 2>/dev/null || echo "File not found"
+          else
+            echo "No custom authselect profile found"
+          fi
+        else
+          echo "authselect not configured"
+        fi
+        echo ""
+        echo "=== APPLYING CHANGE ==="
+        /tmp/cis_remediation_pam_maxrepeat.sh
+        echo ""
+        echo "=== AFTER PAM MODIFICATION ==="
+        if [ -f /etc/authselect/authselect.conf ]; then
+          custom_profile=$(head -1 /etc/authselect/authselect.conf | grep 'custom/')
+          if [ -n "$custom_profile" ]; then
+            echo "--- /etc/authselect/$custom_profile/system-auth ---"
+            cat "/etc/authselect/$custom_profile/system-auth" 2>/dev/null || echo "File not found"
+            echo ""
+            echo "--- /etc/authselect/$custom_profile/password-auth ---"
+            cat "/etc/authselect/$custom_profile/password-auth" 2>/dev/null || echo "File not found"
+          else
+            echo "No custom authselect profile found"
+          fi
+        else
+          echo "authselect not configured"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: "Req 2 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_pam_maxrepeat.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Execute bash script to remove maxrepeat from pam_pwquality.so module in PAM files"
+        task_2_cmd: "/tmp/cis_remediation_pam_maxrepeat.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif 'authselect not configured' in output or 'No custom authselect profile found' in output %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: maxrepeat parameter removed from pam_pwquality.so in PAM files
+          {% elif 'authselect not configured' in output or 'No custom authselect profile found' in output %}
+            SKIPPED: authselect not configured or no custom profile found
+          {% else %}
+            FAILED: Could not remove maxrepeat from PAM configuration
+          {% endif %}
+
+    # Requirement 3: Verify password same consecutive characters is configured
+    - name: "Req 3 - Verify password same consecutive characters is configured"
+      shell: |
+        {% raw %}
+        # Check pwquality configuration
+        echo "=== PWQUALITY CONFIGURATION CHECK ==="
+        
+        # Check main pwquality.conf
+        if [ -f /etc/security/pwquality.conf ]; then
+          echo "Checking /etc/security/pwquality.conf:"
+          grep -i '^maxrepeat' /etc/security/pwquality.conf || echo "No maxrepeat setting in main file (commented out is OK)"
+        fi
+        
+        # Check .d directory
+        if [ -d /etc/security/pwquality.conf.d ]; then
+          echo ""
+          echo "Checking /etc/security/pwquality.conf.d/*.conf:"
+          for f in /etc/security/pwquality.conf.d/*.conf; do
+            if [ -f "$f" ]; then
+              echo "--- $f ---"
+              grep -i '^maxrepeat' "$f" || echo "No maxrepeat setting in $f"
+            fi
+          done
+        fi
+        
+        # Check effective maxrepeat value
+        echo ""
+        echo "=== EFFECTIVE MAXREPEAT VALUE ==="
+        maxrepeat_value=$(grep -h '^maxrepeat' /etc/security/pwquality.conf /etc/security/pwquality.conf.d/*.conf 2>/dev/null | tail -1 | awk '{print $3}' | tr -d ' ')
+        if [ -n "$maxrepeat_value" ] && [ "$maxrepeat_value" -le 3 ] && [ "$maxrepeat_value" -gt 0 ]; then
+          echo "PASS: maxrepeat = $maxrepeat_value (≤ 3 and > 0)"
+          pwquality_check="PASS"
+        else
+          echo "FAIL: maxrepeat = '$maxrepeat_value' (should be ≤ 3 and > 0)"
+          pwquality_check="FAIL"
+        fi
+        
+        # Check PAM configuration for maxrepeat parameter
+        echo ""
+        echo "=== PAM CONFIGURATION CHECK ==="
+        if [ -f /etc/authselect/authselect.conf ]; then
+          custom_profile=$(head -1 /etc/authselect/authselect.conf | grep 'custom/')
+          if [ -n "$custom_profile" ]; then
+            echo "Checking custom authselect profile: $custom_profile"
+            pam_check="PASS"
+            for pam_file in system-auth password-auth; do
+              pam_path="/etc/authselect/$custom_profile/$pam_file"
+              if [ -f "$pam_path" ]; then
+                echo "--- $pam_file ---"
+                if grep -q 'pam_pwquality\.so.*maxrepeat' "$pam_path"; then
+                  echo "FAIL: maxrepeat parameter found in $pam_file"
+                  pam_check="FAIL"
+                else
+                  echo "PASS: No maxrepeat parameter in $pam_file"
+                fi
+              fi
+            done
+          else
+            echo "No custom authselect profile found - checking default PAM files"
+            pam_check="PASS"
+            for pam_file in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+              if [ -f "$pam_file" ]; then
+                echo "--- $pam_file ---"
+                if grep -q 'pam_pwquality\.so.*maxrepeat' "$pam_file"; then
+                  echo "FAIL: maxrepeat parameter found in $pam_file"
+                  pam_check="FAIL"
+                else
+                  echo "PASS: No maxrepeat parameter in $pam_file"
+                fi
+              fi
+            done
+          fi
+        else
+          echo "authselect not configured - checking default PAM files"
+          pam_check="PASS"
+          for pam_file in /etc/pam.d/system-auth /etc/pam.d/password-auth; do
+            if [ -f "$pam_file" ]; then
+              echo "--- $pam_file ---"
+              if grep -q 'pam_pwquality\.so.*maxrepeat' "$pam_file"; then
+                echo "FAIL: maxrepeat parameter found in $pam_file"
+                pam_check="FAIL"
+              else
+                echo "PASS: No maxrepeat parameter in $pam_file"
+              fi
+            fi
+          done
+        fi
+        
+        echo ""
+        echo "=== OVERALL VERIFICATION ==="
+        if [ "$pwquality_check" = "PASS" ] && [ "$pam_check" = "PASS" ]; then
+          echo "PASS: System is compliant"
+          exit 0
+        else
+          echo "FAIL: System is not compliant"
+          echo "  pwquality_check: $pwquality_check"
+          echo "  pam_check: $pam_check"
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify password same consecutive characters is configured"
+        task_3_cmd: "Check pwquality maxrepeat setting and PAM configuration"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('APPLIED' if result_3.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_3: "{{ ('APPLIED: System is compliant with maxrepeat configuration' if result_3.rc | default(-1) == 0 else 'FAILED: System is not compliant with maxrepeat configuration') | trim }}"
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% if s3 == 'APPLIED' %}
+            APPLIED
+          {% elif s1 == 'SKIPPED' or s2 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s1 == 'FAILED' or s2 == 'FAILED' or s3 == 'FAILED' %}
+            FAILED
+          {% elif s1 == 'APPLIED' and s2 == 'APPLIED' and s3 == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+
+    - name: Determine overall remediation details
+      set_fact:
+        overall_details: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set overall_status = overall_status | default('UNKNOWN') | trim %}
+          {% if overall_status == 'APPLIED' %}
+            All requirements applied successfully. System is compliant.
+          {% elif overall_status == 'PARTIALLY APPLIED' %}
+            Configuration applied but verification failed. Manual review may be needed.
+          {% elif overall_status == 'SKIPPED' %}
+            Remediation not applicable (authselect not configured or no custom profile).
+          {% elif overall_status == 'FAILED' %}
+            One or more requirements failed to apply.
+          {% else %}
+            Could not determine overall status.
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.2.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,379 @@
+---
+- name: Remediation for CIS 1.1.1.9 - Ensure unused filesystems kernel modules are not available
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.9"
+    req_1: "Run the provided CIS remediation script to fix Ensure unused filesystems kernel modules are not available"
+    req_2: "VERIFY: Run the CIS audit procedure to confirm Ensure unused filesystems kernel modules are not available is now properly configured"
+    # List of unused filesystem modules to check (expanded from just gfs2)
+    unused_filesystem_modules:
+      - cramfs
+      - freevxfs
+      - jffs2
+      - hfs
+      - hfsplus
+      - squashfs
+      - udf
+      - vfat
+      - gfs2
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
+        modules_to_remediate: []
+        all_module_results: []
+
+    # Requirement 1: Run the provided CIS remediation script
+    - name: Req 1 - Check for modules that need remediation
+      shell: |
+        # Check each module to see if it exists on the system (loaded or on disk)
+        modules_to_fix=""
+        {% for module in unused_filesystem_modules %}
+        # Check if module {{ module }} exists or is loaded
+        if lsmod | grep -q "{{ module }}" || find /lib/modules -name "{{ module }}.ko*" -type f 2>/dev/null | grep -q .; then
+          modules_to_fix="$modules_to_fix {{ module }}"
+        fi
+        {% endfor %}
+        echo "$modules_to_fix" | xargs
+      args:
+        executable: /bin/bash
+      register: modules_check
+      ignore_errors: true
+
+    - name: Req 1 - Set modules to remediate
+      set_fact:
+        modules_to_remediate: "{{ modules_check.stdout | trim | split(' ') | reject('equalto', '') | list if (modules_check is defined and modules_check.stdout | trim != '') else [] }}"
+      when: modules_check is defined
+
+    - name: Req 1 - Display warning about module safety
+      debug:
+        msg: |
+          WARNING: Unloading, disabling or denylisting filesystem modules that are in use on the system maybe FATAL.
+          It is extremely important to thoroughly review the filesystems returned by the audit before following the remediation procedure.
+          
+          Modules to remediate: {{ modules_to_remediate | join(', ') }}
+      when: modules_to_remediate | length > 0
+
+    - name: Req 1 - Execute CIS remediation script for each module
+      block:
+        - name: Req 1 - Create EXACT CIS remediation script for each module
+          copy:
+            dest: "/tmp/cis_remediation_1.1.1.9_{{ item }}.sh"
+            mode: '0700'
+            content: |
+              # Set module name from Ansible variable
+              module_to_fix="{{ item }}"
+              
+              {% raw %}
+              #!/usr/bin/env bash
+              {
+                 unset a_output2; l_output3="" l_dl="" # unset arrays and clear variables
+                 l_mod_name="$module_to_fix" # set module name from variable
+                 l_mod_type="fs" # set module type
+                 l_mod_path="$(readlink -f /lib/modules/**/kernel/$l_mod_type | sort -u)"
+                 f_module_fix()
+                 {
+                    l_dl="y" # Set to ignore duplicate checks
+                    a_showconfig=() # Create array with modprobe output
+                    while IFS= read -r l_showconfig; do
+                       a_showconfig+=("$l_showconfig")
+                    done < <(modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+'"${l_mod_name//-/_}"'\b')
+                    if  lsmod | grep "$l_mod_name" &> /dev/null; then # Check if the module is currently loaded
+                       a_output2+=(" - unloading kernel module: \"$l_mod_name\"")
+                       modprobe -r "$l_mod_name" 2>/dev/null; rmmod "$l_mod_name" 2>/dev/null
+                    fi
+                    if ! grep -Pq -- '\binstall\h+'"${l_mod_name//- /_}"'\h+\/bin\/(true|false)\b' <<< "${a_showconfig[*]}"; then
+                       a_output2+=(" - setting kernel  module: \"$l_mod_name\" to \"/bin/false\"")
+                       printf '%s\n' "install $l_mod_name /bin/false" >> /etc/modprobe.d/"$l_mod_name".conf
+                    fi
+                    if ! grep -Pq -- '\bblacklist\h+'"${l_mod_name//-/_}"'\b' <<< "${a_showconfig[*]}"; then
+                       a_output2+=(" - denylisting kernel  module: \"$l_mod_name\"")
+                       printf '%s\n' "blacklist $l_mod_name" >> /etc/modprobe.d/"$l_mod_name".conf
+                    fi
+                 }
+                 for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
+                    if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
+                       l_output3="$l_output3\n  - \"$l_mod_base_directory\""
+                       [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
+                       [ "$l_dl" != "y" ] && f_module_fix
+                    else
+                       echo -e " - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\""
+                    fi
+                 done
+                 [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
+                 [ "${#a_output2[@]}" -gt 0 ] && printf '%s\n' "${a_output2[@]}"
+                 echo -e "\n - remediation of kernel module: \"$l_mod_name\" complete\n"
+              }
+              {% endraw %}
+          loop: "{{ modules_to_remediate }}"
+          loop_control:
+            label: "Module: {{ item }}"
+          register: script_create_1
+          ignore_errors: true
+
+        - name: Req 1 - Execute the remediation script for each module
+          shell: "/tmp/cis_remediation_1.1.1.9_{{ item }}.sh"
+          args:
+            executable: /bin/bash
+          loop: "{{ modules_to_remediate }}"
+          loop_control:
+            label: "Module: {{ item }}"
+          register: module_result
+          ignore_errors: true
+
+        - name: Req 1 - Remove temporary remediation scripts
+          file:
+            path: "/tmp/cis_remediation_1.1.1.9_{{ item }}.sh"
+            state: absent
+          loop: "{{ modules_to_remediate }}"
+          loop_control:
+            label: "Module: {{ item }}"
+          ignore_errors: true
+      when: modules_to_remediate | length > 0
+
+    - name: Req 1 - Collect all module results
+      set_fact:
+        all_module_results: "{{ module_result.results | default([]) }}"
+      when: 
+        - modules_to_remediate | length > 0
+        - module_result is defined
+        - module_result.results is defined
+
+    - name: Req 1 - Set SKIPPED status if no modules need remediation
+      set_fact:
+        task_1_name: "Execute CIS remediation script for filesystem modules"
+        task_1_cmd: "No modules found to remediate"
+        task_1_rc: 0
+        data_1: "No unused filesystem modules found on the system"
+        status_1: "SKIPPED"
+        rationale_1: "No unused filesystem modules found to remediate"
+      when: modules_to_remediate | length == 0
+
+    - name: Req 1 - Store requirement 1 details (when remediation executed)
+      set_fact:
+        task_1_name: "Execute CIS remediation script for filesystem modules"
+        task_1_cmd: "Executed CIS remediation script for modules: {{ modules_to_remediate | join(' ') }}"
+        task_1_rc: >-
+          {% if all_module_results | default([]) | length > 0 %}
+            {% set success_count = all_module_results | selectattr('rc', 'equalto', 0) | list | length %}
+            {% set total_count = all_module_results | default([]) | length %}
+            {% if success_count == total_count %}0{% else %}1{% endif %}
+          {% else %}
+            -1
+          {% endif %}
+        data_1: >-
+          {% if all_module_results | default([]) | length > 0 %}
+            {% for result in all_module_results %}
+            Module: {{ result.item }}
+            Exit code: {{ result.rc }}
+            Output:
+            {{ result.stdout | default('') | trim }}
+            {% if not loop.last %}
+            ---
+            {% endif %}
+            {% endfor %}
+          {% else %}
+            No module results available
+          {% endif %}
+        status_1: >-
+          {% if all_module_results | default([]) | length > 0 %}
+            {% set success_count = all_module_results | selectattr('rc', 'equalto', 0) | list | length %}
+            {% set total_count = all_module_results | default([]) | length %}
+            {% if success_count == total_count %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_1: >-
+          {% if all_module_results | default([]) | length > 0 %}
+            {% set success_count = all_module_results | selectattr('rc', 'equalto', 0) | list | length %}
+            {% set total_count = all_module_results | default([]) | length %}
+            {% if success_count == total_count %}
+              APPLIED: CIS remediation script executed successfully for all modules
+            {% else %}
+              FAILED: CIS remediation script failed for some modules ({{ success_count }}/{{ total_count }} succeeded)
+            {% endif %}
+          {% else %}
+            Not evaluated
+          {% endif %}
+      when: modules_to_remediate | length > 0
+
+    # Requirement 2: Verify using CIS audit procedure
+    - name: Req 2 - Create audit verification script
+      copy:
+        dest: "/tmp/cis_audit_1.1.1.9.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          # CIS audit procedure for checkpoint 1.1.1.9
+          # Check each module in the list of unused filesystem modules
+          audit_result="PASS"
+          failed_modules=""
+          
+          # Modules list passed as arguments
+          modules=($@)
+          
+          for module in "${modules[@]}"; do
+            # Check if module exists on the system (in /lib/modules)
+            if find /lib/modules -name "${module}.ko*" -type f 2>/dev/null | grep -q .; then
+              # Module exists, check if it's loaded
+              if lsmod | grep -q "${module}"; then
+                echo "FAIL: Module ${module} is loaded in the kernel"
+                audit_result="FAIL"
+                failed_modules="$failed_modules ${module}(loaded)"
+              else
+                # Check if module is disabled in modprobe configuration
+                if [ -f /etc/modprobe.d/${module}.conf ]; then
+                  install_line=$(grep -E '^install\s+'"${module}"'\s+/bin/false' /etc/modprobe.d/${module}.conf 2>/dev/null)
+                  blacklist_line=$(grep -E '^blacklist\s+'"${module}" /etc/modprobe.d/${module}.conf 2>/dev/null)
+                  
+                  if [ -n "$install_line" ] && [ -n "$blacklist_line" ]; then
+                    echo "PASS: Module ${module} is properly disabled and blacklisted"
+                  else
+                    echo "FAIL: Module ${module} exists but is not properly disabled in modprobe configuration"
+                    audit_result="FAIL"
+                    failed_modules="$failed_modules ${module}(config)"
+                  fi
+                else
+                  echo "FAIL: Module ${module} exists but no modprobe configuration file found"
+                  audit_result="FAIL"
+                  failed_modules="$failed_modules ${module}(noconfig)"
+                fi
+              fi
+            else
+              echo "PASS: Module ${module} not found on the system"
+            fi
+          done
+          
+          echo "========================================================"
+          echo "AUDIT RESULT: $audit_result"
+          if [ "$audit_result" = "FAIL" ]; then
+            echo "Failed modules: $failed_modules"
+            exit 1
+          else
+            exit 0
+          fi
+          {% endraw %}
+      register: audit_script_create
+      ignore_errors: true
+
+    - name: Req 2 - Execute the audit verification script
+      shell: "/tmp/cis_audit_1.1.1.9.sh {{ unused_filesystem_modules | join(' ') }}"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Req 2 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_1.1.1.9.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Req 2 - Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify filesystem modules are not available (CIS audit)"
+        task_2_cmd: "/tmp/cis_audit_1.1.1.9.sh {{ unused_filesystem_modules | join(' ') }}"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif result_2.rc | default(-1) == 1 %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: All unused filesystem modules are properly disabled
+          {% elif result_2.rc | default(-1) == 1 %}
+            FAILED: Some filesystem modules are still available or not properly configured
+          {% else %}
+            UNKNOWN: Unable to determine verification status
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Set overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set status1 = status_1 | trim %}
+          {% set status2 = status_2 | trim %}
+          {% if status1 == 'SKIPPED' and status2 == 'APPLIED' %}
+            APPLIED
+          {% elif status1 == 'APPLIED' and status2 == 'APPLIED' %}
+            APPLIED
+          {% elif status1 == 'APPLIED' and status2 == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status1 == 'FAILED' and status2 == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% elif status1 == 'FAILED' and status2 == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% set status1 = status_1 | trim %}
+          {% set status2 = status_2 | trim %}
+          {% if status1 == 'SKIPPED' and status2 == 'APPLIED' %}
+            No unused filesystem modules found on the system - already compliant
+          {% elif status1 == 'APPLIED' and status2 == 'APPLIED' %}
+            Successfully remediated all unused filesystem modules
+          {% elif status1 == 'APPLIED' and status2 == 'FAILED' %}
+            Remediation applied but verification failed - some modules may not be properly configured
+          {% elif status1 == 'FAILED' and status2 == 'APPLIED' %}
+            Remediation failed but system is compliant - modules may have been disabled previously
+          {% elif status1 == 'FAILED' and status2 == 'FAILED' %}
+            Remediation and verification both failed
+          {% else %}
+            Unable to determine overall status
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.1.9"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_1_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_2_cmd | default('N/A') | trim }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,78 +1,118 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.14
 - name: Data Collection for CIS 5.1.14
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.14"
-    req_1: "Verify that the SSH daemon configuration does NOT include any of the weak Key Exchange Algorithms (diffie-hellman-group1-sha1, diffie-hellman-group14-sha1, diffie-hellman-group-exchange-sha1)"
-    req_2: "OVERALL Verify: Ensure sshd KexAlgorithms is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.14"
+    req_1: "Run the provided CIS audit script to verify none of the 'weak' Key Exchange algorithms are being used"
+    req_2: "Ensure sshd KexAlgorithms is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
 
-    # Requirement 1: Verify that the SSH daemon configuration does NOT include any of the weak Key Exchange Algorithms (diffie-hellman-group1-sha1, diffie-hellman-group14-sha1, diffie-hellman-group-exchange-sha1)
-    - name: "Req 1 - Create temporary audit script for weak SSH KexAlgorithms"
+    # Requirement 1: Run the provided CIS audit script
+    - name: Req 1 - Execute CIS audit script for KexAlgorithms
       copy:
-        dest: "/tmp/cis_audit_script_1.sh"
+        dest: "/tmp/cis_audit_5.1.14.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           source /etc/crypto-policies/back-ends/opensshserver.config
           source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- 'kexalgorithms\h+([^#\n\r]+,)?(diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1)\b'
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- 'kexalgorithms\h+([^#\n\r]+,)?(diffie-hellman-group1-sha1|diffie-hellman- group14-sha1|diffie-hellman-group-exchange-sha1)\b'
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
 
-    - name: "Req 1 - Execute audit script for weak SSH KexAlgorithms"
-      shell: "/tmp/cis_audit_script_1.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.14.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: "Req 1 - Remove temporary audit script"
+    - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_1.sh"
+        path: "/tmp/cis_audit_5.1.14.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for weak SSH KexAlgorithms"
-        task_1_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config
-          source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- 'kexalgorithms\h+([^#\n\r]+,)?(diffie-hellman-group1-sha1|diffie-hellman-group14-sha1|diffie-hellman-group-exchange-sha1)\b'
+        task_1_name: "Execute CIS audit script for KexAlgorithms"
+        task_1_cmd: "/tmp/cis_audit_5.1.14.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script returns NO output (empty), FAIL when any output is returned"
+        # Explicit status evaluation with proper exit code handling
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc in [0, 1] %}
+            {% if output == '' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        # Explicit rationale evaluation
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc in [0, 1] %}
+            {% if output == '' %}
+              PASS: No weak KexAlgorithms found (grep exit code {{ rc }} indicates no matches)
+            {% else %}
+              FAIL: Found weak KexAlgorithms: {{ output }}
+            {% endif %}
+          {% else %}
+            UNKNOWN: Script exited with unexpected code {{ rc }}. Output: {{ output }}
+          {% endif %}
 
-    # Requirement 2: OVERALL Verify: Ensure sshd KexAlgorithms is configured
-    - name: Store requirement 2 details and determine status
+    # Requirement 2: Overall verification
+    - name: Req 2 - Determine overall compliance
       set_fact:
-        task_2_name: "Overall verification"
-        task_2_cmd: "N/A - Derived from requirement 1"
+        task_2_name: "Overall compliance check"
+        task_2_cmd: "N/A"
         task_2_rc: 0
-        data_2: "Requirement 1 status: {{ status_1 | trim }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        data_2: "{{ data_1 | default('') }}"
+        # Base overall status on requirement 1 status
+        status_2: >-
+          {% set req1_status = status_1 | default('UNKNOWN') | trim %}
+          {% if req1_status == 'PASS' %}
+            PASS
+          {% elif req1_status == 'FAIL' %}
+            FAIL
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        # Rationale based on requirement 1 status
+        rationale_2: >-
+          {% set req1_status = status_1 | default('UNKNOWN') | trim %}
+          {% if req1_status == 'PASS' %}
+            PASS: No weak KexAlgorithms configured (Requirement 1 passed)
+          {% elif req1_status == 'FAIL' %}
+            FAIL: Weak KexAlgorithms found in configuration (Requirement 1 failed)
+          {% else %}
+            UNKNOWN: Cannot determine overall compliance (Requirement 1 status is {{ req1_status }})
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -81,7 +121,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.14"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.14"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"

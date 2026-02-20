@@ -1,0 +1,256 @@
+---
+- name: Remediation for CIS 2.4.1.2 - Ensure permissions on /etc/crontab are configured
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_4_1_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.4.1.2"
+    
+    # Requirement descriptions
+    req_1: "Check if cron is installed using command: rpm -q cronie"
+    req_2: "Apply root ownership to /etc/crontab using command: chown root:root /etc/crontab"
+    req_3: "Apply restrictive permissions to /etc/crontab using command: chmod og-rwx /etc/crontab"
+    req_4: "Verify permissions on /etc/crontab are configured using command: stat /etc/crontab | grep -E 'Access:|Uid:|Gid:'"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore file permissions and ownership
+    - name: "State Guard - Restore /etc/crontab permissions from backup"
+      shell: |
+        if [ -f "{{ state_guard_dir }}/crontab_perms.bak" ]; then
+          cat "{{ state_guard_dir }}/crontab_perms.bak" | while read line; do
+            if [ -n "$line" ]; then
+              eval "$line"
+            fi
+          done
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup current /etc/crontab permissions and ownership"
+      shell: |
+        echo "=== Current /etc/crontab state ==="
+        echo "File: /etc/crontab"
+        echo "Permissions:"
+        stat -Lc 'Access: (%a/%A) Uid: ( %u/ %U) Gid: ( %g/ %G)' /etc/crontab 2>/dev/null || echo "File not found"
+        echo ""
+        echo "=== Backup commands ==="
+        if [ -f /etc/crontab ]; then
+          echo "chown $(stat -c %U:%G /etc/crontab) /etc/crontab"
+          echo "chmod $(stat -c %a /etc/crontab) /etc/crontab"
+        fi
+      args:
+        executable: /bin/bash
+      register: _sg_backup
+      ignore_errors: true
+
+    - name: "State Guard - Save permission backup commands"
+      copy:
+        content: |
+          {% raw %}
+          # Backup of original permissions for /etc/crontab
+          # Generated at: {{ ansible_date_time.iso8601 }}
+          {{ _sg_backup.stdout_lines[-3] if _sg_backup.stdout_lines|length >= 3 else "# No backup commands available" }}
+          {{ _sg_backup.stdout_lines[-2] if _sg_backup.stdout_lines|length >= 2 else "" }}
+          {% endraw %}
+        dest: "{{ state_guard_dir }}/crontab_perms.bak"
+      when: _sg_backup.stdout is defined and 'chown' in _sg_backup.stdout
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1: Check if cron is installed
+    - name: "Req 1 - Check if cron is installed"
+      shell: rpm -q cronie
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if cron package is installed"
+        task_1_cmd: "rpm -q cronie"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        cron_installed: "{{ result_1.rc == 0 }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc != 0 else 'APPLIED') | trim }}"
+        rationale_1: "{{ ('SKIPPED: cron is not installed on this server' if result_1.rc != 0 else 'APPLIED: cron package is installed') | trim }}"
+
+    # Requirement 2: Apply root ownership to /etc/crontab (only if cron installed)
+    - name: "Req 2 - Apply root ownership to /etc/crontab"
+      shell: chown root:root /etc/crontab
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: cron_installed | default(false)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Set root ownership on /etc/crontab"
+        task_2_cmd: "chown root:root /etc/crontab"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('SKIPPED' if not cron_installed | default(false) else ('APPLIED' if result_2.rc == 0 else 'FAILED')) | trim }}"
+        rationale_2: "{{ ('SKIPPED: cron is not installed, remediation not applicable' if not cron_installed | default(false) else ('APPLIED: changed ownership to root:root' if result_2.rc == 0 else 'FAILED: could not change ownership')) | trim }}"
+      when: cron_installed is defined
+
+    # Requirement 3: Apply restrictive permissions to /etc/crontab (only if cron installed)
+    - name: "Req 3 - Apply restrictive permissions to /etc/crontab"
+      shell: chmod og-rwx /etc/crontab
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: cron_installed | default(false)
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Set restrictive permissions on /etc/crontab"
+        task_3_cmd: "chmod og-rwx /etc/crontab"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('SKIPPED' if not cron_installed | default(false) else ('APPLIED' if result_3.rc == 0 else 'FAILED')) | trim }}"
+        rationale_3: "{{ ('SKIPPED: cron is not installed, remediation not applicable' if not cron_installed | default(false) else ('APPLIED: removed group and other write permissions' if result_3.rc == 0 else 'FAILED: could not change permissions')) | trim }}"
+      when: cron_installed is defined
+
+    # Requirement 4: Verify the remediation was applied correctly
+    - name: "Req 4 - Verify permissions on /etc/crontab"
+      shell: |
+        {% raw %}
+        stat /etc/crontab | grep -E 'Access:|Uid:|Gid:'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify permissions and ownership of /etc/crontab"
+        task_4_cmd: "stat /etc/crontab | grep -E 'Access:|Uid:|Gid:'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        # Check if output shows root ownership (Uid: 0) and permissions 600
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if not cron_installed | default(false) %}
+            SKIPPED
+          {% elif output == '' %}
+            FAILED
+          {% else %}
+            {% set uid_match = 'Uid: (    0/    root)' in output %}
+            {% set gid_match = 'Gid: (    0/    root)' in output %}
+            {% set perm_match = 'Access: (0600/-rw-------)' in output %}
+            {{ 'APPLIED' if uid_match and gid_match and perm_match else 'FAILED' }}
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if not cron_installed | default(false) %}
+            SKIPPED: cron is not installed, verification not applicable
+          {% elif output == '' %}
+            FAILED: Could not read /etc/crontab permissions
+          {% else %}
+            {% set uid_match = 'Uid: (    0/    root)' in output %}
+            {% set gid_match = 'Gid: (    0/    root)' in output %}
+            {% set perm_match = 'Access: (0600/-rw-------)' in output %}
+            {% if uid_match and gid_match and perm_match %}
+              APPLIED: Verification passed - /etc/crontab has correct ownership (root:root) and permissions (600)
+            {% else %}
+              FAILED: Verification failed - Expected 'Uid: (    0/    root)   Gid: (    0/    root)' and 'Access: (0600/-rw-------)' but got: {{ output }}
+            {% endif %}
+          {% endif %}
+      when: cron_installed is defined
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.4.1.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Summary not available') | trim }}"
+          - "========================================================"

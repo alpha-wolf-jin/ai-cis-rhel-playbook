@@ -1,13 +1,12 @@
 ---
-- name: Data Collection for CIS 5.1.17
+- name: Data Collection for CIS checkpoint 5.1.17
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.17"
-    req_1: "Run the following script to verify no weak MACs are configured in the active SSH daemon configuration"
-    req_2: "Verify the system has been patched for CVE-2023-48795 by checking the installed OpenSSH version or patch status"
-    req_3: "OVERALL Verify: Ensure sshd MACs are configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.17"
+    req_1: "Run script to verify none of the 'weak' MACs are being used"
+    req_2: "OVERALL Verify: Ensure sshd MACs are configured"
 
   tasks:
     - name: Initialize data variables
@@ -18,197 +17,68 @@
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
 
-    # Requirement 1: Check for weak MACs
-    - name: Req 1 - Create temporary audit script for weak MACs check
+    # Requirement 1: Run script to verify none of the 'weak' MACs are being used
+    - name: Req 1 - Execute CIS audit script for sshd MACs
       copy:
-        dest: "/tmp/cis_audit_5.1.17_req1.sh"
+        dest: "/tmp/cis_audit_5.1.17.sh"
         mode: '0700'
         content: |
+          {% raw %}
           #!/usr/bin/env bash
           source /etc/crypto-policies/back-ends/opensshserver.config
           source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- 'macs\h+([^#\n\r]+,)?(hmac-md5|hmac-md5-96|hmac-ripemd160|hmac-sha1-96|umac-64@openssh\.com|hmac-md5-etm@openssh\.com|hmac-md5-96-etm@openssh\.com|hmac-ripemd160-etm@openssh\.com|hmac-sha1-96-etm@openssh\.com|umac-64-etm@openssh\.com|umac-128-etm@openssh\.com)\b'
-      changed_when: false
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- 'macs\h+([^#\n\r]+,)?(hmac- md5|hmac-md5-96|hmac-ripemd160|hmac-sha1-96|umac-64@openssh\.com|hmac-md5- etm@openssh\.com|hmac-md5-96-etm@openssh\.com|hmac-ripemd160- etm@openssh\.com|hmac-sha1-96-etm@openssh\.com|umac-64-etm@openssh\.com|umac- 128-etm@openssh\.com)\b'
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
 
-    - name: Req 1 - Execute audit script for weak MACs check
-      shell: "/tmp/cis_audit_5.1.17_req1.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.17.sh"
       args:
         executable: /bin/bash
       register: result_1
-      ignore_errors: true
+      failed_when: result_1.rc > 2
       changed_when: false
 
     - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_5.1.17_req1.sh"
+        path: "/tmp/cis_audit_5.1.17.sh"
         state: absent
-      changed_when: false
+      ignore_errors: true
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for weak MACs in SSH configuration"
-        task_1_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- 'macs\h+([^#\n\r]+,)?(hmac-md5|hmac-md5-96|hmac-ripemd160|hmac-sha1-96|umac-64@openssh\.com|hmac-md5-etm@openssh\.com|hmac-md5-96-etm@openssh\.com|hmac-ripemd160-etm@openssh\.com|hmac-sha1-96-etm@openssh\.com|umac-64-etm@openssh\.com|umac-128-etm@openssh\.com)\b'
+        task_1_name: "Execute CIS audit script for sshd MACs"
+        task_1_cmd: "bash /tmp/cis_audit_5.1.17.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == '' %}
+          {% if result_1.rc == 1 %}
             PASS
-          {% else %}
+          {% elif result_1.rc == 0 %}
             FAIL
-          {% endif %}
-        rationale_1: "PASS when the script returns no output (no weak MACs are listed in the active configuration), FAIL when any weak MAC is found"
-
-    # Requirement 2: Check CVE-2023-48795 patch status
-    - name: Req 2 - Check OpenSSH server version for CVE-2023-48795
-      shell: |
-        # Try to get version from sshd -V (outputs to stderr)
-        sshd_version=$(sshd -V 2>&1 | head -1 | grep -o 'OpenSSH_[0-9]\+\.[0-9]\+[^ ,]*' | cut -d'_' -f2 | tr -d ',' 2>/dev/null)
-        if [ -n "$sshd_version" ]; then
-          echo "sshd_version:$sshd_version"
-        fi
-        
-        # Check package version and changelog for backported patches
-        if command -v rpm >/dev/null 2>&1; then
-          pkg_version=$(rpm -q openssh-server --qf '%{VERSION}-%{RELEASE}\n' 2>/dev/null || echo "UNKNOWN")
-          echo "pkg_version:$pkg_version"
-          
-          # Check changelog for CVE-2023-48795
-          if rpm -q openssh-server >/dev/null 2>&1; then
-            if rpm -q --changelog openssh-server 2>/dev/null | grep -i 'CVE-2023-48795' >/dev/null 2>&1; then
-              echo "cve_patched:YES"
-            else
-              echo "cve_patched:NO"
-            fi
-          fi
-        elif command -v dpkg >/dev/null 2>&1; then
-          dpkg_version=$(dpkg -l openssh-server 2>/dev/null | grep ^ii | awk '{print $3}' || echo "UNKNOWN")
-          echo "pkg_version:$dpkg_version"
-        else
-          echo "pkg_version:UNKNOWN"
-        fi
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: data_1 | default('') | trim != ''
-
-    - name: Store requirement 2 details
-      set_fact:
-        task_2_name: "Check OpenSSH server version for CVE-2023-48795"
-        task_2_cmd: "Check sshd -V, package version, and changelog for CVE-2023-48795 patch status"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% set lines = output.split('\n') %}
-          {% set sshd_version = '' %}
-          {% set pkg_version = '' %}
-          {% set cve_patched = 'NO' %}
-          
-          {% for line in lines %}
-            {% if line.startswith('sshd_version:') %}
-              {% set sshd_version = line.split(':', 1)[1] | trim %}
-            {% elif line.startswith('pkg_version:') %}
-              {% set pkg_version = line.split(':', 1)[1] | trim %}
-            {% elif line.startswith('cve_patched:') %}
-              {% set cve_patched = line.split(':', 1)[1] | trim %}
-            {% endif %}
-          {% endfor %}
-          
-          {% if cve_patched == 'YES' %}
-            PASS
-          {% elif sshd_version and sshd_version != 'UNKNOWN' %}
-            {% if sshd_version is match('^[0-9]+\.[0-9]+.*') %}
-              {% set version_parts = sshd_version.split('.') %}
-              {% set major = version_parts[0] | int %}
-              {% set minor_patch = version_parts[1] %}
-              {% if 'p' in minor_patch %}
-                {% set minor = minor_patch.split('p')[0] | int %}
-                {% set patch_str = minor_patch.split('p')[1] %}
-                {% set patch = patch_str.split('.')[0] | default('0') | int %}
-              {% else %}
-                {% set minor = minor_patch | int %}
-                {% set patch = 0 %}
-              {% endif %}
-              {% if (major > 9) or (major == 9 and minor > 6) or (major == 9 and minor == 6 and patch >= 1) %}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% else %}
-              FAIL
-            {% endif %}
-          {% elif pkg_version and pkg_version != 'UNKNOWN' %}
-            {# Check for RHEL/CentOS/Fedora versions with CVE-2023-48795 fix #}
-            {% if pkg_version is regex_search('\.el8_') or pkg_version is regex_search('\.el9_') or pkg_version is regex_search('\.fc[0-9]+') %}
-              {# For RHEL 8, openssh-8.7p1-27.el8 and later are patched #}
-              {% if pkg_version is regex_search('openssh-8\.7p1-([0-9]+)\.el8') %}
-                {% set build = pkg_version | regex_replace('.*openssh-8\.7p1-([0-9]+)\.el8.*', '\1') | int %}
-                {% if build >= 27 %}
-                  PASS
-                {% else %}
-                  FAIL
-                {% endif %}
-              {% elif pkg_version is regex_search('openssh-8\.8p1-([0-9]+)\.el8') %}
-                {% set build = pkg_version | regex_replace('.*openssh-8\.8p1-([0-9]+)\.el8.*', '\1') | int %}
-                {% if build >= 6 %}
-                  PASS
-                {% else %}
-                  FAIL
-                {% endif %}
-              {% elif pkg_version is regex_search('openssh-8\.9p1-([0-9]+)\.el8') %}
-                {% set build = pkg_version | regex_replace('.*openssh-8\.9p1-([0-9]+)\.el8.*', '\1') | int %}
-                {% if build >= 1 %}
-                  PASS
-                {% else %}
-                  FAIL
-                {% endif %}
-              {% elif pkg_version is regex_search('\.el9_') %}
-                {# RHEL 9 should have patched versions #}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% else %}
-              FAIL
-            {% endif %}
           {% else %}
-            FAIL
+            UNKNOWN
           {% endif %}
-        rationale_2: "PASS when the system is confirmed patched against CVE-2023-48795 (e.g., OpenSSH version is 9.6p1 or later, or a backported patch is confirmed), FAIL when the system is unpatched"
-      when: data_1 | default('') | trim != ''
-
-    # Requirement 3: Overall verification
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Overall verification of SSH MACs configuration"
-        task_3_cmd: "N/A - Combined check"
-        task_3_rc: 0
-        data_3: "Combined status of requirements 1 and 2"
-        status_3: >-
-          {% set req1_status = status_1 | default('FAIL') | trim %}
-          {% set req2_status = status_2 | default('FAIL') | trim %}
-          {% set data1 = data_1 | default('') | trim %}
-          
-          {% if data1 == '' %}
-            {# No weak MACs found - system is compliant regardless of patch status #}
-            PASS
+        rationale_1: >-
+          {% if result_1.rc == 1 %}
+            PASS: No weak MACs found (grep exit 1)
+          {% elif result_1.rc == 0 %}
+            FAIL: Weak MACs found (grep exit 0)
           {% else %}
-            {# Weak MACs found - check if system is patched #}
-            {% if req1_status == 'PASS' and req2_status == 'PASS' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
+            UNKNOWN: Script error (grep exit {{ result_1.rc }})
           {% endif %}
-        rationale_3: "PASS when no weak MACs are found OR (req_1=PASS AND req_2=PASS), FAIL otherwise"
+
+    # Requirement 2: OVERALL Verify: Ensure sshd MACs are configured
+    - name: Req 2 - Determine overall compliance
+      set_fact:
+        task_2_name: "Determine overall compliance"
+        task_2_cmd: "Evaluate requirement 1 status"
+        task_2_rc: 0
+        data_2: "Overall compliance based on requirement 1"
+        status_2: "{{ 'PASS' if (status_1 | default('UNKNOWN') | trim == 'PASS') else 'FAIL' }}"
+        rationale_2: "PASS when requirement 1 passes (no weak MACs found), FAIL otherwise"
 
     # Final report
     - name: Generate compliance report
@@ -217,7 +87,7 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.17"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.17"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -236,16 +106,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - "========================================================"

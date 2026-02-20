@@ -1,83 +1,131 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0, checkpoint 3.3.2.4
 - name: Data Collection for CIS 3.3.2.4
   hosts: all
   become: yes
-  gather_facts: no
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.2.4"
-    req_1: "Verify net.ipv6.conf.default.accept_redirects is set to 0 in the running configuration using command: sysctl net.ipv6.conf.default.accept_redirects"
-    req_2: "Run the following script to verify net.ipv6.conf.default.accept_redirects = 0 is set in a file being used by systemd sysctl"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.4"
+    req_0: "Check if IPv6 is enabled on the system"
+    req_1: "Verify net.ipv6.conf.default.accept_redirects is set to 0 in the running configuration"
+    req_2: "Verify net.ipv6.conf.default.accept_redirects = 0 is set in a file being used by systemd sysctl"
     req_3: "OVERALL Verify: Ensure net.ipv6.conf.default.accept_redirects is configured"
 
   tasks:
-    - name: Check if IPv6 is enabled
-      shell: |
-        test -f /proc/sys/net/ipv6/conf/all/disable_ipv6 && \
-        [[ $(cat /proc/sys/net/ipv6/conf/all/disable_ipv6) -eq 0 ]]
-      args:
-        executable: /bin/bash
-      register: ipv6_check
-      ignore_errors: true
-      failed_when: false
-      changed_when: false
-
-    - name: Set IPv6 enabled fact
-      set_fact:
-        ipv6_enabled: "{{ ipv6_check.rc == 0 }}"
-
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected - IPv6 not enabled"
-        task_1_name: "Not executed - IPv6 not enabled"
+        task_0_name: "Not executed"
+        task_0_cmd: "N/A"
+        task_0_rc: -1
+        task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        status_1: "NA"
-        rationale_1: "IPv6 is not enabled on the system"
-        data_2: "Not collected - IPv6 not enabled"
-        task_2_name: "Not executed - IPv6 not enabled"
+        task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        status_2: "NA"
-        rationale_2: "IPv6 is not enabled on the system"
-        data_3: "Not collected - IPv6 not enabled"
-        task_3_name: "Not executed - IPv6 not enabled"
+        task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        status_3: "NA"
-        rationale_3: "IPv6 is not enabled on the system"
 
-    # Requirement 1: Verify net.ipv6.conf.default.accept_redirects is set to 0 in the running configuration using command: sysctl net.ipv6.conf.default.accept_redirects
-    - name: Req 1 - Check running sysctl configuration
-      shell: sysctl net.ipv6.conf.default.accept_redirects
+    # Requirement 0: Check if IPv6 is enabled on the system
+    - name: Req 0 - Check IPv6 status
+      shell: |
+        {% raw %}
+        if [ -f /proc/sys/net/ipv6/conf/all/disable_ipv6 ]; then
+          if [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6)" = "0" ]; then
+            echo "IPv6 enabled"
+          else
+            echo "IPv6 disabled"
+          fi
+        else
+          echo "IPv6 not supported"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_0
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 0 details
+      set_fact:
+        task_0_name: "Check IPv6 status"
+        task_0_cmd: "Check /proc/sys/net/ipv6/conf/all/disable_ipv6"
+        task_0_rc: "{{ result_0.rc | default(-1) }}"
+        data_0: "{{ result_0.stdout | default('') | trim }}"
+        ipv6_enabled: "{{ 'IPv6 enabled' in result_0.stdout }}"
+        status_0: >-
+          {% set output = result_0.stdout | default('') | trim %}
+          {% if output == 'IPv6 enabled' %}
+            PASS
+          {% elif output == 'IPv6 disabled' or output == 'IPv6 not supported' %}
+            NA
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_0: >-
+          {% set output = result_0.stdout | default('') | trim %}
+          {% if output == 'IPv6 enabled' %}
+            PASS: IPv6 is enabled on the system
+          {% elif output == 'IPv6 disabled' %}
+            NA: IPv6 is disabled, requirement not applicable
+          {% elif output == 'IPv6 not supported' %}
+            NA: IPv6 not supported, requirement not applicable
+          {% else %}
+            FAIL: Could not determine IPv6 status
+          {% endif %}
+
+    # Requirement 1: Verify net.ipv6.conf.default.accept_redirects is set to 0 in running configuration
+    # Only execute if IPv6 is enabled
+    - name: Req 1 - Check sysctl running configuration
+      shell: |
+        sysctl net.ipv6.conf.default.accept_redirects
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: ipv6_enabled
+      when: ipv6_enabled | default(false)
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check running sysctl configuration"
+        task_1_name: "Check sysctl running configuration"
         task_1_cmd: "sysctl net.ipv6.conf.default.accept_redirects"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv6.conf.default.accept_redirects = 0') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'net.ipv6.conf.default.accept_redirects = 0', FAIL otherwise"
-      when: ipv6_enabled
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if ipv6_enabled | default(false) %}
+            {% if output == 'net.ipv6.conf.default.accept_redirects = 0' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if ipv6_enabled | default(false) %}
+            {% if output == 'net.ipv6.conf.default.accept_redirects = 0' %}
+              PASS: Running configuration shows correct value (0)
+            {% else %}
+              FAIL: Expected 'net.ipv6.conf.default.accept_redirects = 0', got '{{ output }}'
+            {% endif %}
+          {% else %}
+            NA: IPv6 not enabled
+          {% endif %}
 
-    # Requirement 2: Run the following script to verify net.ipv6.conf.default.accept_redirects = 0 is set in a file being used by systemd sysctl
-    - name: Req 2 - Create temporary audit script
+    # Requirement 2: Run the provided CIS audit script
+    # Only execute if IPv6 is enabled
+    - name: Req 2 - Execute CIS audit script for configuration files
       copy:
-        dest: "/tmp/cis_audit_script_2.sh"
+        dest: "/tmp/cis_audit_3.3.2.4.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
           {
-             l_parameter_name="net.ipv6.conf.default.accept_redirects"  
+             l_parameter_name="net.ipv6.conf.default.accept_redirects"
              l_grep="${l_parameter_name//./(\\.|\\/)}" a_output=() a_files=()
              l_systemdsysctl="$(readlink -e /lib/systemd/systemd-sysctl \
              || readlink -e /usr/lib/systemd/systemd-sysctl)"
@@ -101,82 +149,127 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      register: script_created_2
-      when: ipv6_enabled
+      register: script_create_2
+      ignore_errors: true
+      when: ipv6_enabled | default(false)
 
-    - name: Req 2 - Execute audit script
-      shell: "/tmp/cis_audit_script_2.sh"
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_audit_3.3.2.4.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: ipv6_enabled
+      when: ipv6_enabled | default(false)
 
     - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_2.sh"
+        path: "/tmp/cis_audit_3.3.2.4.sh"
         state: absent
       ignore_errors: true
-      when: ipv6_enabled
+      when: ipv6_enabled | default(false)
 
     - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Execute audit script"
-        task_2_cmd: "Execute bash script to check sysctl configuration files"
+        task_2_name: "Execute CIS audit script for configuration files"
+        task_2_cmd: "Run provided CIS bash script to check configuration files"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim | length > 0 and 'net.ipv6.conf.default.accept_redirects = 0' in result_2.stdout) else 'FAIL') | trim }}"
-        rationale_2: "PASS when the script outputs at least one line confirming the parameter is set to 0 in a sysctl configuration file, FAIL if no such output is found"
-      when: ipv6_enabled
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if ipv6_enabled | default(false) %}
+            {% if 'net.ipv6.conf.default.accept_redirects = 0' in output %}
+              PASS
+            {% elif output == '' %}
+              FAIL
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            NA
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if ipv6_enabled | default(false) %}
+            {% if 'net.ipv6.conf.default.accept_redirects = 0' in output %}
+              PASS: Configuration files contain correct setting (0)
+            {% elif output == '' %}
+              FAIL: No configuration found for net.ipv6.conf.default.accept_redirects
+            {% else %}
+              FAIL: Configuration files contain incorrect value or script failed
+            {% endif %}
+          {% else %}
+            NA: IPv6 not enabled
+          {% endif %}
 
-    # Requirement 3: OVERALL Verify: Ensure net.ipv6.conf.default.accept_redirects is configured
-    - name: Store requirement 3 details and determine overall status
+    # Requirement 3: Overall compliance
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Overall verification"
+        task_3_name: "Overall compliance determination"
         task_3_cmd: "N/A"
         task_3_rc: 0
-        data_3: "Requirement 1 status: {{ status_1 | trim }}, Requirement 2 status: {{ status_2 | trim }}"
-        status_3: "{{ ('PASS' if (status_1 | trim == 'PASS' and status_2 | trim == 'PASS') else 'FAIL') | trim }}"
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
-      when: ipv6_enabled
+        data_3: "N/A"
+        status_3: >-
+          {% if status_0 | default('UNKNOWN') | trim == 'NA' %}
+            NA
+          {% elif status_0 | default('UNKNOWN') | trim == 'PASS' and status_1 | default('UNKNOWN') | trim == 'PASS' and status_2 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% if status_0 | default('UNKNOWN') | trim == 'NA' %}
+            NA: IPv6 not enabled, requirement not applicable
+          {% elif status_0 | default('UNKNOWN') | trim == 'PASS' and status_1 | default('UNKNOWN') | trim == 'PASS' and status_2 | default('UNKNOWN') | trim == 'PASS' %}
+            PASS: IPv6 is enabled and all checks passed
+          {% else %}
+            FAIL: One or more checks failed
+          {% endif %}
 
+    # Final report
     - name: Generate compliance report
       debug:
-        msg: |
-          ========================================================
-                  COMPLIANCE REPORT - CIS 3.3.2.4
-          ========================================================
-          Reference: {{ cis_reference }}
-          ========================================================
-
-          REQUIREMENT 1 - {{ req_1 }}:
-            Task: {{ task_1_name | default('Task not recorded') }}
-            Command: {{ task_1_cmd | default('N/A') }}
-            Exit code: {{ task_1_rc | default(-1) }}
-            Data: {{ data_1 | default('') | trim }}
-            Status: {{ status_1 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_1 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 2 - {{ req_2 }}:
-            Task: {{ task_2_name | default('Task not recorded') }}
-            Command: {{ task_2_cmd | default('N/A') }}
-            Exit code: {{ task_2_rc | default(-1) }}
-            Data: {{ data_2 | default('') | trim }}
-            Status: {{ status_2 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_2 | default('Not evaluated') | trim }}
-
-          REQUIREMENT 3 - {{ req_3 }}:
-            Task: {{ task_3_name | default('Task not recorded') }}
-            Command: {{ task_3_cmd | default('N/A') }}
-            Exit code: {{ task_3_rc | default(-1) }}
-            Data: {{ data_3 | default('') | trim }}
-            Status: {{ status_3 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
-
-          ========================================================
-          OVERALL COMPLIANCE:
-            Result: {{ status_3 | default('UNKNOWN') | trim }}
-            Rationale: {{ rationale_3 | default('Not evaluated') | trim }}
-          ========================================================
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 3.3.2.4"
+          - "========================================================"
+          - "Reference: {{ cis_reference }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 0 - {{ req_0 }}:"
+          - "  Task: {{ task_0_name | default('Task not recorded') }}"
+          - "  Command: {{ task_0_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_0_rc | default(-1) }}"
+          - "  Data: {{ data_0 | default('') | trim }}"
+          - "  Status: {{ status_0 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_0 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

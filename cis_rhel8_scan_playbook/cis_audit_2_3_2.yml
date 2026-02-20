@@ -1,34 +1,32 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.3.2
-- name: Data Collection for CIS 2.3.2
+- name: Data Collection for CIS checkpoint 2.3.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.3.2"
-    req_1: "Run the following script to verify chrony is configured with at least one authorized timeserver (server or pool directive)"
-    req_2: "OVERALL Verify: Ensure chrony is configured (Automated)"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.2"
+    req_1: "Run the provided CIS audit script to verify Ensure chrony is configured"
+    req_2: "OVERALL Verify: Ensure chrony is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
 
-    # Requirement 1: Run the following script to verify chrony is configured with at least one authorized timeserver
-    - name: Req 1 - Create temporary audit script
+    # Requirement 1: Run the provided CIS audit script to verify Ensure chrony is configured
+    - name: Req 1 - Execute CIS audit script for chrony configuration
       copy:
-        dest: "/tmp/cis_audit_script_1.sh"
+        dest: "/tmp/cis_audit_2.3.2.sh"
         mode: '0700'
         content: |
           {% raw %}
           #!/usr/bin/env bash
+
           {
              a_output=() a_output2=() a_config_files=("/etc/chrony.conf")
              l_include='(confdir|sourcedir)' l_parameter_name='(server|pool)' l_parameter_value='.+'
@@ -59,67 +57,62 @@
              fi
           }
           {% endraw %}
-      register: script_created_1
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
-      changed_when: false
 
-    - name: Req 1 - Execute audit script
-      shell: "/tmp/cis_audit_script_1.sh"
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_2.3.2.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
     - name: Req 1 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_1.sh"
+        path: "/tmp/cis_audit_2.3.2.sh"
         state: absent
       ignore_errors: true
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Execute chrony audit script"
-        task_1_cmd: "/tmp/cis_audit_script_1.sh"
+        task_1_name: "Execute CIS audit script for chrony configuration"
+        task_1_cmd: "bash /tmp/cis_audit_2.3.2.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if '** PASS **' in result_1.stdout else 'FAIL') | trim }}"
-        rationale_1: "PASS when the script output contains '** PASS **' and lists at least one server or pool directive found in the chrony configuration files, FAIL when the script output contains '** FAIL **' and states the parameter does not exist"
+        rationale_1: "PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
 
     # Requirement 2: OVERALL Verify: Ensure chrony is configured
-    - name: Req 2 - OVERALL Verify
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Overall verification based on requirement 1"
-        task_2_cmd: "Derived from requirement 1 status"
-        task_2_rc: 0
-        data_2: "Overall status derived from requirement 1"
+        task_2_name: "Overall verification of chrony configuration"
+        task_2_cmd: "N/A (based on requirement 1 result)"
+        task_2_rc: "{{ task_1_rc | default(-1) }}"
+        data_2: "{{ data_1 | default('') | trim }}"
         status_2: "{{ status_1 | trim }}"
         rationale_2: "PASS when req_1=PASS, FAIL otherwise"
-      when: status_1 is defined
 
-    # Final report
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 2.3.2"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.3.2"
+          - "Reference: {{ kcs_article }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Task: {{ task_1_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_1_cmd | default('N/A') | trim }}"
           - "  Exit code: {{ task_1_rc | default(-1) }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Task: {{ task_2_name | default('Task not recorded') | trim }}"
+          - "  Command: {{ task_2_cmd | default('N/A') | trim }}"
           - "  Exit code: {{ task_2_rc | default(-1) }}"
           - "  Data: {{ data_2 | default('') | trim }}"
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
@@ -128,5 +121,5 @@
           - "========================================================"
           - "OVERALL COMPLIANCE:"
           - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Rationale: PASS when req_1=PASS, FAIL otherwise"
           - "========================================================"

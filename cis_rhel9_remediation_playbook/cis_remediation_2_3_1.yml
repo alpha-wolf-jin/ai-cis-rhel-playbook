@@ -1,0 +1,201 @@
+---
+- name: Remediation for CIS 2.3.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_3_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.1"
+    req_1: "Check if chrony package is installed"
+    req_2: "Apply installation of chrony"
+    req_3: "VERIFY: Confirm chrony is installed and in use"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        chrony_installed: false
+
+    # Requirement 1: Check if chrony package is installed
+    - name: "Req 1 - Check chrony package installation"
+      shell: |
+        rpm -q chrony
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details and determine if chrony is installed
+      set_fact:
+        task_1_name: "Check chrony package installation"
+        task_1_cmd: "rpm -q chrony"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'is not installed' in output %}
+            SKIPPED
+          {% elif result_1.rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'is not installed' in output %}
+            SKIPPED: chrony is not installed on this server - remediation not applicable
+          {% elif result_1.rc == 0 %}
+            APPLIED: chrony is installed (version: {{ output }})
+          {% else %}
+            FAILED: Could not check chrony installation (exit code: {{ result_1.rc | default(-1) }})
+          {% endif %}
+        chrony_installed: "{{ ('is not installed' not in (result_1.stdout | default(''))) and (result_1.rc == 0) }}"
+
+    # Requirement 2: Apply installation of chrony (using EXACT command from CIS remediation procedure)
+    - name: "Req 2 - Install chrony package"
+      shell: |
+        dnf install chrony
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: not chrony_installed | bool
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Install chrony package"
+        task_2_cmd: "dnf install chrony"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if not chrony_installed | bool %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if not chrony_installed | bool %}
+            {% if result_2.rc | default(-1) == 0 %}
+              APPLIED: chrony package installed successfully
+            {% else %}
+              FAILED: chrony package installation failed (exit code: {{ result_2.rc | default(-1) }})
+            {% endif %}
+          {% else %}
+            SKIPPED: chrony already installed - no action needed
+          {% endif %}
+
+    # Requirement 3: VERIFY: Confirm chrony is installed and in use
+    - name: "Req 3 - Verify chronyd service is active"
+      shell: |
+        systemctl is-active chronyd
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: chrony_installed | bool
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify chronyd service is active"
+        task_3_cmd: "systemctl is-active chronyd"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if chrony_installed | bool %}
+            {% if result_3.rc | default(-1) == 0 and result_3.stdout | default('') | trim == 'active' %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if chrony_installed | bool %}
+            {% if result_3.rc | default(-1) == 0 and result_3.stdout | default('') | trim == 'active' %}
+              APPLIED: chronyd service is active
+            {% else %}
+              FAILED: chronyd service is not active (status: {{ result_3.stdout | default('') | trim }}, exit code: {{ result_3.rc | default(-1) }})
+            {% endif %}
+          {% else %}
+            SKIPPED: chrony not installed - cannot verify service
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.3.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ 'APPLIED' if (status_1 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_2 | trim in ['APPLIED', 'SKIPPED']) else 'FAILED' if (status_1 | trim == 'FAILED' or status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED') else 'SKIPPED' if (status_1 | trim == 'SKIPPED') else 'UNKNOWN' }}"
+          - "  Details: {{ 'Time synchronization (chrony) is installed and active - system is compliant' if (status_1 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_2 | trim in ['APPLIED', 'SKIPPED']) else 'Checkpoint 2.3.1 not applicable - chrony is not installed on this server' if (status_1 | trim == 'SKIPPED') else 'Failed to apply CIS checkpoint 2.3.1 - check individual requirement statuses for details' }}"
+          - "========================================================"

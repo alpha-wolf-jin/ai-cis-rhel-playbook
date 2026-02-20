@@ -1,0 +1,413 @@
+---
+- name: Remediation for CIS 5.4.2.6
+  hosts: all
+  become: yes
+  become_method: sudo
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_4_2_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.6"
+    req_1: "Apply umask 0027 or more restrictive in /root/.bash_profile using command: `grep -q '^[[:space:]]*umask' /root/.bash_profile && sed -i -E 's/^[[:space:]]*umask.*/umask 0027/' /root/.bash_profile || echo 'umask 0027' >> /root/.bash_profile`. Expected result: /root/.bash_profile contains 'umask 0027' or a more restrictive value (e.g., 0077)."
+    req_2: "Apply umask 0027 or more restrictive in /root/.bashrc using command: `grep -q '^[[:space:]]*umask' /root/.bashrc && sed -i -E 's/^[[:space:]]*umask.*/umask 0027/' /root/.bashrc || echo 'umask 0027' >> /root/.bashrc`. Expected result: /root/.bashrc contains 'umask 0027' or a more restrictive value (e.g., 0077)."
+    req_3: "VERIFY: Confirm root user umask is configured correctly using command: `for file in /root/.bash_profile /root/.bashrc; do echo 'Checking $file:'; grep '^[[:space:]]*umask' '$file' 2>/dev/null || echo 'No umask line found in $file'; done`. Expected result: Both files show a line with 'umask 0027' (or a more restrictive value like 0077)."
+
+  pre_tasks:
+    # Test become privileges before starting
+    - name: "Test become privileges"
+      command: whoami
+      register: become_test
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Set become status"
+      set_fact:
+        can_become: "{{ not (become_test.failed | default(false)) }}"
+        become_error: "{{ become_test.msg | default('') }}"
+
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      when: can_become | default(false)
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /root/.bash_profile from backup"
+      copy:
+        src: "{{ state_guard_dir }}/bash_profile.present"
+        dest: "/root/.bash_profile"
+        remote_src: true
+      when: "_sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and can_become | default(false)"
+      ignore_errors: true
+
+    - name: "State Guard - Restore /root/.bashrc from backup"
+      copy:
+        src: "{{ state_guard_dir }}/bashrc.present"
+        dest: "/root/.bashrc"
+        remote_src: true
+      when: "_sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and can_become | default(false)"
+      ignore_errors: true
+
+    # Check if marker files exist to determine if files were absent
+    - name: "State Guard - Check for bash_profile.absent marker"
+      stat:
+        path: "{{ state_guard_dir }}/bash_profile.absent"
+      register: _sg_bash_profile_absent
+      when: "_sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and can_become | default(false)"
+      ignore_errors: true
+
+    - name: "State Guard - Check for bashrc.absent marker"
+      stat:
+        path: "{{ state_guard_dir }}/bashrc.absent"
+      register: _sg_bashrc_absent
+      when: "_sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and can_become | default(false)"
+      ignore_errors: true
+
+    # Delete files that were created by previous remediation (if marked as absent)
+    - name: "State Guard - Delete /root/.bash_profile (if was absent)"
+      file:
+        path: "/root/.bash_profile"
+        state: absent
+      when: >-
+        _sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and 
+        can_become | default(false) and 
+        _sg_bash_profile_absent.stat is defined and _sg_bash_profile_absent.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete /root/.bashrc (if was absent)"
+      file:
+        path: "/root/.bashrc"
+        state: absent
+      when: >-
+        _sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and 
+        can_become | default(false) and 
+        _sg_bashrc_absent.stat is defined and _sg_bashrc_absent.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag is defined and _sg_flag.stat is defined and _sg_flag.stat.exists and can_become | default(false)"
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      when: can_become | default(false)
+
+    # Check if each file exists before deciding backup suffix
+    - name: "State Guard - Check if /root/.bash_profile exists"
+      stat:
+        path: "/root/.bash_profile"
+      register: _sg_bash_profile_stat
+      when: can_become | default(false)
+
+    - name: "State Guard - Check if /root/.bashrc exists"
+      stat:
+        path: "/root/.bashrc"
+      register: _sg_bashrc_stat
+      when: can_become | default(false)
+
+    # Backup existing files with .present suffix
+    - name: "State Guard - Backup /root/.bash_profile (present)"
+      copy:
+        src: "/root/.bash_profile"
+        dest: "{{ state_guard_dir }}/bash_profile.present"
+        remote_src: true
+      when: "_sg_bash_profile_stat.stat is defined and _sg_bash_profile_stat.stat.exists and can_become | default(false)"
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: "State Guard - Mark /root/.bash_profile as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/bash_profile.absent"
+      when: "not (_sg_bash_profile_stat.stat is defined and _sg_bash_profile_stat.stat.exists) and can_become | default(false)"
+
+    - name: "State Guard - Backup /root/.bashrc (present)"
+      copy:
+        src: "/root/.bashrc"
+        dest: "{{ state_guard_dir }}/bashrc.present"
+        remote_src: true
+      when: "_sg_bashrc_stat.stat is defined and _sg_bashrc_stat.stat.exists and can_become | default(false)"
+
+    - name: "State Guard - Mark /root/.bashrc as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/bashrc.absent"
+      when: "not (_sg_bashrc_stat.stat is defined and _sg_bashrc_stat.stat.exists) and can_become | default(false)"
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      when: can_become | default(false)
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        status_1: "SKIPPED"
+        rationale_1: "Not executed"
+        status_2: "SKIPPED"
+        rationale_2: "Not executed"
+        status_3: "SKIPPED"
+        rationale_3: "Not executed"
+
+    # Requirement 1 - Apply umask to /root/.bash_profile
+    - name: "Req 1 - Apply umask to /root/.bash_profile"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /root/.bash_profile 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        grep -q '^[[:space:]]*umask' /root/.bash_profile && sed -i -E 's/^[[:space:]]*umask.*/umask 0027/' /root/.bash_profile || echo 'umask 0027' >> /root/.bash_profile
+        echo "=== AFTER ==="
+        cat /root/.bash_profile 2>/dev/null || echo "File does not exist"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: result_1.rc == 0
+      when: can_become | default(false)
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Apply umask to /root/.bash_profile"
+        task_1_cmd: "grep -q '^[[:space:]]*umask' /root/.bash_profile && sed -i -E 's/^[[:space:]]*umask.*/umask 0027/' /root/.bash_profile || echo 'umask 0027' >> /root/.bash_profile"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if not can_become | default(false) %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if not can_become | default(false) %}
+            SKIPPED: Cannot become root - missing sudo password or insufficient privileges
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: change was made successfully
+          {% else %}
+            FAILED: change could not be applied
+          {% endif %}
+      when: can_become | default(false)
+
+    # Requirement 2 - Apply umask to /root/.bashrc
+    - name: "Req 2 - Apply umask to /root/.bashrc"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /root/.bashrc 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        grep -q '^[[:space:]]*umask' /root/.bashrc && sed -i -E 's/^[[:space:]]*umask.*/umask 0027/' /root/.bashrc || echo 'umask 0027' >> /root/.bashrc
+        echo "=== AFTER ==="
+        cat /root/.bashrc 2>/dev/null || echo "File does not exist"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: result_2.rc == 0
+      when: can_become | default(false)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply umask to /root/.bashrc"
+        task_2_cmd: "grep -q '^[[:space:]]*umask' /root/.bashrc && sed -i -E 's/^[[:space:]]*umask.*/umask 0027/' /root/.bashrc || echo 'umask 0027' >> /root/.bashrc"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if not can_become | default(false) %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if not can_become | default(false) %}
+            SKIPPED: Cannot become root - missing sudo password or insufficient privileges
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: change was made successfully
+          {% else %}
+            FAILED: change could not be applied
+          {% endif %}
+      when: can_become | default(false)
+
+    # Requirement 3 - Verify configuration
+    - name: "Req 3 - Verify root user umask configuration"
+      shell: |
+        for file in /root/.bash_profile /root/.bashrc; do
+          echo "Checking $file:"
+          grep '^[[:space:]]*umask' "$file" 2>/dev/null || echo "No umask line found in $file"
+        done
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: can_become | default(false)
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify root user umask configuration"
+        task_3_cmd: "for file in /root/.bash_profile /root/.bashrc; do echo 'Checking $file:'; grep '^[[:space:]]*umask' '$file' 2>/dev/null || echo 'No umask line found in $file'; done"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if not can_become | default(false) %}
+            SKIPPED
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output %}
+              {% set lines = output.split('\n') %}
+              {% set bash_profile_ok = false %}
+              {% set bashrc_ok = false %}
+              {% for line in lines %}
+                {% if 'Checking /root/.bash_profile:' in line %}
+                  {% set current_file = 'bash_profile' %}
+                {% elif 'Checking /root/.bashrc:' in line %}
+                  {% set current_file = 'bashrc' %}
+                {% elif 'umask 0027' in line or 'umask 0077' in line %}
+                  {% if current_file == 'bash_profile' %}
+                    {% set bash_profile_ok = true %}
+                  {% elif current_file == 'bashrc' %}
+                    {% set bashrc_ok = true %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {{ 'APPLIED' if bash_profile_ok and bashrc_ok else 'FAILED' }}
+            {% else %}
+              FAILED
+            {% endif %}
+          {% endif %}
+        rationale_3: >-
+          {% if not can_become | default(false) %}
+            SKIPPED: Cannot become root - missing sudo password or insufficient privileges
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if output %}
+              {% set lines = output.split('\n') %}
+              {% set bash_profile_ok = false %}
+              {% set bashrc_ok = false %}
+              {% set bash_profile_line = '' %}
+              {% set bashrc_line = '' %}
+              {% set current_file = '' %}
+              {% for line in lines %}
+                {% if 'Checking /root/.bash_profile:' in line %}
+                  {% set current_file = 'bash_profile' %}
+                {% elif 'Checking /root/.bashrc:' in line %}
+                  {% set current_file = 'bashrc' %}
+                {% elif 'umask 0027' in line or 'umask 0077' in line %}
+                  {% if current_file == 'bash_profile' %}
+                    {% set bash_profile_ok = true %}
+                    {% set bash_profile_line = line %}
+                  {% elif current_file == 'bashrc' %}
+                    {% set bashrc_ok = true %}
+                    {% set bashrc_line = line %}
+                  {% endif %}
+                {% endif %}
+              {% endfor %}
+              {% if bash_profile_ok and bashrc_ok %}
+                APPLIED: Both files have correct umask configuration
+              {% elif not bash_profile_ok and not bashrc_ok %}
+                FAILED: Neither file has correct umask configuration
+              {% elif not bash_profile_ok %}
+                FAILED: /root/.bash_profile missing correct umask
+              {% else %}
+                FAILED: /root/.bashrc missing correct umask
+              {% endif %}
+            {% else %}
+              FAILED: Verification command produced no output
+            {% endif %}
+          {% endif %}
+      when: can_become | default(false)
+
+    - name: Set overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if not can_become | default(false) %}
+            SKIPPED
+          {% elif status_1|trim == 'APPLIED' and status_2|trim == 'APPLIED' and status_3|trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1|trim == 'SKIPPED' and status_2|trim == 'SKIPPED' and status_3|trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1|trim == 'APPLIED' and status_2|trim == 'APPLIED' and status_3|trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_1|trim == 'APPLIED' or status_2|trim == 'APPLIED' or status_3|trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% elif status_1|trim == 'FAILED' and status_2|trim == 'FAILED' and status_3|trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_rationale: >-
+          {% if not can_become | default(false) %}
+            All requirements skipped - cannot become root: missing sudo password or insufficient privileges
+          {% elif status_1|trim == 'APPLIED' and status_2|trim == 'APPLIED' and status_3|trim == 'APPLIED' %}
+            All requirements successfully applied and verified
+          {% elif status_1|trim == 'SKIPPED' and status_2|trim == 'SKIPPED' and status_3|trim == 'SKIPPED' %}
+            All requirements skipped - may not have become privileges
+          {% elif status_1|trim == 'APPLIED' and status_2|trim == 'APPLIED' and status_3|trim == 'FAILED' %}
+            Remediation applied but verification failed
+          {% elif status_1|trim == 'FAILED' and status_2|trim == 'FAILED' and status_3|trim == 'FAILED' %}
+            All remediation and verification steps failed
+          {% else %}
+            Some remediation steps succeeded
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.4.2.6"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "BECOME STATUS: {{ 'SUCCESS' if can_become | default(false) else 'FAILED: ' + (become_error | default('Missing sudo password or insufficient privileges')) }}"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Details: {{ rationale_1 }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 }}"
+          - "  Details: {{ rationale_2 }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 }}"
+          - "  Details: {{ rationale_3 }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status }}"
+          - "  Details: {{ overall_rationale }}"
+          - "========================================================"

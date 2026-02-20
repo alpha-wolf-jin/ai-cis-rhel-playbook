@@ -1,0 +1,324 @@
+---
+- name: Remediation for CIS 5.1.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_1_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.2"
+    req_1: "Check if OpenSSH server is installed"
+    req_2: "Run remediation script to fix permissions on SSH private host key files"
+    req_3: "VERIFY: Run audit check to confirm Ensure permissions on SSH private host key files are configured is properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    # For this remediation, we are only changing permissions/ownership of existing SSH private key files
+    # We capture the current permissions and ownership using stat for each file found
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore original permissions/ownership
+    - name: State Guard - Restore original permissions and ownership from backup
+      shell: |
+        {% raw %}
+        # Restore phase: if backup files exist, read them and restore permissions/ownership
+        if [ -f "{{ state_guard_dir }}/key_files.backup" ]; then
+          while IFS=: read -r file mode owner group; do
+            if [ -f "$file" ]; then
+              # Restore permissions (convert from octal to symbolic if needed, but use numeric)
+              chmod "$mode" "$file" 2>/dev/null
+              # Restore ownership
+              chown "$owner:$group" "$file" 2>/dev/null
+            fi
+          done < "{{ state_guard_dir }}/key_files.backup"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Capture current permissions and ownership of SSH private key files
+      shell: |
+        {% raw %}
+        # Find SSH private key files and capture their current permissions/ownership
+        find -L /etc/ssh -xdev -type f -print0 2>/dev/null | while IFS= read -r -d $'\0' l_file; do
+          if ssh-keygen -lf &>/dev/null "$l_file" && file "$l_file" | grep -Piq -- '\bopenssh\h+([^#\n\r]+\h+)?private\h+key\b'; then
+            stat -Lc '%n:%a:%U:%G' "$l_file"
+          fi
+        done > "{{ state_guard_dir }}/key_files.backup"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: _sg_capture
+      ignore_errors: true
+      changed_when: false
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if OpenSSH server is installed
+    - name: Req 1 - Check if OpenSSH server is installed
+      shell: rpm -q openssh-server
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if OpenSSH server is installed"
+        task_1_cmd: "rpm -q openssh-server"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: OpenSSH server is installed
+          {% else %}
+            SKIPPED - Remediation not applicable - openssh-server is not installed on this server
+          {% endif %}
+
+    # Requirement 2: Run remediation script
+    - name: Req 2 - Execute CIS remediation script for SSH private key permissions
+      copy:
+        dest: "/tmp/cis_remediation_5.1.2.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          l_output="" l_output2=""
+          l_ssh_group_name="$(awk -F: '($1 ~ /^(ssh_keys|_?ssh)$/) {print $1}' /etc/group)"
+          f_file_access_fix()
+          {
+             while IFS=: read -r l_file_mode l_file_owner l_file_group; do
+                echo "File: \"$l_file\" mode: \"$l_file_mode\" owner \"$l_file_owner\" group \"$l_file_group\""
+                l_out2=""
+                [ "$l_file_group" = "$l_ssh_group_name" ] && l_pmask="0137" || l_pmask="0177"
+                l_maxperm="$( printf '%o' $(( 0777 & ~$l_pmask )) )"
+                if [ $(( $l_file_mode & $l_pmask )) -gt 0 ]; then
+                   l_out2="$l_out2\n  - Mode: \"$l_file_mode\" should be mode: \"$l_maxperm\" or more restrictive\n   - updating to mode: \":$l_maxperm\""
+                   if [ "l_file_group" = "$l_ssh_group_name" ]; then
+                      chmod u-x,g-wx,o-rwx "$l_file"
+                   else
+                      chmod u-x,go-rwx "$l_file"
+                   fi
+                fi
+                if [ "$l_file_owner" != "root" ]; then
+                   l_out2="$l_out2\n  - Owned by: \"$l_file_owner\" should be owned by \"root\"\n   - Changing ownership to \"root\""
+                   chown root "$l_file"
+                fi
+                if [[ ! "$l_file_group" =~ ($l_ssh_group_name|root) ]]; then
+                   [ -n "$l_ssh_group_name" ] && l_new_group="$l_ssh_group_name" || l_new_group="root"
+                   l_out2="$l_out2\n  - Owned by group \"$l_file_group\" should be group owned by: \"$l_ssh_group_name\" or \"root\"\n   - Changing group ownership to \"$l_new_group\""
+                   chgrp "$l_new_group" "$l_file"
+                fi
+                if [ -n "$l_out2" ]; then
+                   l_output2="$l_output2\n - File: \"$l_file\"$l_out2"
+                else
+                   l_output="$l_output\n - File: \"$l_file\"\n  - Correct: mode: \"$l_file_mode\", owner: \"$l_file_owner\", and group owner: \"$l_file_group\" configured"
+                fi
+             done < <(stat -Lc '%#a:%U:%G' "$l_file")
+          }
+          while IFS= read -r -d $'\0' l_file; do
+             if ssh-keygen -lf &>/dev/null "$l_file"; then
+                file "$l_file" | grep -Piq -- '\bopenssh\h+([^#\n\r]+\h+)?private\h+key\b' && f_file_access_fix
+             fi
+          done < <(find -L /etc/ssh -xdev -type f -print0 2>/dev/null)
+          if [ -z "$l_output2" ]; then
+             echo -e "\n- No access changes required\n"
+          else
+             echo -e "\n- Remediation results:\n$l_output2\n"
+          fi
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Req 2 - Execute the remediation script
+      shell: "/tmp/cis_remediation_5.1.2.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Req 2 - Remove temporary remediation script
+      file:
+        path: "/tmp/cis_remediation_5.1.2.sh"
+        state: absent
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Execute CIS remediation script for SSH private key permissions"
+        task_2_cmd: "/tmp/cis_remediation_5.1.2.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED - openssh-server is not installed
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Script executed successfully
+          {% else %}
+            FAILED: Script execution failed
+          {% endif %}
+      when: "status_1 | trim == 'APPLIED'"
+
+    # Requirement 3: VERIFY audit check
+    - name: Req 3 - Run audit check for SSH private key permissions
+      shell: |
+        {% raw %}
+        find -L /etc/ssh -xdev -type f -exec stat -Lc "%n %#a %U %G" {} \; | while read -r fname mode owner group; do
+          if ssh-keygen -lf "$fname" &>/dev/null; then
+            if file "$fname" | grep -Piq -- '\bopenssh\h+([^#\n\r]+\h+)?private\h+key\b'; then
+              if [ "$owner" != "root" ]; then
+                echo "$fname has owner $owner (should be root)";
+              fi;
+              if [[ ! "$group" =~ ^(ssh_keys|_?ssh|root)$ ]]; then
+                echo "$fname has group $group (should be root or ssh/ssh_keys)";
+              fi;
+              if [ "$group" = "ssh_keys" ] || [ "$group" = "_ssh" ] || [ "$group" = "ssh" ]; then
+                [ $(( $mode & 0137 )) -gt 0 ] && echo "$fname has mode $mode (should be 0640 or more restrictive)";
+              else
+                [ $(( $mode & 0177 )) -gt 0 ] && echo "$fname has mode $mode (should be 0600 or more restrictive)";
+              fi;
+            fi;
+          fi;
+        done
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Run audit check for SSH private key permissions"
+        task_3_cmd: |
+          find -L /etc/ssh -xdev -type f -exec stat -Lc "%n %#a %U %G" {} \; | while read -r fname mode owner group; do
+            if ssh-keygen -lf "$fname" &>/dev/null; then
+              if file "$fname" | grep -Piq -- '\bopenssh\h+([^#\n\r]+\h+)?private\h+key\b'; then
+                if [ "$owner" != "root" ]; then
+                  echo "$fname has owner $owner (should be root)";
+                fi;
+                if [[ ! "$group" =~ ^(ssh_keys|_?ssh|root)$ ]]; then
+                  echo "$fname has group $group (should be root or ssh/ssh_keys)";
+                fi;
+                if [ "$group" = "ssh_keys" ] || [ "$group" = "_ssh" ] || [ "$group" = "ssh" ]; then
+                  [ $(( $mode & 0137 )) -gt 0 ] && echo "$fname has mode $mode (should be 0640 or more restrictive)";
+                else
+                  [ $(( $mode & 0177 )) -gt 0 ] && echo "$fname has mode $mode (should be 0600 or more restrictive)";
+                fi;
+              fi;
+            fi;
+          done
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 and result_3.stdout | trim == '' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED - openssh-server is not installed
+          {% elif result_3.rc | default(-1) == 0 and result_3.stdout | trim == '' %}
+            APPLIED: All SSH private host key files are compliant
+          {% else %}
+            FAILED: Some SSH private host key files are non-compliant
+          {% endif %}
+      when: "status_1 | trim == 'APPLIED'"
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.1.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') | truncate(80) }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_3 | default(status_1) | trim }}"
+          - "  Details: {{ 'Remediation completed successfully' if status_3|trim == 'APPLIED' else ('Remediation not applicable - openssh-server not installed' if status_1|trim == 'SKIPPED' else 'Remediation partially applied or failed') | trim }}"
+          - "========================================================"

@@ -1,0 +1,473 @@
+---
+- name: Remediation for CIS 6.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_6_1_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.1"
+    req_1: "Check if AIDE package is installed using command: rpm -q aide"
+    req_2: "Install AIDE package using command: dnf install -y aide"
+    req_3: "Initialize AIDE database using command: aide --init"
+    req_4: "Activate the new AIDE database using command: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz"
+    req_5: "VERIFY: Confirm AIDE is installed and database is initialized using command: aide --check"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+      ignore_errors: true
+
+    # --- RESTORE PHASE (if checkpoint exists from previous failed run) ---
+    - name: State Guard - Restore original AIDE configuration if it existed
+      copy:
+        src: "{{ state_guard_dir }}/aide.conf.present"
+        dest: "/etc/aide.conf"
+        remote_src: true
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Restore original AIDE database if it existed
+      copy:
+        src: "{{ state_guard_dir }}/aide.db.gz.present"
+        dest: "/var/lib/aide/aide.db.gz"
+        remote_src: true
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Remove new database file created by previous run
+      file:
+        path: "/var/lib/aide/aide.db.new.gz"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Remove config file created by remediation (if marked absent)
+      file:
+        path: "/etc/aide.conf"
+        state: absent
+      when: >
+        "_sg_flag.stat is defined and _sg_flag.stat.exists and
+        _sg_aide_conf is defined and _sg_aide_conf.stat is defined and
+        not _sg_aide_conf.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag.stat is defined and _sg_flag.stat.exists"
+      ignore_errors: true
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+      ignore_errors: true
+
+    - name: State Guard - Check if /etc/aide.conf exists
+      stat:
+        path: "/etc/aide.conf"
+      register: _sg_aide_conf
+      ignore_errors: true
+
+    - name: State Guard - Check if /var/lib/aide/aide.db.gz exists
+      stat:
+        path: "/var/lib/aide/aide.db.gz"
+      register: _sg_aide_db
+      ignore_errors: true
+
+    - name: State Guard - Backup /etc/aide.conf (present)
+      copy:
+        src: "/etc/aide.conf"
+        dest: "{{ state_guard_dir }}/aide.conf.present"
+        remote_src: true
+      when: "_sg_aide_conf.stat is defined and _sg_aide_conf.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Mark /etc/aide.conf as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/aide.conf.absent"
+      when: "_sg_aide_conf.stat is defined and not _sg_aide_conf.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Backup /var/lib/aide/aide.db.gz (present)
+      copy:
+        src: "/var/lib/aide/aide.db.gz"
+        dest: "{{ state_guard_dir }}/aide.db.gz.present"
+        remote_src: true
+      when: "_sg_aide_db.stat is defined and _sg_aide_db.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Mark /var/lib/aide/aide.db.gz as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/aide.db.gz.absent"
+      when: "_sg_aide_db.stat is defined and not _sg_aide_db.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      ignore_errors: true
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        status_4: "UNKNOWN"
+        status_5: "UNKNOWN"
+        rationale_1: "Not evaluated"
+        rationale_2: "Not evaluated"
+        rationale_3: "Not evaluated"
+        rationale_4: "Not evaluated"
+        rationale_5: "Not evaluated"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        aide_installed: false
+        aide_installed_check: false
+        aide_package_available: true
+
+    - name: Req 1 - Check if AIDE package is installed
+      become: no
+      shell: |
+        # Check if AIDE package is installed using rpm command
+        rpm -q aide
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check AIDE package status"
+        task_1_cmd: "rpm -q aide"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: |
+          {{ result_1.stdout | default('') | trim }}{% if result_1.stderr | default('') != '' %}\nStderr: {{ result_1.stderr | default('') | trim }}{% endif %}
+        aide_installed_check: "{{ result_1.rc | default(1) == 0 }}"
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% set stdout = result_1.stdout | default('') | trim %}
+          {% if rc == 0 %}
+            APPLIED
+          {% elif rc == 1 and 'not installed' in stdout %}
+            SKIPPED
+          {% elif rc == -1 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% set stdout = result_1.stdout | default('') | trim %}
+          {% set stderr = result_1.stderr | default('') | trim %}
+          {% if rc == 0 %}
+            APPLIED: AIDE package is already installed
+          {% elif rc == 1 and 'not installed' in stdout %}
+            SKIPPED: AIDE package is not installed (will attempt installation)
+          {% elif rc == -1 %}
+            FAILED: Command execution failed - check permissions
+          {% else %}
+            FAILED: Could not determine AIDE package status (exit code: {{ rc }}{% if stderr != '' %}, stderr: {{ stderr }}{% endif %})
+          {% endif %}
+
+    - name: Req 2 - Install AIDE package
+      shell: |
+        dnf install -y aide
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'SKIPPED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Install AIDE package"
+        task_2_cmd: "dnf install -y aide"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: |
+          {{ result_2.stdout | default('') | trim }}{% if result_2.stderr | default('') != '' %}\nStderr: {{ result_2.stderr | default('') | trim }}{% endif %}
+        aide_installed: "{{ result_2.rc | default(1) == 0 }}"
+        status_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            {% if result_2.rc | default(1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            {% if result_2.rc | default(1) == 0 %}
+              APPLIED: AIDE package was successfully installed
+            {% else %}
+              {% set stderr = result_2.stderr | default('') | trim %}
+              {% if 'Missing sudo password' in stderr or 'password' in stderr.lower() %}
+                FAILED: Could not install AIDE package due to missing sudo privileges
+              {% elif 'No match for argument' in stderr or 'no packages found' in stderr.lower() %}
+                FAILED: AIDE package is not available in the system repository
+              {% else %}
+                FAILED: Could not install AIDE package - check repository configuration and permissions
+              {% endif %}
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package was already installed or initial check was not SKIPPED
+          {% endif %}
+
+    - name: Req 3 - Initialize AIDE database
+      shell: |
+        aide --init
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "aide_installed_check | bool or aide_installed | bool"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Initialize AIDE database"
+        task_3_cmd: "aide --init"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if aide_installed_check | bool or aide_installed | bool %}
+            {% if result_3.rc | default(1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_3: >-
+          {% if aide_installed_check | bool or aide_installed | bool %}
+            {% if result_3.rc | default(1) == 0 %}
+              APPLIED: AIDE database initialized successfully
+            {% else %}
+              FAILED: Could not initialize AIDE database
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE package not installed
+          {% endif %}
+
+    - name: Req 4 - Activate AIDE database
+      shell: |
+        mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "status_3 | trim == 'APPLIED'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Activate AIDE database"
+        task_4_cmd: "mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if status_3 | trim == 'APPLIED' %}
+            {% if result_4.rc | default(1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if status_3 | trim == 'APPLIED' %}
+            {% if result_4.rc | default(1) == 0 %}
+              APPLIED: AIDE database activated successfully
+            {% else %}
+              FAILED: Could not activate AIDE database - new database file not found
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE database not initialized, cannot activate
+          {% endif %}
+
+    - name: Req 5 - Verify AIDE installation and database
+      shell: |
+        aide --check
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: "status_4 | trim == 'APPLIED'"
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify AIDE installation and database"
+        task_5_cmd: "aide --check"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if status_4 | trim == 'APPLIED' %}
+            {% if result_5.rc | default(1) == 0 %}
+              APPLIED
+            {% else %}
+              FAILED
+            {% endif %}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if status_4 | trim == 'APPLIED' %}
+            {% if result_5.rc | default(1) == 0 %}
+              APPLIED: AIDE check completed successfully
+            {% else %}
+              FAILED: AIDE check failed or returned errors
+            {% endif %}
+          {% else %}
+            SKIPPED: AIDE database not available for verification
+          {% endif %}
+
+    - name: Set overall remediation status
+      set_fact:
+        status_overall: >-
+          {% set s1 = status_1 | trim %}
+          {% set s2 = status_2 | trim %}
+          {% set s3 = status_3 | trim %}
+          {% set s4 = status_4 | trim %}
+          {% set s5 = status_5 | trim %}
+          {% set stderr_2 = result_2.stderr | default('') | trim %}
+          {% if s1 == 'FAILED' %}
+            FAILED
+          {% elif s1 == 'UNKNOWN' %}
+            UNKNOWN
+          {% elif s1 == 'SKIPPED' and s2 == 'FAILED' %}
+            {% if 'Missing sudo password' in stderr_2 or 'password' in stderr_2.lower() %}
+              FAILED
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% elif s1 == 'APPLIED' and s2 == 'SKIPPED' and s3 == 'SKIPPED' and s4 == 'SKIPPED' and s5 == 'SKIPPED' %}
+            APPLIED
+          {% elif s1 == 'APPLIED' and s2 == 'SKIPPED' and s3 == 'APPLIED' and s4 == 'APPLIED' and s5 == 'APPLIED' %}
+            APPLIED
+          {% elif s1 == 'SKIPPED' and s2 == 'APPLIED' and s3 == 'APPLIED' and s4 == 'APPLIED' and s5 == 'APPLIED' %}
+            APPLIED
+          {% elif s1 == 'APPLIED' and (s2 == 'FAILED' or s3 == 'FAILED' or s4 == 'FAILED' or s5 == 'FAILED') %}
+            PARTIALLY APPLIED
+          {% elif s1 == 'SKIPPED' and (s2 == 'FAILED' or s3 == 'FAILED' or s4 == 'FAILED' or s5 == 'FAILED') %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_overall: >-
+          {% set s1 = status_1 | trim %}
+          {% set s2 = status_2 | trim %}
+          {% set s3 = status_3 | trim %}
+          {% set s4 = status_4 | trim %}
+          {% set s5 = status_5 | trim %}
+          {% set stderr_2 = result_2.stderr | default('') | trim %}
+          {% if s1 == 'FAILED' %}
+            Initial check for AIDE package installation failed. Cannot proceed with remediation.
+          {% elif s1 == 'UNKNOWN' %}
+            Could not determine AIDE package status due to command execution error. Remediation cannot proceed.
+          {% elif s1 == 'SKIPPED' and s2 == 'FAILED' %}
+            {% if 'Missing sudo password' in stderr_2 or 'password' in stderr_2.lower() %}
+              FAILED: Could not install AIDE package due to missing sudo privileges. Provide the become password and try again.
+            {% elif 'No match for argument' in stderr_2 or 'no packages found' in stderr_2.lower() %}
+              SKIPPED: AIDE package is not available in the system repository. This remediation is not applicable to this server.
+            {% else %}
+              SKIPPED: Could not install AIDE package. Check repository configuration and permissions.
+            {% endif %}
+          {% elif s1 == 'APPLIED' and s2 == 'SKIPPED' and s3 == 'SKIPPED' and s4 == 'SKIPPED' and s5 == 'SKIPPED' %}
+            AIDE was already installed and no further action was needed.
+          {% elif s1 == 'APPLIED' and s2 == 'SKIPPED' and s3 == 'APPLIED' and s4 == 'APPLIED' and s5 == 'APPLIED' %}
+            AIDE was already installed, database was initialized and activated.
+          {% elif s1 == 'SKIPPED' and s2 == 'APPLIED' and s3 == 'APPLIED' and s4 == 'APPLIED' and s5 == 'APPLIED' %}
+            AIDE was installed, database initialized and activated successfully.
+          {% elif s1 == 'APPLIED' and (s2 == 'FAILED' or s3 == 'FAILED' or s4 == 'FAILED' or s5 == 'FAILED') %}
+            Some remediation steps were applied, but not all. Check individual requirement statuses.
+          {% elif s1 == 'SKIPPED' and (s2 == 'FAILED' or s3 == 'FAILED' or s4 == 'FAILED' or s5 == 'FAILED') %}
+            Failed to complete AIDE installation and configuration. Check repository configuration and permissions.
+          {% else %}
+            Remediation could not be completed. Check individual requirement statuses.
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 6.1.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 6.1.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - "========================================================"

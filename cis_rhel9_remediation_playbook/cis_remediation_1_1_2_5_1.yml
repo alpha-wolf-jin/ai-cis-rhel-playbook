@@ -1,0 +1,766 @@
+---
+- name: Remediation for CIS 1.1.2.5.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_5_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.5.1"
+    
+    # Requirement definitions
+    req_1: "Check if /var/tmp is already a separate partition"
+    req_2: "Determine if system is new installation or existing installation"
+    req_3: "For new installation: Create custom partition layout with separate /var/tmp partition"
+    req_4: "For existing installation: Create new partition for /var/tmp"
+    req_5: "For existing installation: Format the new partition with filesystem"
+    req_6: "For existing installation: Backup existing /var/tmp data"
+    req_7: "For existing installation: Add entry to /etc/fstab"
+    req_8: "For existing installation: Mount the new partition"
+    req_9: "For existing installation: Restore backed-up data and set sticky bit"
+    req_10: "Verify /var/tmp is a separate partition"
+    
+    # Variables for partition configuration
+    vartmp_partition: "/dev/mapper/vg00-vartmp"
+    vartmp_fstype: "ext4"
+    vartmp_mount_options: "defaults"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE ---
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Unmount /var/tmp if mounted"
+      shell: |
+        if findmnt /var/tmp >/dev/null 2>&1; then
+          umount /var/tmp 2>/dev/null || true
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Capture current /var/tmp mount info"
+      shell: |
+        echo "Current /var/tmp mount information"
+        findmnt --kernel /var/tmp 2>/dev/null || echo "Not mounted as separate partition"
+        echo ""
+        echo "Current /etc/fstab entries"
+        grep -E '/var/tmp|vartmp' /etc/fstab 2>/dev/null || echo "No /var/tmp entries in fstab"
+      args:
+        executable: /bin/bash
+      register: _sg_mount_info
+      changed_when: false
+
+    - name: "State Guard - Save mount info"
+      copy:
+        content: "{{ _sg_mount_info.stdout }}"
+        dest: "{{ state_guard_dir }}/mount_info.bak"
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        # Initialize all data variables
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        data_6: ""
+        data_7: ""
+        data_8: ""
+        data_9: ""
+        data_10: ""
+        # Initialize task variables
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        task_9_name: "Not executed"
+        task_9_cmd: "N/A"
+        task_9_rc: -1
+        task_10_name: "Not executed"
+        task_10_cmd: "N/A"
+        task_10_rc: -1
+        # Initialize partition existence flag
+        partition_exists: false
+
+    # Requirement 1: Check if /var/tmp is already a separate partition
+    - name: "Req 1 - Check if /var/tmp is already a separate partition"
+      shell: |
+        echo "Checking current /var/tmp mount status"
+        findmnt --kernel /var/tmp 2>/dev/null || echo "Not mounted as separate partition"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if /var/tmp is already a separate partition"
+        task_1_cmd: "findmnt --kernel /var/tmp"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if ' /var/tmp ' in output and 'TARGET' not in output %}
+              APPLIED: /var/tmp is already mounted as a separate partition - remediation not needed
+            {% else %}
+              APPLIED: Check completed - /var/tmp is not a separate partition, proceeding with remediation
+            {% endif %}
+          {% else %}
+            FAILED: Could not check /var/tmp mount status
+          {% endif %}
+
+    # Requirement 2: Determine if system is new installation or existing installation
+    - name: "Req 2 - Determine installation type"
+      shell: |
+        # Use heuristic to check if system appears to be newly installed
+        uptime_days=$(cat /proc/uptime 2>/dev/null | cut -d' ' -f1 | awk '{print $1/86400}')
+        if [ "$(echo "$uptime_days < 1" | bc 2>/dev/null)" = "1" ] && [ ! -f /etc/fstab.save ] && ! grep -q "^/dev/" /etc/fstab 2>/dev/null; then
+          echo "NEW_INSTALLATION"
+        else
+          echo "EXISTING_INSTALLATION"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Determine if system is new installation or existing installation"
+        task_2_cmd: "Check uptime and fstab to determine installation type"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'NEW_INSTALLATION' in output or 'EXISTING_INSTALLATION' in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'NEW_INSTALLATION' in output %}
+            APPLIED: System appears to be a new installation
+          {% elif 'EXISTING_INSTALLATION' in output %}
+            APPLIED: System is an existing installation
+          {% else %}
+            FAILED: Could not determine installation type
+          {% endif %}
+        installation_type: "{{ result_2.stdout | default('') | trim }}"
+
+    # Requirement 3: For new installation - manual action required
+    - name: "Req 3 - New installation partition setup"
+      shell: |
+        echo "New installation procedure"
+        echo "For new installations"
+        echo "During OS installation, create a custom partition layout"
+        echo "and specify a separate partition for /var/tmp"
+        echo ""
+        echo "MANUAL ACTION REQUIRED: This cannot be automated post-installation"
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: installation_type == 'NEW_INSTALLATION'
+
+    - name: Store requirement 3 details for new installation
+      set_fact:
+        task_3_name: "New installation partition setup"
+        task_3_cmd: "Echo manual instructions for new installation"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: Manual action required for new installations - create separate /var/tmp partition during OS installation"
+      when: installation_type == 'NEW_INSTALLATION'
+
+    - name: Store requirement 3 details for existing installation
+      set_fact:
+        task_3_name: "New installation partition setup"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: "Not applicable - system is existing installation"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: System is existing installation, new installation path not applicable"
+      when: installation_type == 'EXISTING_INSTALLATION'
+
+    # Requirements 4-9: For existing installations
+    # Requirement 4: Check if partition device exists or create new partition
+    - name: "Req 4 - Check or create partition for /var/tmp"
+      shell: |
+        # Set variables from Ansible
+        partition_device="{{ vartmp_partition }}"
+        
+        echo "Partition status for /var/tmp"
+        
+        # Check if the partition device exists
+        if [ -b "$partition_device" ]; then
+          echo "Partition $partition_device already exists"
+          lsblk "$partition_device" 2>/dev/null || true
+        else
+          echo "Partition $partition_device does not exist"
+          echo ""
+          echo "MANUAL ACTION REQUIRED:"
+          echo "1. Allocate disk space (e.g., using LVM or on a new disk)"
+          echo "2. Create a new partition for /var/tmp"
+          echo "3. Set the 'vartmp_partition' variable to the correct device path"
+          echo ""
+          echo "Example LVM commands (run manually):"
+          echo "  lvcreate -L 1G -n vartmp vg00"
+          echo "  # Then set: vartmp_partition: '/dev/mapper/vg00-vartmp'"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: installation_type == 'EXISTING_INSTALLATION'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Check or create partition for /var/tmp"
+        task_4_cmd: "Check if {{ vartmp_partition }} exists, else show manual instructions"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if 'already exists' in output %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if 'already exists' in output %}
+            APPLIED: Partition {{ vartmp_partition }} already exists
+          {% else %}
+            SKIPPED: Manual action required - create partition {{ vartmp_partition }} first
+          {% endif %}
+        partition_exists: "{{ 'already exists' in result_4.stdout | default('') }}"
+      when: installation_type == 'EXISTING_INSTALLATION'
+
+    # Requirement 5: Format the partition - ONLY if partition exists
+    - name: "Req 5 - Format partition with filesystem"
+      shell: |
+        # Set variables from Ansible
+        partition_device="{{ vartmp_partition }}"
+        fstype="{{ vartmp_fstype }}"
+        
+        echo "Formatting partition"
+        
+        # Check if already formatted
+        if blkid "$partition_device" >/dev/null 2>&1; then
+          echo "Partition $partition_device is already formatted"
+          blkid "$partition_device"
+        else
+          echo "Formatting $partition_device with $fstype filesystem"
+          mkfs -t "$fstype" "$partition_device"
+          echo "Format completed"
+          blkid "$partition_device"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    - name: Store requirement 5 details for existing partition
+      set_fact:
+        task_5_name: "Format partition with filesystem"
+        task_5_cmd: "mkfs -t {{ vartmp_fstype }} {{ vartmp_partition }}"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if result_5.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if result_5.rc | default(-1) == 0 %}
+            {% if 'already formatted' in output %}
+              APPLIED: Partition was already formatted
+            {% else %}
+              APPLIED: Partition formatted successfully
+            {% endif %}
+          {% else %}
+            FAILED: Could not format partition - command returned exit code {{ result_5.rc | default(-1) }}
+          {% endif %}
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    # Set status for Requirement 5 when partition doesn't exist
+    - name: Store requirement 5 details for missing partition
+      set_fact:
+        task_5_name: "Format partition with filesystem"
+        task_5_cmd: "mkfs -t {{ vartmp_fstype }} {{ vartmp_partition }}"
+        task_5_rc: -1
+        data_5: "Partition does not exist - cannot format"
+        status_5: "SKIPPED"
+        rationale_5: "SKIPPED: Cannot format non-existent partition {{ vartmp_partition }} - manual partition creation required first"
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == false
+
+    # Requirement 6: Backup existing /var/tmp data - Run for all existing installations
+    - name: "Req 6 - Backup existing /var/tmp data"
+      shell: |
+        echo "Backing up /var/tmp data"
+        
+        # Check if /var/tmp exists and has content
+        if [ -d /var/tmp ]; then
+          echo "Creating backup of /var/tmp at /var/tmp.backup"
+          cp -pr /var/tmp /var/tmp.backup
+          echo "Backup completed"
+          ls -la /var/tmp.backup/ | head -20
+        else
+          echo "/var/tmp directory does not exist or is empty"
+          mkdir -p /var/tmp
+        fi
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: installation_type == 'EXISTING_INSTALLATION'
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Backup existing /var/tmp data"
+        task_6_cmd: "cp -pr /var/tmp /var/tmp.backup"
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: >-
+          {% if result_6.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_6: >-
+          {% if result_6.rc | default(-1) == 0 %}
+            APPLIED: /var/tmp data backed up successfully
+          {% else %}
+            FAILED: Could not backup /var/tmp data
+          {% endif %}
+      when: installation_type == 'EXISTING_INSTALLATION'
+
+    # Requirement 7: Add entry to /etc/fstab - ONLY if partition exists
+    - name: "Req 7 - Add entry to /etc/fstab"
+      shell: |
+        # Set variables from Ansible
+        partition_device="{{ vartmp_partition }}"
+        fstype="{{ vartmp_fstype }}"
+        mount_options="{{ vartmp_mount_options }}"
+        
+        echo "BEFORE modifying /etc/fstab"
+        cat /etc/fstab
+        echo ""
+        echo "APPLYING CHANGE"
+        
+        # Remove any existing /var/tmp entry
+        grep -v "[[:space:]]/var/tmp[[:space:]]" /etc/fstab > /etc/fstab.tmp
+        mv /etc/fstab.tmp /etc/fstab
+        
+        # Add new entry
+        echo "$partition_device /var/tmp $fstype $mount_options 0 0" >> /etc/fstab
+        
+        echo ""
+        echo "AFTER modifying /etc/fstab"
+        cat /etc/fstab
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    - name: Store requirement 7 details for existing partition
+      set_fact:
+        task_7_name: "Add entry to /etc/fstab"
+        task_7_cmd: "Add '{{ vartmp_partition }} /var/tmp {{ vartmp_fstype }} {{ vartmp_mount_options }} 0 0' to /etc/fstab"
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: >-
+          {% if result_7.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_7: >-
+          {% if result_7.rc | default(-1) == 0 %}
+            APPLIED: Added /var/tmp entry to /etc/fstab
+          {% else %}
+            FAILED: Could not modify /etc/fstab
+          {% endif %}
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    # Set status for Requirement 7 when partition doesn't exist
+    - name: Store requirement 7 details for missing partition
+      set_fact:
+        task_7_name: "Add entry to /etc/fstab"
+        task_7_cmd: "Add '{{ vartmp_partition }} /var/tmp {{ vartmp_fstype }} {{ vartmp_mount_options }} 0 0' to /etc/fstab"
+        task_7_rc: -1
+        data_7: "Partition does not exist - cannot add to fstab"
+        status_7: "SKIPPED"
+        rationale_7: "SKIPPED: Cannot add non-existent partition to fstab - manual partition creation required first"
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == false
+
+    # Requirement 8: Mount the new partition - ONLY if partition exists
+    - name: "Req 8 - Mount the new partition"
+      shell: |
+        echo "Mounting /var/tmp"
+        
+        # Unmount if already mounted (should not be at this point)
+        umount /var/tmp 2>/dev/null || true
+        
+        # Create mount point if it does not exist
+        mkdir -p /var/tmp
+        
+        # Mount the partition
+        mount /var/tmp
+        
+        echo "Mount completed"
+        mount | grep /var/tmp || echo "Not showing in mount output"
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    - name: Store requirement 8 details for existing partition
+      set_fact:
+        task_8_name: "Mount the new partition"
+        task_8_cmd: "mount /var/tmp"
+        task_8_rc: "{{ result_8.rc | default(-1) }}"
+        data_8: |
+          {{ result_8.stdout | default('') | trim }}{% if result_8.stderr is defined %}\nSTDERR: {{ result_8.stderr | default('') | trim }}{% endif %}
+        status_8: >-
+          {% if result_8.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_8: >-
+          {% set stderr = result_8.stderr | default('') | trim %}
+          {% if result_8.rc | default(-1) == 0 %}
+            APPLIED: /var/tmp mounted successfully
+          {% else %}
+            FAILED: Could not mount /var/tmp - {{ stderr }}
+          {% endif %}
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    # Set status for Requirement 8 when partition doesn't exist
+    - name: Store requirement 8 details for missing partition
+      set_fact:
+        task_8_name: "Mount the new partition"
+        task_8_cmd: "mount /var/tmp"
+        task_8_rc: -1
+        data_8: "Partition does not exist - cannot mount"
+        status_8: "SKIPPED"
+        rationale_8: "SKIPPED: Cannot mount non-existent partition - manual partition creation required first"
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == false
+
+    # Requirement 9: Restore backed-up data and set sticky bit - ONLY if partition exists
+    - name: "Req 9 - Restore backed-up data and set sticky bit"
+      shell: |
+        echo "Restoring /var/tmp data"
+        
+        if [ -d /var/tmp.backup ]; then
+          echo "Restoring data from /var/tmp.backup to /var/tmp"
+          cp -pr /var/tmp.backup/* /var/tmp/ 2>/dev/null || true
+          echo "Setting sticky bit on /var/tmp"
+          chmod 1777 /var/tmp
+          echo "Restore completed"
+        else
+          echo "No backup found, setting up empty /var/tmp with sticky bit"
+          chmod 1777 /var/tmp
+        fi
+      args:
+        executable: /bin/bash
+      register: result_9
+      ignore_errors: true
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    - name: Store requirement 9 details for existing partition
+      set_fact:
+        task_9_name: "Restore backed-up data and set sticky bit"
+        task_9_cmd: "cp -pr /var/tmp.backup/* /var/tmp/ && chmod 1777 /var/tmp"
+        task_9_rc: "{{ result_9.rc | default(-1) }}"
+        data_9: "{{ result_9.stdout | default('') | trim }}"
+        status_9: >-
+          {% if result_9.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_9: >-
+          {% if result_9.rc | default(-1) == 0 %}
+            APPLIED: Data restored and sticky bit set on /var/tmp
+          {% else %}
+            FAILED: Could not restore data or set sticky bit
+          {% endif %}
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == true
+
+    # Set status for Requirement 9 when partition doesn't exist
+    - name: Store requirement 9 details for missing partition
+      set_fact:
+        task_9_name: "Restore backed-up data and set sticky bit"
+        task_9_cmd: "cp -pr /var/tmp.backup/* /var/tmp/ && chmod 1777 /var/tmp"
+        task_9_rc: -1
+        data_9: "Partition does not exist - cannot restore data"
+        status_9: "SKIPPED"
+        rationale_9: "SKIPPED: Cannot restore data to non-existent partition - manual partition creation required first"
+      when:
+        - installation_type == 'EXISTING_INSTALLATION'
+        - partition_exists == false
+
+    # Requirement 10: Verify /var/tmp is a separate partition
+    - name: "Req 10 - Verify /var/tmp is a separate partition"
+      shell: |
+        echo "Verification of /var/tmp partition"
+        findmnt --kernel /var/tmp
+      args:
+        executable: /bin/bash
+      register: result_10
+      ignore_errors: true
+
+    - name: Store requirement 10 details
+      set_fact:
+        task_10_name: "Verify /var/tmp is a separate partition"
+        task_10_cmd: "findmnt --kernel /var/tmp"
+        task_10_rc: "{{ result_10.rc | default(-1) }}"
+        data_10: "{{ result_10.stdout | default('') | trim }}"
+        status_10: >-
+          {% set output = result_10.stdout | default('') | trim %}
+          {% if result_10.rc | default(-1) == 0 and output != '' and ' /var/tmp ' in output and 'TARGET' not in output %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_10: >-
+          {% set output = result_10.stdout | default('') | trim %}
+          {% if result_10.rc | default(-1) == 0 and output != '' and ' /var/tmp ' in output and 'TARGET' not in output %}
+            APPLIED: /var/tmp is now mounted as a separate partition
+          {% else %}
+            FAILED: /var/tmp is not a separate partition (exit code: {{ result_10.rc | default(-1) }})
+          {% endif %}
+
+    # Calculate overall remediation status
+    - name: Calculate overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if installation_type == 'NEW_INSTALLATION' %}
+            SKIPPED
+          {% elif installation_type == 'EXISTING_INSTALLATION' and partition_exists == false %}
+            SKIPPED
+          {% elif installation_type == 'EXISTING_INSTALLATION' and partition_exists == true %}
+            {% set critical_statuses = [status_5, status_7, status_8, status_10] %}
+            {% if 'FAILED' in critical_statuses %}
+              FAILED
+            {% elif 'SKIPPED' in critical_statuses %}
+              PARTIALLY APPLIED
+            {% elif status_5 == 'APPLIED' and status_7 == 'APPLIED' and status_8 == 'APPLIED' and status_10 == 'APPLIED' %}
+              APPLIED
+            {% else %}
+              PARTIALLY APPLIED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if installation_type == 'NEW_INSTALLATION' %}
+            Manual action required: Create separate /var/tmp partition during OS installation
+          {% elif installation_type == 'EXISTING_INSTALLATION' and partition_exists == false %}
+            Manual action required: Create partition {{ vartmp_partition }} first, then re-run remediation
+          {% elif installation_type == 'EXISTING_INSTALLATION' and partition_exists == true %}
+            {% if overall_status == 'APPLIED' %}
+              Successfully created and mounted separate partition for /var/tmp
+            {% elif overall_status == 'PARTIALLY APPLIED' %}
+              Some steps completed successfully but others failed or were skipped
+            {% elif overall_status == 'FAILED' %}
+              Critical remediation steps failed - check individual requirement statuses
+            {% endif %}
+          {% else %}
+            Could not determine installation type or other critical error
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.5.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.5.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') }}"
+          - "  Command: {{ task_7_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_7_rc | default(-1) }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name | default('Task not recorded') }}"
+          - "  Command: {{ task_8_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_8_rc | default(-1) }}"
+          - "  Data: {{ data_8 | default('') | trim }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 9 - {{ req_9 }}:"
+          - "  Task: {{ task_9_name | default('Task not recorded') }}"
+          - "  Command: {{ task_9_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_9_rc | default(-1) }}"
+          - "  Data: {{ data_9 | default('') | trim }}"
+          - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_9 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 10 - {{ req_10 }}:"
+          - "  Task: {{ task_10_name | default('Task not recorded') }}"
+          - "  Command: {{ task_10_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_10_rc | default(-1) }}"
+          - "  Data: {{ data_10 | default('') | trim }}"
+          - "  Status: {{ status_10 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_10 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

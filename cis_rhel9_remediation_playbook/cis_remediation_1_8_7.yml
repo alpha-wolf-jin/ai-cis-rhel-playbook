@@ -1,0 +1,333 @@
+---
+- name: Remediation for CIS 1.8.7
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_8_7"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.7"
+    req_1: "Run the provided CIS remediation script to fix Ensure GDM disabling automatic mounting of removable media is not overridden"
+    req_2: "VERIFY: Run the CIS audit procedure to confirm Ensure GDM disabling automatic mounting of removable media is not overridden is now properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Note: The remediation script modifies files in /etc/dconf/db/*/locks/
+    # We'll restore from backups if they exist
+    - name: "State Guard - Restore dconf lock files from backup"
+      copy:
+        src: "{{ state_guard_dir }}/locks"
+        dest: "/etc/dconf/db/"
+        remote_src: true
+        directory_mode: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Update dconf database to restore state"
+      shell: dconf update
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if dconf lock directories exist before backup
+    - name: "State Guard - Check if dconf lock directories exist"
+      shell: |
+        find /etc/dconf/db -name "locks" -type d 2>/dev/null || true
+      args:
+        executable: /bin/bash
+      register: _sg_dconf_locks
+      changed_when: false
+
+    - name: "State Guard - Backup dconf lock directories if they exist"
+      copy:
+        src: "/etc/dconf/db/"
+        dest: "{{ state_guard_dir }}/"
+        remote_src: true
+        directory_mode: true
+      when: _sg_dconf_locks.stdout != ''
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_1: ""
+        data_2: ""
+
+    # Requirement 1: Run the provided CIS remediation script
+    - name: "Req 1 - Execute CIS remediation script for GDM automount lock"
+      copy:
+        dest: "/tmp/cis_remediation_1.8.7.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             # Check if GNMOE Desktop Manager is installed.  If package isn't installed, recommendation is Not Applicable
+             # determine system's package manager
+             l_pkgoutput=""
+             if command -v dpkg-query > /dev/null 2>&1; then
+                l_pq="dpkg-query -W"
+             elif command -v rpm > /dev/null 2>&1; then
+                l_pq="rpm -q"
+             fi
+             # Check if GDM is installed
+             l_pcl="gdm gdm3" # Space separated list of packages to check
+             for l_pn in $l_pcl; do
+                $l_pq "$l_pn" > /dev/null 2>&1 && l_pkgoutput="y" && echo -e "\n - Package: \"$l_pn\" exists on the system\n - remediating configuration if needed"
+             done
+             # Check configuration (If applicable)
+             if [ -n "$l_pkgoutput" ]; then
+                # Look for automount to determine profile in use, needed for remaining tests
+                l_kfd="/etc/dconf/db/$(grep -Psril '^\h*automount\b' /etc/dconf/db/*/ | awk -F'/' '{split($(NF-1),a,".");print a[1]}').d" #set directory of key file to be locked
+                # Look for automount-open to determine profile in use, needed for remaining tests
+                l_kfd2="/etc/dconf/db/$(grep -Psril '^\h*automount-open\b' /etc/dconf/db/*/ | awk -F'/' '{split($(NF-1),a,".");print a[1]}').d" #set directory of key file to be locked
+                if [ -d "$l_kfd" ]; then # If key file directory doesn't exist, options can't be locked
+                   if grep -Priq '^\h*\/org/gnome\/desktop\/media-handling\/automount\b' "$l_kfd"; then
+                      echo " - \"automount\" is locked in \"$(grep -Pril '^\h*\/org/gnome\/desktop\/media- handling\/automount\b' "$l_kfd")\""
+                   else
+                      echo " - creating entry to lock \"automount\""
+                      [ ! -d "$l_kfd"/locks ] && echo "creating directory $l_kfd/locks" && mkdir "$l_kfd"/locks
+                      {
+                         echo -e '\n# Lock desktop media-handling automount setting'
+                         echo '/org/gnome/desktop/media-handling/automount'
+                      } >> "$l_kfd"/locks/00-media-automount
+                   fi
+                else
+                   echo -e " - \"automount\" is not set so it can not be locked\n - Please follow Recommendation \"Ensure GDM automatic mounting of removable media is disabled\" and follow this Recommendation again"
+                fi
+                if [ -d "$l_kfd2" ]; then # If key file directory doesn't exist, options can't be locked
+                   if grep -Priq '^\h*\/org/gnome\/desktop\/media-handling\/automount-open\b' "$l_kfd2"; then
+                      echo " - \"automount-open\" is locked in \"$(grep -Pril '^\h*\/org/gnome\/desktop\/media-handling\/automount-open\b' "$l_kfd2")\""
+                   else
+                      echo " - creating entry to lock \"automount-open\""
+                      [ ! -d "$l_kfd2"/locks ] && echo "creating directory $l_kfd2/locks" && mkdir "$l_kfd2"/locks
+                      {
+                         echo -e '\n# Lock desktop media-handling automount-open setting'
+                         echo '/org/gnome/desktop/media-handling/automount-open'
+                      } >> "$l_kfd2"/locks/00-media-automount
+                   fi
+                else
+                   echo -e " - \"automount-open\" is not set so it can not be locked\n - Please follow Recommendation \"Ensure GDM automatic mounting of removable media is disabled\" and follow this Recommendation again"
+                fi
+                # update dconf database
+                dconf update
+             else
+                echo -e " - GNOME Desktop Manager package is not installed on the system\n  - Recommendation is not applicable"
+             fi
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Execute the remediation script"
+      shell: "/tmp/cis_remediation_1.8.7.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary remediation script"
+      file:
+        path: "/tmp/cis_remediation_1.8.7.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script for GDM automount lock"
+        task_1_cmd: "bash /tmp/cis_remediation_1.8.7.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'GNOME Desktop Manager package is not installed on the system' in output %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if 'GNOME Desktop Manager package is not installed on the system' in output %}
+            SKIPPED: GDM not installed, remediation not applicable
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: Script executed successfully to lock automount settings
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Verify the remediation
+    - name: "Req 2 - Check if automount and automount-open are locked"
+      shell: |
+        # Check if GDM is installed
+        if command -v dpkg-query > /dev/null 2>&1; then
+          l_pq="dpkg-query -W"
+        elif command -v rpm > /dev/null 2>&1; then
+          l_pq="rpm -q"
+        fi
+        
+        l_pcl="gdm gdm3"
+        l_pkgoutput=""
+        for l_pn in $l_pcl; do
+          $l_pq "$l_pn" > /dev/null 2>&1 && l_pkgoutput="y"
+        done
+        
+        if [ -n "$l_pkgoutput" ]; then
+          # Check if automount is locked
+          automount_locked=false
+          automount_open_locked=false
+          
+          # Check all lock files in /etc/dconf/db/*/locks/
+          find /etc/dconf/db -name "*.d" -type d 2>/dev/null | while read -r dir; do
+            lock_dir="$dir/locks"
+            if [ -d "$lock_dir" ]; then
+              if grep -rq '^/org/gnome/desktop/media-handling/automount$' "$lock_dir" 2>/dev/null; then
+                automount_locked=true
+              fi
+              if grep -rq '^/org/gnome/desktop/media-handling/automount-open$' "$lock_dir" 2>/dev/null; then
+                automount_open_locked=true
+              fi
+            fi
+          done
+          
+          if [ "$automount_locked" = true ] && [ "$automount_open_locked" = true ]; then
+            echo "COMPLIANT: Both automount and automount-open are locked"
+          elif [ "$automount_locked" = true ]; then
+            echo "PARTIAL: Only automount is locked"
+          elif [ "$automount_open_locked" = true ]; then
+            echo "PARTIAL: Only automount-open is locked"
+          else
+            echo "NON-COMPLIANT: Neither automount nor automount-open are locked"
+          fi
+        else
+          echo "SKIPPED: GDM not installed"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check if automount and automount-open are locked"
+        task_2_cmd: "Check dconf lock files for automount settings"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'SKIPPED: GDM not installed' in output %}
+            SKIPPED
+          {% elif 'COMPLIANT:' in output %}
+            APPLIED
+          {% elif 'PARTIAL:' in output %}
+            FAILED
+          {% elif 'NON-COMPLIANT:' in output %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'SKIPPED: GDM not installed' in output %}
+            SKIPPED: GDM not installed, verification not applicable
+          {% elif 'COMPLIANT:' in output %}
+            APPLIED: Both automount and automount-open settings are locked
+          {% elif 'PARTIAL:' in output %}
+            FAILED: Only one of the two required settings is locked
+          {% elif 'NON-COMPLIANT:' in output %}
+            FAILED: Neither automount nor automount-open settings are locked
+          {% else %}
+            FAILED: Verification check failed or produced unexpected output
+          {% endif %}
+
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' and status_2 | default('') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | default('') | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | default('') | trim == 'SKIPPED' and status_2 | default('') | trim == 'SKIPPED' %}
+            GDM not installed - remediation not applicable
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'APPLIED' %}
+            Remediation successfully applied and verified
+          {% elif status_1 | default('') | trim == 'APPLIED' and status_2 | default('') | trim == 'FAILED' %}
+            Remediation script ran but verification failed - partial application
+          {% elif status_1 | default('') | trim == 'FAILED' %}
+            Remediation script failed to execute
+          {% else %}
+            Unexpected status combination
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.8.7"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.8.7"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

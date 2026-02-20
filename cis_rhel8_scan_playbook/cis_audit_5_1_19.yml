@@ -1,135 +1,321 @@
 ---
-- name: Data Collection for CIS 5.1.19
+- name: Data Collection for CIS 5.1.19 - Ensure sshd MaxSessions is configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    # CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.19
-    req_1: "Run the following script to verify the global sshd MaxSessions parameter is configured to 10"
-    req_2: "If Match blocks are used in the sshd configuration, run the following script to verify the MaxSessions parameter for the 'sshuser' connection is configured to 10"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19"
+    req_1: "Run the provided CIS audit script to verify Ensure sshd MaxSessions is configured. Run the following script and verify that MaxSessions is 10 or less"
+    req_2: "Check for match block configurations that might override MaxSessions setting"
     req_3: "OVERALL Verify: Ensure sshd MaxSessions is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        match_blocks_used: false
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
 
-    - name: Check if Match blocks are used in sshd configuration
-      shell: |
-        grep -q "^Match" /etc/ssh/sshd_config
-      args:
-        executable: /bin/bash
-      register: match_check
+    # Requirement 1: Run the provided CIS audit script to verify Ensure sshd MaxSessions is configured
+    - name: Req 1 - Execute CIS audit script for MaxSessions
+      copy:
+        dest: "/tmp/cis_audit_5.1.19.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T  $OPTIONS $CRYPTO_POLICY | grep -i maxsessions
+          {% endraw %}
+      register: script_create_1
       ignore_errors: true
-      failed_when: false
-      changed_when: false
 
-    - name: Set match_blocks_used fact
-      set_fact:
-        match_blocks_used: "{{ match_check.rc == 0 }}"
-
-    # Requirement 1: Run the following script to verify the global sshd MaxSessions parameter is configured to 10
-    - name: "Req 1 - Check global sshd MaxSessions"
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY | grep -i maxsessions
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.19.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.19.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check global sshd MaxSessions"
-        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i maxsessions"
+        task_1_name: "Execute CIS audit script for MaxSessions"
+        task_1_cmd: "/tmp/cis_audit_5.1.19.sh"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'maxsessions 10') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'maxsessions 10', FAIL otherwise"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set match_result = output | regex_search('maxsessions\\s+([0-9]+)') %}
+            {% if match_result %}
+              {% set value = output | regex_replace('.*maxsessions\\s+([0-9]+).*', '\1') | int %}
+              {% if value <= 10 %}
+                PASS
+              {% else %}
+                FAIL
+              {% endif %}
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+      ignore_errors: true
 
-    # Requirement 2: If Match blocks are used in the sshd configuration, run the following script to verify the MaxSessions parameter for the 'sshuser' connection is configured to 10
-    - name: "Req 2 - Check sshd MaxSessions for sshuser (if Match blocks used)"
+    - name: Set requirement 1 rationale
+      set_fact:
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% set match_result = output | regex_search('maxsessions\\s+([0-9]+)') %}
+            {% if match_result %}
+              {% set value = output | regex_replace('.*maxsessions\\s+([0-9]+).*', '\1') | int %}
+              {% if value <= 10 %}
+                PASS when MaxSessions is 10 or less, FAIL otherwise
+              {% else %}
+                FAIL: MaxSessions is greater than 10
+              {% endif %}
+            {% else %}
+              FAIL: MaxSessions not found
+            {% endif %}
+          {% else %}
+            FAIL: No output from script
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 2: Check for match block configurations
+    # First check if Match blocks exist in sshd_config
+    - name: Req 2 - Check for Match blocks in sshd_config
       shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config
-        source /etc/sysconfig/sshd
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i maxsessions
+        {% raw %}
+        # Check if sshd_config has any Match blocks
+        if grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null; then
+          echo "Match blocks found"
+        else
+          echo "No match blocks found"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: match_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 2 - Execute match block audit if Match blocks exist
+      copy:
+        dest: "/tmp/cis_audit_5.1.19_match.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          
+          # Initialize variables
+          match_blocks_found=false
+          all_match_blocks_pass=true
+          output_lines=""
+          
+          # Check if we have Match blocks to test
+          if grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null; then
+            match_blocks_found=true
+            echo "Match blocks found in sshd_config"
+            
+            # The CIS procedure says to specify connection parameters for -T extended test mode
+            # We will test with common connection parameters that might be used in Match blocks
+            
+            # Common connection parameters to test based on typical Match block patterns
+            # User-based parameters (common in Match blocks)
+            for test_user in root sshuser; do
+              if id "$test_user" &>/dev/null || [ "$test_user" = "root" ]; then
+                user_output=$(sshd -T $OPTIONS $CRYPTO_POLICY -C user=$test_user 2>/dev/null | grep -i maxsessions)
+                if [ -n "$user_output" ]; then
+                  value=$(echo "$user_output" | awk '{print $2}')
+                  if [ "$value" -gt 10 ] 2>/dev/null; then
+                    output_lines="$output_lines\nFAIL: MaxSessions is $value for user=$test_user (should be <=10)"
+                    all_match_blocks_pass=false
+                  else
+                    output_lines="$output_lines\nPASS: MaxSessions is $value for user=$test_user"
+                  fi
+                fi
+              fi
+            done
+            
+            # Address-based parameters
+            for test_addr in 127.0.0.1 localhost; do
+              addr_output=$(sshd -T $OPTIONS $CRYPTO_POLICY -C addr=$test_addr 2>/dev/null | grep -i maxsessions)
+              if [ -n "$addr_output" ]; then
+                value=$(echo "$addr_output" | awk '{print $2}')
+                if [ "$value" -gt 10 ] 2>/dev/null; then
+                  output_lines="$output_lines\nFAIL: MaxSessions is $value for addr=$test_addr (should be <=10)"
+                  all_match_blocks_pass=false
+                else
+                  output_lines="$output_lines\nPASS: MaxSessions is $value for addr=$test_addr"
+                fi
+              fi
+            done
+            
+            # If no specific match block output was found, use the default
+            if [ -z "$output_lines" ]; then
+              echo "No match block overrides found for tested parameters"
+            else
+              echo -e "$output_lines"
+            fi
+            
+            # Set final status
+            if [ "$all_match_blocks_pass" = true ]; then
+              echo "** MATCH BLOCK CHECK PASS **"
+              exit 0
+            else
+              echo "** MATCH BLOCK CHECK FAIL **"
+              exit 1
+            fi
+          else
+            echo "No Match blocks found in sshd_config"
+            echo "** MATCH BLOCK CHECK PASS ** (no match blocks to check)"
+            exit 0
+          fi
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: match_check is defined
+
+    - name: Req 2 - Execute the match block audit script
+      shell: "/tmp/cis_audit_5.1.19_match.sh"
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: match_blocks_used
+      when: script_create_2 is defined
 
-    - name: Store requirement 2 details and determine status
+    - name: Req 2 - Remove temporary match block audit script
+      file:
+        path: "/tmp/cis_audit_5.1.19_match.sh"
+        state: absent
+      ignore_errors: true
+      when: script_create_2 is defined
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check sshd MaxSessions for sshuser"
-        task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i maxsessions"
+        task_2_name: "Check for match block configurations"
+        task_2_cmd: "/tmp/cis_audit_5.1.19_match.sh"
         task_2_rc: "{{ result_2.rc | default(-1) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >
-          {{
-            (
-              'PASS' if (result_2.stdout | default('') | trim == 'maxsessions 10')
-              else 'FAIL' if match_blocks_used
-              else 'NA'
-            ) | trim
-          }}
-        rationale_2: "PASS when output is 'maxsessions 10', FAIL when match blocks used and output not 'maxsessions 10', NA when no match blocks used"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if '** MATCH BLOCK CHECK PASS **' in output %}
+              PASS
+            {% elif '** MATCH BLOCK CHECK FAIL **' in output %}
+              FAIL
+            {% elif 'No Match blocks found' in output %}
+              PASS
+            {% elif result_2.rc == 0 %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            UNKNOWN
+          {% endif %}
+      ignore_errors: true
 
-    # Requirement 3: OVERALL Verify: Ensure sshd MaxSessions is configured
-    - name: Store requirement 3 details and determine overall status
+    - name: Set requirement 2 rationale
       set_fact:
-        status_3: >
-          {{
-            (
-              'PASS' if (
-                status_1 | trim == 'PASS' and
-                (not match_blocks_used or (match_blocks_used and status_2 | trim == 'PASS'))
-              )
-              else 'FAIL'
-            ) | trim
-          }}
-        rationale_3: "PASS when req_1=PASS AND (if Match blocks are used, req_2=PASS), FAIL otherwise"
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if '** MATCH BLOCK CHECK PASS **' in output %}
+              PASS when no match blocks found or all tested match block configurations have MaxSessions <=10, FAIL otherwise
+            {% elif '** MATCH BLOCK CHECK FAIL **' in output %}
+              FAIL: Match block configuration has MaxSessions >10
+            {% elif 'No Match blocks found' in output %}
+              PASS: No match blocks to check
+            {% elif result_2.rc == 0 %}
+              PASS: Match block check passed
+            {% else %}
+              FAIL: Match block check failed
+            {% endif %}
+          {% else %}
+            FAIL: No output from match block audit script
+          {% endif %}
+      ignore_errors: true
+
+    # Requirement 3: OVERALL Verify
+    - name: Req 3 - Determine overall compliance
+      set_fact:
+        task_3_name: "Overall compliance determination"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "Based on requirement 1: {{ status_1 | default('UNKNOWN') }} and requirement 2: {{ status_2 | default('UNKNOWN') }}"
+        status_3: >-
+          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+      ignore_errors: true
+
+    - name: Set requirement 3 rationale
+      set_fact:
+        rationale_3: >-
+          {% if status_1 | default('FAIL') | trim == 'PASS' and status_2 | default('FAIL') | trim == 'PASS' %}
+            PASS when both global check (req_1) and match block check (req_2) pass, FAIL otherwise
+          {% else %}
+            FAIL: Either global check or match block check failed
+          {% endif %}
+      ignore_errors: true
 
     - name: Generate compliance report
       debug:
-        msg: |
-          ========================================================
-                  COMPLIANCE REPORT - CIS 5.1.19
-          ========================================================
-          Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.19
-          ========================================================
-
-          REQUIREMENT 1 - {{ req_1 }}:
-            Task: {{ task_1_name }}
-            Command: {{ task_1_cmd }}
-            Exit code: {{ task_1_rc }}
-            Data: {{ data_1 }}
-            Status: {{ status_1 }}
-            Rationale: {{ rationale_1 }}
-
-          REQUIREMENT 2 - {{ req_2 }}:
-            Task: {{ task_2_name }}
-            Command: {{ task_2_cmd }}
-            Exit code: {{ task_2_rc }}
-            Data: {{ data_2 }}
-            Status: {{ status_2 }}
-            Rationale: {{ rationale_2 }}
-
-          ========================================================
-          OVERALL COMPLIANCE:
-            Result: {{ status_3 }}
-            Rationale: {{ rationale_3 }}
-          ========================================================
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 5.1.19"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.19"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Overall compliance determined by requirement 3') | trim }}"
+          - "========================================================"

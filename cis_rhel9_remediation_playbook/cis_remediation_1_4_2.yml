@@ -1,0 +1,413 @@
+---
+- name: Remediation for CIS 1.4.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_4_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.4.2"
+    req_1: "Determine if the system uses UEFI or BIOS"
+    req_2: "IF the system uses UEFI (files in /boot/efi/EFI/*), apply mount options to /boot/efi by editing /etc/fstab"
+    req_3: "IF the system uses UEFI, reboot the system to enable the fstab changes"
+    req_4: "IF the system uses BIOS (files in /boot/grub2/*), set ownership on grub configuration files using command: [ -f /boot/grub2/grub.cfg ] && chown root:root /boot/grub2/grub.cfg"
+    req_5: "IF the system uses BIOS, set permissions on grub.cfg using command: [ -f /boot/grub2/grub.cfg ] && chmod u-x,go-rwx /boot/grub2/grub.cfg"
+    req_6: "IF the system uses BIOS, set ownership on grubenv using command: [ -f /boot/grub2/grubenv ] && chown root:root /boot/grub2/grubenv"
+    req_7: "IF the system uses BIOS, set permissions on grubenv using command: [ -f /boot/grub2/grubenv ] && chmod u-x,go-rwx /boot/grub2/grubenv"
+    req_8: "IF the system uses BIOS, set ownership on user.cfg using command: [ -f /boot/grub2/user.cfg ] && chown root:root /boot/grub2/user.cfg"
+    req_9: "IF the system uses BIOS, set permissions on user.cfg using command: [ -f /boot/grub2/user.cfg ] && chmod u-x,go-rwx /boot/grub2/user.cfg"
+    req_10: "VERIFY: Confirm the bootloader configuration files have the correct ownership and permissions"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.present"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if /etc/fstab exists"
+      stat:
+        path: "/etc/fstab"
+      register: _sg_fstab_stat
+
+    - name: "State Guard - Backup /etc/fstab (present)"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.present"
+        remote_src: true
+      when: _sg_fstab_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        task_9_name: "Not executed"
+        task_9_cmd: "N/A"
+        task_9_rc: -1
+        task_10_name: "Not executed"
+        task_10_cmd: "N/A"
+        task_10_rc: -1
+
+    - name: "Req 1 - Determine boot method (UEFI or BIOS)"
+      shell: |
+        if [ -d /sys/firmware/efi ]; then
+          echo "UEFI"
+        else
+          echo "BIOS"
+        fi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Determine boot method (UEFI or BIOS)"
+        task_1_cmd: "Test for /sys/firmware/efi directory"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: Boot method determined as ' + result_1.stdout | trim if result_1.rc | default(-1) == 0 else 'FAILED: Could not determine boot method') | trim }}"
+        boot_method: "{{ result_1.stdout | default('') | trim }}"
+
+    - name: "Req 2 - Apply mount options to /boot/efi in /etc/fstab (UEFI only)"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/fstab 2>/dev/null || echo "File not found"
+        echo "=== APPLYING CHANGE ==="
+        if grep -q '/boot/efi' /etc/fstab 2>/dev/null; then
+          # Backup original
+          cp /etc/fstab /etc/fstab.cis_backup
+          # Update the line for /boot/efi
+          sed -i '/\/boot\/efi/ s/defaults[^[:space:]]*/defaults,umask=0027,fmask=0077,uid=0,gid=0/' /etc/fstab
+          # If no changes were made, add the options
+          if ! grep -q 'defaults,umask=0027,fmask=0077,uid=0,gid=0' /etc/fstab 2>/dev/null; then
+            sed -i '/\/boot\/efi/ s/\([[:space:]]defaults\)/\1,umask=0027,fmask=0077,uid=0,gid=0/' /etc/fstab
+          fi
+          echo "Updated /etc/fstab"
+        else
+          echo "No /boot/efi mount point found in /etc/fstab"
+          exit 1
+        fi
+        echo "=== AFTER ==="
+        cat /etc/fstab 2>/dev/null || echo "File not found"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: boot_method == 'UEFI'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply mount options to /boot/efi in /etc/fstab"
+        task_2_cmd: "Update /etc/fstab with umask=0027,fmask=0077,uid=0,gid=0 options for /boot/efi"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('SKIPPED' if boot_method != 'UEFI' else ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_2: "{{ ('SKIPPED: System does not use UEFI' if boot_method != 'UEFI' else ('APPLIED: /etc/fstab updated for /boot/efi mount options' if result_2.rc | default(-1) == 0 else 'FAILED: Could not update /etc/fstab')) | trim }}"
+        fstab_changed: "{{ ('true' if boot_method == 'UEFI' and result_2.rc | default(-1) == 0 else 'false') }}"
+
+    - name: "Req 3 - Reboot system if fstab was changed (UEFI only)"
+      shell: |
+        echo "Rebooting system to apply new /boot/efi mount options"
+        sleep 2
+        shutdown -r now "Rebooting to apply new /boot/efi mount options"
+      args:
+        executable: /bin/bash
+      async: 1
+      poll: 0
+      register: result_3
+      ignore_errors: true
+      when: boot_method == 'UEFI' and fstab_changed == 'true'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Reboot system if fstab was changed"
+        task_3_cmd: "Reboot system to apply new mount options"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('SKIPPED' if boot_method != 'UEFI' or fstab_changed != 'true' else ('APPLIED' if result_3.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_3: "{{ ('SKIPPED: System does not use UEFI or fstab not changed' if boot_method != 'UEFI' or fstab_changed != 'true' else ('APPLIED: System reboot initiated' if result_3.rc | default(-1) == 0 else 'FAILED: Could not reboot system')) | trim }}"
+
+    - name: "Req 4 - Set ownership on grub.cfg (BIOS only)"
+      shell: |
+        [ -f /boot/grub2/grub.cfg ] && chown root:root /boot/grub2/grub.cfg
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: boot_method == 'BIOS'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Set ownership on grub.cfg"
+        task_4_cmd: "[ -f /boot/grub2/grub.cfg ] && chown root:root /boot/grub2/grub.cfg"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('SKIPPED' if boot_method != 'BIOS' else ('APPLIED' if result_4.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_4: "{{ ('SKIPPED: System does not use BIOS' if boot_method != 'BIOS' else ('APPLIED: Ownership set on grub.cfg' if result_4.rc | default(-1) == 0 else 'FAILED: Could not set ownership on grub.cfg')) | trim }}"
+
+    - name: "Req 5 - Set permissions on grub.cfg (BIOS only)"
+      shell: |
+        [ -f /boot/grub2/grub.cfg ] && chmod u-x,go-rwx /boot/grub2/grub.cfg
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: boot_method == 'BIOS'
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Set permissions on grub.cfg"
+        task_5_cmd: "[ -f /boot/grub2/grub.cfg ] && chmod u-x,go-rwx /boot/grub2/grub.cfg"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: "{{ ('SKIPPED' if boot_method != 'BIOS' else ('APPLIED' if result_5.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_5: "{{ ('SKIPPED: System does not use BIOS' if boot_method != 'BIOS' else ('APPLIED: Permissions set on grub.cfg' if result_5.rc | default(-1) == 0 else 'FAILED: Could not set permissions on grub.cfg')) | trim }}"
+
+    - name: "Req 6 - Set ownership on grubenv (BIOS only)"
+      shell: |
+        [ -f /boot/grub2/grubenv ] && chown root:root /boot/grub2/grubenv
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: boot_method == 'BIOS'
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Set ownership on grubenv"
+        task_6_cmd: "[ -f /boot/grub2/grubenv ] && chown root:root /boot/grub2/grubenv"
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: "{{ ('SKIPPED' if boot_method != 'BIOS' else ('APPLIED' if result_6.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_6: "{{ ('SKIPPED: System does not use BIOS' if boot_method != 'BIOS' else ('APPLIED: Ownership set on grubenv' if result_6.rc | default(-1) == 0 else 'FAILED: Could not set ownership on grubenv')) | trim }}"
+
+    - name: "Req 7 - Set permissions on grubenv (BIOS only)"
+      shell: |
+        [ -f /boot/grub2/grubenv ] && chmod u-x,go-rwx /boot/grub2/grubenv
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      when: boot_method == 'BIOS'
+
+    - name: Store requirement 7 details
+      set_fact:
+        task_7_name: "Set permissions on grubenv"
+        task_7_cmd: "[ -f /boot/grub2/grubenv ] && chmod u-x,go-rwx /boot/grub2/grubenv"
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: "{{ ('SKIPPED' if boot_method != 'BIOS' else ('APPLIED' if result_7.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_7: "{{ ('SKIPPED: System does not use BIOS' if boot_method != 'BIOS' else ('APPLIED: Permissions set on grubenv' if result_7.rc | default(-1) == 0 else 'FAILED: Could not set permissions on grubenv')) | trim }}"
+
+    - name: "Req 8 - Set ownership on user.cfg (BIOS only)"
+      shell: |
+        [ -f /boot/grub2/user.cfg ] && chown root:root /boot/grub2/user.cfg
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      when: boot_method == 'BIOS'
+
+    - name: Store requirement 8 details
+      set_fact:
+        task_8_name: "Set ownership on user.cfg"
+        task_8_cmd: "[ -f /boot/grub2/user.cfg ] && chown root:root /boot/grub2/user.cfg"
+        task_8_rc: "{{ result_8.rc | default(-1) }}"
+        data_8: "{{ result_8.stdout | default('') | trim }}"
+        status_8: "{{ ('SKIPPED' if boot_method != 'BIOS' else ('APPLIED' if result_8.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_8: "{{ ('SKIPPED: System does not use BIOS' if boot_method != 'BIOS' else ('APPLIED: Ownership set on user.cfg' if result_8.rc | default(-1) == 0 else 'FAILED: Could not set ownership on user.cfg')) | trim }}"
+
+    - name: "Req 9 - Set permissions on user.cfg (BIOS only)"
+      shell: |
+        [ -f /boot/grub2/user.cfg ] && chmod u-x,go-rwx /boot/grub2/user.cfg
+      args:
+        executable: /bin/bash
+      register: result_9
+      ignore_errors: true
+      when: boot_method == 'BIOS'
+
+    - name: Store requirement 9 details
+      set_fact:
+        task_9_name: "Set permissions on user.cfg"
+        task_9_cmd: "[ -f /boot/grub2/user.cfg ] && chmod u-x,go-rwx /boot/grub2/user.cfg"
+        task_9_rc: "{{ result_9.rc | default(-1) }}"
+        data_9: "{{ result_9.stdout | default('') | trim }}"
+        status_9: "{{ ('SKIPPED' if boot_method != 'BIOS' else ('APPLIED' if result_9.rc | default(-1) == 0 else 'FAILED')) | trim }}"
+        rationale_9: "{{ ('SKIPPED: System does not use BIOS' if boot_method != 'BIOS' else ('APPLIED: Permissions set on user.cfg' if result_9.rc | default(-1) == 0 else 'FAILED: Could not set permissions on user.cfg')) | trim }}"
+
+    - name: "Req 10 - Verify bootloader configuration"
+      shell: |
+        echo "=== Verification ==="
+        if [ "$boot_method" = "UEFI" ]; then
+          echo "UEFI system - checking /boot/efi mount options"
+          mount | grep /boot/efi || echo "Not mounted"
+          grep '/boot/efi' /etc/fstab 2>/dev/null || echo "Not in fstab"
+        else
+          echo "BIOS system - checking grub configuration files"
+          for file in /boot/grub2/grub.cfg /boot/grub2/grubenv /boot/grub2/user.cfg; do
+            if [ -f "$file" ]; then
+              echo "File: $file"
+              stat -c "Owner: %U(%u) Group: %G(%g) Permissions: %a" "$file"
+            else
+              echo "File: $file - Not found"
+            fi
+          done
+        fi
+      args:
+        executable: /bin/bash
+      register: result_10
+      ignore_errors: true
+
+    - name: Store requirement 10 details
+      set_fact:
+        task_10_name: "Verify bootloader configuration"
+        task_10_cmd: "Check ownership and permissions of bootloader files"
+        task_10_rc: "{{ result_10.rc | default(-1) }}"
+        data_10: "{{ result_10.stdout | default('') | trim }}"
+        status_10: "{{ ('APPLIED' if result_10.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_10: "{{ ('APPLIED: Verification completed' if result_10.rc | default(-1) == 0 else 'FAILED: Verification failed') | trim }}"
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.4.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') }}"
+          - "  Command: {{ task_7_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_7_rc | default(-1) }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name | default('Task not recorded') }}"
+          - "  Command: {{ task_8_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_8_rc | default(-1) }}"
+          - "  Data: {{ data_8 | default('') | trim }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 9 - {{ req_9 }}:"
+          - "  Task: {{ task_9_name | default('Task not recorded') }}"
+          - "  Command: {{ task_9_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_9_rc | default(-1) }}"
+          - "  Data: {{ data_9 | default('') | trim }}"
+          - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_9 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 10 - {{ req_10 }}:"
+          - "  Task: {{ task_10_name | default('Task not recorded') }}"
+          - "  Command: {{ task_10_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_10_rc | default(-1) }}"
+          - "  Data: {{ data_10 | default('') | trim }}"
+          - "  Status: {{ status_10 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_10 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_10 | trim }}"
+          - "  Details: {{ rationale_10 | trim }}"
+          - "========================================================"

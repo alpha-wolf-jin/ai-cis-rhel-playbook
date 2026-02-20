@@ -1,0 +1,387 @@
+---
+- name: Remediation for CIS 1.6.5
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_6_5"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.5"
+    req_1: "Check if crypto-policies package is installed"
+    req_2: "Create or edit the NO-SSHCBC.pmod module file"
+    req_3: "Update the system-wide cryptographic policy to include the NO-SSHCBC subpolicy"
+    req_4: "Reboot the system to apply cryptographic settings"
+    req_5: "Verify CBC is disabled for SSH in the crypto policy"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore NO-SSHCBC.pmod from backup (if it existed)"
+      copy:
+        src: "{{ state_guard_dir }}/NO-SSHCBC.pmod.present"
+        dest: "/etc/crypto-policies/policies/modules/NO-SSHCBC.pmod"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Delete NO-SSHCBC.pmod (if it was created by remediation)"
+      file:
+        path: "/etc/crypto-policies/policies/modules/NO-SSHCBC.pmod"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore previous crypto policy"
+      shell: |
+        {% raw %}
+        if [ -f "{{ state_guard_dir }}/crypto_policy.txt" ]; then
+          previous_policy=$(cat "{{ state_guard_dir }}/crypto_policy.txt" | head -1)
+          if [ -n "$previous_policy" ]; then
+            update-crypto-policies --set "$previous_policy"
+          fi
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if NO-SSHCBC.pmod exists"
+      stat:
+        path: "/etc/crypto-policies/policies/modules/NO-SSHCBC.pmod"
+      register: _sg_nosshcbc_stat
+
+    - name: "State Guard - Backup NO-SSHCBC.pmod (present)"
+      copy:
+        src: "/etc/crypto-policies/policies/modules/NO-SSHCBC.pmod"
+        dest: "{{ state_guard_dir }}/NO-SSHCBC.pmod.present"
+        remote_src: true
+      when: _sg_nosshcbc_stat.stat.exists
+
+    - name: "State Guard - Mark NO-SSHCBC.pmod as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/NO-SSHCBC.pmod.absent"
+      when: not _sg_nosshcbc_stat.stat.exists
+
+    - name: "State Guard - Backup current crypto policy"
+      shell: |
+        update-crypto-policies --show > "{{ state_guard_dir }}/crypto_policy.txt"
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if crypto-policies package is installed
+    - name: "Req 1 - Check if crypto-policies package is installed"
+      shell: rpm -q crypto-policies
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check crypto-policies package"
+        task_1_cmd: "rpm -q crypto-policies"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: crypto-policies package is installed
+          {% else %}
+            SKIPPED: crypto-policies package not installed, skipping all subsequent steps
+          {% endif %}
+
+    # Requirement 2: Create or edit the NO-SSHCBC.pmod module file
+    - name: "Req 2 - Create NO-SSHCBC.pmod module file"
+      shell: |
+        cat /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        printf '%s\n' '# This is a subpolicy to disable all CBC mode ciphers' '# for the SSH protocol (libssh and OpenSSH)' 'cipher@SSH = -*-CBC' > /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod
+        echo "=== AFTER ==="
+        cat /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Create NO-SSHCBC.pmod file"
+        task_2_cmd: |
+          printf '%s\n' '...' > /etc/crypto-policies/policies/modules/NO-SSHCBC.pmod
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED: crypto-policies package not installed
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: NO-SSHCBC.pmod file created or updated successfully
+          {% else %}
+            FAILED: Could not create NO-SSHCBC.pmod file
+          {% endif %}
+
+    # Requirement 3: Update the system-wide cryptographic policy
+    - name: "Req 3 - Update system-wide cryptographic policy"
+      shell: |
+        echo "=== CURRENT POLICY ==="
+        update-crypto-policies --show
+        echo "=== APPLYING CHANGE ==="
+        update-crypto-policies --set DEFAULT:NO-SSHCBC
+        echo "=== AFTER ==="
+        update-crypto-policies --show
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Update crypto policy to include NO-SSHCBC"
+        task_3_cmd: "update-crypto-policies --set DEFAULT:NO-SSHCBC"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED: crypto-policies package not installed
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: Crypto policy updated to include NO-SSHCBC subpolicy
+          {% else %}
+            FAILED: Could not update crypto policy
+          {% endif %}
+
+    # Requirement 4: Reboot the system
+    - name: "Req 4 - Reboot system to apply cryptographic settings"
+      reboot:
+        reboot_timeout: 180
+      register: result_4
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0 and result_3.rc | default(-1) == 0"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Reboot system"
+        task_4_cmd: "reboot (via Ansible reboot module)"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.msg | default('') | trim }}"
+        status_4: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_4.rebooted | default(false) %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED: crypto-policies package not installed
+          {% elif result_3.rc | default(-1) != 0 %}
+            SKIPPED: crypto policy not updated, reboot not needed
+          {% elif result_4.rebooted | default(false) %}
+            APPLIED: System rebooted successfully to apply crypto policy changes
+          {% else %}
+            FAILED: Could not reboot system
+          {% endif %}
+
+    # Requirement 5: Verify CBC is disabled for SSH in the crypto policy
+    - name: "Req 5 - Verify CBC is disabled for SSH"
+      shell: |
+        grep -r 'cipher@SSH' /etc/crypto-policies/policies/modules/
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: "result_1.rc | default(-1) == 0"
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify CBC disabled for SSH"
+        task_5_cmd: "grep -r 'cipher@SSH' /etc/crypto-policies/policies/modules/"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif 'cipher@SSH = -*-CBC' in result_5.stdout %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% if result_1.rc | default(-1) != 0 %}
+            SKIPPED: crypto-policies package not installed
+          {% elif 'cipher@SSH = -*-CBC' in result_5.stdout %}
+            APPLIED: CBC successfully disabled for SSH in crypto policy
+          {% else %}
+            FAILED: Expected 'cipher@SSH = -*-CBC' not found in policy modules
+          {% endif %}
+
+    # Compute overall remediation status
+    - name: Compute overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_2 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_3 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_4 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_5 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and
+                (status_2 | default('UNKNOWN') | trim == 'APPLIED' or
+                 status_3 | default('UNKNOWN') | trim == 'APPLIED' or
+                 status_4 | default('UNKNOWN') | trim == 'APPLIED' or
+                 status_5 | default('UNKNOWN') | trim == 'APPLIED') %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if status_1 | default('UNKNOWN') | trim == 'SKIPPED' %}
+            SKIPPED: crypto-policies package not installed - remediation not applicable
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_2 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_3 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_4 | default('UNKNOWN') | trim == 'APPLIED' and
+                status_5 | default('UNKNOWN') | trim == 'APPLIED' %}
+            APPLIED: CBC cipher successfully disabled for SSH in system-wide crypto policy
+          {% elif status_1 | default('UNKNOWN') | trim == 'APPLIED' and
+                (status_2 | default('UNKNOWN') | trim == 'APPLIED' or
+                 status_3 | default('UNKNOWN') | trim == 'APPLIED' or
+                 status_4 | default('UNKNOWN') | trim == 'APPLIED' or
+                 status_5 | default('UNKNOWN') | trim == 'APPLIED') %}
+            PARTIALLY APPLIED: Some steps succeeded but not all
+          {% else %}
+            FAILED: Verification step failed - check individual requirements for details
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.6.5"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.6.5"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name }}"
+          - "  Command: {{ task_5_cmd }}"
+          - "  Exit code: {{ task_5_rc }}"
+          - "  Data: {{ data_5 }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

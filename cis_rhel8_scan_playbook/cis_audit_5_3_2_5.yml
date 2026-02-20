@@ -1,76 +1,300 @@
 ---
-# CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.5
 - name: Data Collection for CIS 5.3.2.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.3.2.5"
-    req_1: "Verify the pam_unix.so module is enabled in /etc/pam.d/password-auth and /etc/pam.d/system-auth"
-    req_2: "OVERALL Verify: Ensure pam_unix module is enabled"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.5"
+    req_1: "Check that pam_unix.so is present in the auth stack of /etc/pam.d/password-auth"
+    req_2: "Check that pam_unix.so is present in the account stack of /etc/pam.d/password-auth"
+    req_3: "Check that pam_unix.so is present in the password stack of /etc/pam.d/password-auth"
+    req_4: "Check that pam_unix.so is present in the session stack of /etc/pam.d/password-auth"
+    req_5: "Check that pam_unix.so is present in the auth stack of /etc/pam.d/system-auth"
+    req_6: "Check that pam_unix.so is present in the account stack of /etc/pam.d/system-auth"
+    req_7: "Check that pam_unix.so is present in the password stack of /etc/pam.d/system-auth"
+    req_8: "Check that pam_unix.so is present in the session stack of /etc/pam.d/system-auth"
+    req_9: "OVERALL Verify: Ensure pam_unix module is enabled"
+    expected_output_1: |
+      /etc/pam.d/password-auth:auth   sufficient   pam_unix.so
+      /etc/pam.d/password-auth:account   required   pam_unix.so
+      /etc/pam.d/password-auth:password   sufficient   pam_unix.so sha512 shadow use_authtok
+      /etc/pam.d/password-auth:session  required   pam_unix.so
+
+      /etc/pam.d/system-auth:auth   sufficient   pam_unix.so
+      /etc/pam.d/system-auth:account   required   pam_unix.so
+      /etc/pam.d/system-auth:password   sufficient   pam_unix.so sha512 shadow use_authtok
+      /etc/pam.d/system-auth:session   required   pam_unix.so
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        task_9_name: "Not executed"
+        task_9_cmd: "N/A"
+        task_9_rc: -1
 
-    # Requirement 1: Verify the pam_unix.so module is enabled in /etc/pam.d/password-auth and /etc/pam.d/system-auth
-    - name: "Req 1 - Check pam_unix.so in PAM configuration files"
-      shell: >
+    # CIS Audit Procedure Command
+    - name: Req CIS - Execute CIS audit command for pam_unix.so
+      shell: |
         grep -P -- '\bpam_unix\.so\b' /etc/pam.d/{password,system}-auth
+      args:
+        executable: /bin/bash
+      register: cis_audit_result
+      ignore_errors: true
+      changed_when: false
+
+    # Store the raw output from CIS command
+    - name: Store CIS audit command results
+      set_fact:
+        cis_output: "{{ cis_audit_result.stdout | default('') | trim }}"
+        cis_rc: "{{ cis_audit_result.rc | default(-1) }}"
+
+    # Requirement 1: Check auth stack in password-auth using exact command from requirement
+    - name: Req 1 - Check pam_unix.so in auth stack of password-auth
+      shell: |
+        grep -P -- '^auth\s+.*pam_unix\.so' /etc/pam.d/password-auth
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check pam_unix.so in PAM configuration files"
+        task_1_name: "Check pam_unix.so in auth stack of password-auth"
         task_1_cmd: |
-          grep -P -- '\\bpam_unix\\.so\\b' /etc/pam.d/{password,system}-auth
+          grep -P -- '^auth\\s+.*pam_unix\\.so' /etc/pam.d/password-auth
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >
-          {{ (
-            'PASS' if
-            result_1.stdout is defined and
-            '/etc/pam.d/password-auth:' in result_1.stdout and
-            '/etc/pam.d/system-auth:' in result_1.stdout and
-            'auth' in result_1.stdout and 'pam_unix.so' in result_1.stdout and
-            'account' in result_1.stdout and 'pam_unix.so' in result_1.stdout and
-            'password' in result_1.stdout and 'pam_unix.so' in result_1.stdout and
-            'session' in result_1.stdout and 'pam_unix.so' in result_1.stdout
-            else 'FAIL'
-          ) | trim }}
-        rationale_1: "PASS when output contains the required 'auth', 'account', 'password', and 'session' lines for both files as shown in the expected output, FAIL otherwise"
+        status_1: >-
+          {% if result_1.rc == 0 and result_1.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_1: "PASS when the line exists and the module type is 'auth', FAIL otherwise"
 
-    # Requirement 2: OVERALL Verify: Ensure pam_unix module is enabled
-    - name: "Req 2 - Determine overall compliance"
+    # Requirement 2: Check account stack in password-auth using exact command from requirement
+    - name: Req 2 - Check pam_unix.so in account stack of password-auth
+      shell: |
+        grep -P -- '^account\s+.*pam_unix\.so' /etc/pam.d/password-auth
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A"
-        task_2_rc: 0
-        data_2: "Overall verification based on requirement 1"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        task_2_name: "Check pam_unix.so in account stack of password-auth"
+        task_2_cmd: |
+          grep -P -- '^account\\s+.*pam_unix\\.so' /etc/pam.d/password-auth
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if result_2.rc == 0 and result_2.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_2: "PASS when the line exists and the module type is 'account', FAIL otherwise"
 
-    # Final report
+    # Requirement 3: Check password stack in password-auth using exact command from requirement
+    - name: Req 3 - Check pam_unix.so in password stack of password-auth
+      shell: |
+        grep -P -- '^password\s+.*pam_unix\.so' /etc/pam.d/password-auth
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Check pam_unix.so in password stack of password-auth"
+        task_3_cmd: |
+          grep -P -- '^password\\s+.*pam_unix\\.so' /etc/pam.d/password-auth
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc == 0 and result_3.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when the line exists and the module type is 'password', FAIL otherwise"
+
+    # Requirement 4: Check session stack in password-auth using exact command from requirement
+    - name: Req 4 - Check pam_unix.so in session stack of password-auth
+      shell: |
+        grep -P -- '^session\s+.*pam_unix\.so' /etc/pam.d/password-auth
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Check pam_unix.so in session stack of password-auth"
+        task_4_cmd: |
+          grep -P -- '^session\\s+.*pam_unix\\.so' /etc/pam.d/password-auth
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if result_4.rc == 0 and result_4.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_4: "PASS when the line exists and the module type is 'session', FAIL otherwise"
+
+    # Requirement 5: Check auth stack in system-auth using exact command from requirement
+    - name: Req 5 - Check pam_unix.so in auth stack of system-auth
+      shell: |
+        grep -P -- '^auth\s+.*pam_unix\.so' /etc/pam.d/system-auth
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Check pam_unix.so in auth stack of system-auth"
+        task_5_cmd: |
+          grep -P -- '^auth\\s+.*pam_unix\\.so' /etc/pam.d/system-auth
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if result_5.rc == 0 and result_5.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_5: "PASS when the line exists and the module type is 'auth', FAIL otherwise"
+
+    # Requirement 6: Check account stack in system-auth using exact command from requirement
+    - name: Req 6 - Check pam_unix.so in account stack of system-auth
+      shell: |
+        grep -P -- '^account\s+.*pam_unix\.so' /etc/pam.d/system-auth
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Check pam_unix.so in account stack of system-auth"
+        task_6_cmd: |
+          grep -P -- '^account\\s+.*pam_unix\\.so' /etc/pam.d/system-auth
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: >-
+          {% if result_6.rc == 0 and result_6.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_6: "PASS when the line exists and the module type is 'account', FAIL otherwise"
+
+    # Requirement 7: Check password stack in system-auth using exact command from requirement
+    - name: Req 7 - Check pam_unix.so in password stack of system-auth
+      shell: |
+        grep -P -- '^password\s+.*pam_unix\.so' /etc/pam.d/system-auth
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 7 details
+      set_fact:
+        task_7_name: "Check pam_unix.so in password stack of system-auth"
+        task_7_cmd: |
+          grep -P -- '^password\\s+.*pam_unix\\.so' /etc/pam.d/system-auth
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: >-
+          {% if result_7.rc == 0 and result_7.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_7: "PASS when the line exists and the module type is 'password', FAIL otherwise"
+
+    # Requirement 8: Check session stack in system-auth using exact command from requirement
+    - name: Req 8 - Check pam_unix.so in session stack of system-auth
+      shell: |
+        grep -P -- '^session\s+.*pam_unix\.so' /etc/pam.d/system-auth
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 8 details
+      set_fact:
+        task_8_name: "Check pam_unix.so in session stack of system-auth"
+        task_8_cmd: |
+          grep -P -- '^session\\s+.*pam_unix\\.so' /etc/pam.d/system-auth
+        task_8_rc: "{{ result_8.rc | default(-1) }}"
+        data_8: "{{ result_8.stdout | default('') | trim }}"
+        status_8: >-
+          {% if result_8.rc == 0 and result_8.stdout | default('') | trim != '' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_8: "PASS when the line exists and the module type is 'session', FAIL otherwise"
+
+    # Requirement 9: Overall verification
+    - name: Store requirement 9 details
+      set_fact:
+        task_9_name: "Overall verify pam_unix module is enabled"
+        task_9_cmd: "N/A (based on individual check results)"
+        task_9_rc: 0
+        data_9: "{{ cis_output | default('') | trim }}"
+        status_9: >-
+          {% set all_status = [status_1, status_2, status_3, status_4, status_5, status_6, status_7, status_8] %}
+          {% if 'FAIL' in all_status %}
+            FAIL
+          {% else %}
+            PASS
+          {% endif %}
+        rationale_9: "PASS when req_1=PASS AND req_2=PASS AND req_3=PASS AND req_4=PASS AND req_5=PASS AND req_6=PASS AND req_7=PASS AND req_8=PASS, FAIL otherwise"
+
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.3.2.5"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.2.5"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -89,8 +313,64 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') }}"
+          - "  Command: {{ task_7_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_7_rc | default(-1) }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name | default('Task not recorded') }}"
+          - "  Command: {{ task_8_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_8_rc | default(-1) }}"
+          - "  Data: {{ data_8 | default('') | trim }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 9 - {{ req_9 }}:"
+          - "  Task: {{ task_9_name | default('Task not recorded') }}"
+          - "  Command: {{ task_9_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_9_rc | default(-1) }}"
+          - "  Data: {{ data_9 | default('') | trim }}"
+          - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_9 | default('Not evaluated') | trim }}"
+          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_9 | default('Not evaluated') | trim }}"
           - "========================================================"

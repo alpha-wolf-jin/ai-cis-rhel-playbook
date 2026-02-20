@@ -2,54 +2,44 @@
 - name: Data Collection for CIS 5.4.2.2
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.4.2.2"
-    req_1: "Verify root is the only user with primary GID 0, excluding sync, shutdown, halt, and operator"
-    req_2: "OVERALL Verify: Ensure root is the only GID 0 account"
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.4.2.2"
+    req_1: "Verify root's primary GID is 0 and no other non-excluded user has a primary GID of 0"
+    overall_req: "Ensure root is the only GID 0 account"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
-        task_2_name: "Not executed"
-        task_2_cmd: "N/A"
-        task_2_rc: -1
 
-    # Requirement 1: Verify root is the only user with primary GID 0, excluding sync, shutdown, halt, and operator
-    - name: "Req 1 - Check for users with GID 0 excluding sync, shutdown, halt, operator"
-      shell: >
+    # Requirement 1: Verify root's primary GID is 0 and no other non-excluded user has a primary GID of 0
+    - name: Req 1 - Check for non-excluded users with GID 0
+      shell: |
         awk -F: '($1 !~ /^(sync|shutdown|halt|operator)/ && $4=="0") {print $1":"$4}' /etc/passwd
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check for users with GID 0 excluding sync, shutdown, halt, operator"
+        task_1_name: "Check for non-excluded users with GID 0"
         task_1_cmd: |
           awk -F: '($1 !~ /^(sync|shutdown|halt|operator)/ && $4==\"0\") {print $1\":\"$4}' /etc/passwd
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'root:0') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is exactly 'root:0', FAIL otherwise"
+        rationale_1: "{{ ('PASS when the exact output is root:0, FAIL when output contains any other line or is not exactly root:0' if (result_1.stdout | default('') | trim == 'root:0') else 'FAIL: Expected exactly root:0, got ' + (result_1.stdout | default('') | trim)) | trim }}"
 
-    # Requirement 2: OVERALL Verify: Ensure root is the only GID 0 account
-    - name: "Req 2 - Determine overall compliance"
+    # Set overall status
+    - name: Set overall compliance status
       set_fact:
-        task_2_name: "Determine overall compliance"
-        task_2_cmd: "N/A (calculated from requirement 1)"
-        task_2_rc: 0
-        data_2: "{{ data_1 }}"
-        status_2: "{{ status_1 | trim }}"
-        rationale_2: "PASS when req_1=PASS, FAIL otherwise"
+        overall_status: "{{ status_1 }}"
+        overall_rationale: "{{ ('PASS when req_1=PASS, FAIL otherwise' if status_1 == 'PASS' else 'FAIL: requirement 1 failed') | trim }}"
 
     # Final report
     - name: Generate compliance report
@@ -58,27 +48,19 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.4.2.2"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: {{ cis_checkpoint }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
-          - "  Data: {{ data_1 | default('') | trim }}"
-          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
-          - ""
-          - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
-          - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 }}"
+          - "  Status: {{ status_1 }}"
+          - "  Rationale: {{ rationale_1 }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_2 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - "  Result: {{ overall_status }}"
+          - "  Rationale: {{ overall_rationale }}"
           - "========================================================"

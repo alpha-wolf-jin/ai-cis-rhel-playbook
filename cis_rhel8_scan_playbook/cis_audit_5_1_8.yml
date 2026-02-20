@@ -1,13 +1,13 @@
 ---
-- name: Data Collection for CIS 5.1.8
+- name: Data Collection for CIS 5.1.8 - Ensure sshd Ciphers are configured
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.8"
-    req_1: "Check if system-wide crypto policy is applied to SSH by verifying the existence of the opensshserver.config file"
-    req_2: "Check the current SSH server configuration for weak ciphers using the provided script"
-    req_3: "OVERALL Verify: Ensure sshd Ciphers are configured"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.8"
+    # Requirement text from instructions
+    req_1: "Run the provided CIS audit script to verify none of the weak ciphers are being used"
+    req_2: "OVERALL Verify: Ensure sshd Ciphers are configured"
 
   tasks:
     - name: Initialize data variables
@@ -15,105 +15,73 @@
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not evaluated"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        task_3_name: "Not executed"
-        task_3_cmd: "N/A"
-        task_3_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not evaluated"
 
-    # Requirement 1: Check if system-wide crypto policy is applied to SSH by verifying the existence of the opensshserver.config file
-    - name: "Req 1 - Check opensshserver.config existence"
-      shell: ls -l /etc/crypto-policies/back-ends/opensshserver.config
+    # Requirement 1: Execute the CIS audit script for weak ciphers
+    - name: Req 1 - Execute CIS audit script for sshd ciphers
+      copy:
+        dest: "/tmp/cis_audit_5.1.8.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          source /etc/crypto-policies/back-ends/opensshserver.config
+          source /etc/sysconfig/sshd
+          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^ciphers\h+\"?([^#\n\r]+,)?((3des|blowfish|cast128|aes(128|192|256))- cbc|arcfour(128|256)?|rijndael-cbc@lysator\.liu\.se|chacha20- poly1305@openssh\.com)\b'
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_5.1.8.sh"
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
 
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_5.1.8.sh"
+        state: absent
+      ignore_errors: true
+
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check opensshserver.config existence"
-        task_1_cmd: "ls -l /etc/crypto-policies/back-ends/opensshserver.config"
+        task_1_name: "Execute CIS audit script for sshd ciphers"
+        task_1_cmd: "Run /tmp/cis_audit_5.1.8.sh script"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: "{{ ('PASS' if result_1.rc == 0 else 'FAIL') | trim }}"
-        rationale_1: "{{ ('PASS when the file exists, FAIL otherwise') | trim }}"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == '') else 'FAIL') | trim }}"
+        rationale_1: "PASS when script output shows no weak ciphers (empty output), FAIL when script output shows weak ciphers found (non-empty output)"
 
-    # Requirement 2: Check the current SSH server configuration for weak ciphers using the provided script
-    - name: "Req 2 - Create temporary audit script for weak ciphers"
-      copy:
-        dest: "/tmp/cis_audit_script_2.sh"
-        mode: '0700'
-        content: |
-          #!/usr/bin/env bash
-          source /etc/crypto-policies/back-ends/opensshserver.config
-          source /etc/sysconfig/sshd
-          sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^ciphers\h+\"?([^#\n\r]+,)?((3des|blowfish|cast128|aes(128|192|256))-cbc|arcfour(128|256)?|rijndael-cbc@lysator\.liu\.se|chacha20-poly1305@openssh\.com)\b'
-
-    - name: "Req 2 - Execute audit script for weak ciphers"
-      shell: "/tmp/cis_audit_script_2.sh"
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: status_1 | trim == 'PASS'
-
-    - name: "Req 2 - Remove temporary audit script"
-      file:
-        path: "/tmp/cis_audit_script_2.sh"
-        state: absent
-
-    - name: Store requirement 2 details
+    # Requirement 2: Overall verification
+    - name: Req 2 - Overall verification of sshd ciphers
       set_fact:
-        task_2_name: "Check SSH configuration for weak ciphers"
-        task_2_cmd: |
-          source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -Pi -- '^ciphers\h+\"?([^#\n\r]+,)?((3des|blowfish|cast128|aes(128|192|256))-cbc|arcfour(128|256)?|rijndael-cbc@lysator\.liu\.se|chacha20-poly1305@openssh\.com)\b'
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% if status_1 | trim == 'FAIL' %}
-            NA
-          {% elif result_2.stdout | default('') | trim == '' %}
-            PASS
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_2: >-
-          {% if status_1 | trim == 'FAIL' %}
-            Skipped because crypto policy file does not exist
-          {% elif result_2.stdout | default('') | trim == '' %}
-            PASS when the script returns NO output (no weak ciphers found), FAIL when any output is returned. If output includes chacha20-poly1305@openssh.com, review CVE-2023-48795 patch status.
-          {% else %}
-            PASS when the script returns NO output (no weak ciphers found), FAIL when any output is returned. If output includes chacha20-poly1305@openssh.com, review CVE-2023-48795 patch status.
-          {% endif %}
+        task_2_name: "Overall verification of sshd ciphers configuration"
+        task_2_cmd: "N/A - Based on requirement 1 status"
+        task_2_rc: 0
+        data_2: "Status from requirement 1: {{ status_1 }}"
+        status_2: "{{ status_1 | trim }}"
+        rationale_2: "PASS when req_1=PASS (no weak ciphers found), FAIL when req_1=FAIL (weak ciphers found)"
 
-    # Requirement 3: OVERALL Verify: Ensure sshd Ciphers are configured
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "Overall verification of SSH cipher configuration"
-        task_3_cmd: "N/A - Calculated based on previous requirements"
-        task_3_rc: 0
-        data_3: "Requirement 1 status: {{ status_1 }}, Requirement 2 status: {{ status_2 }}"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' and status_2 | trim == 'PASS' %}
-            PASS
-          {% elif status_1 | trim == 'FAIL' or status_2 | trim == 'FAIL' %}
-            FAIL
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_3: "PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
-
-    # Final report
+    # Final report - MUST include Status and Rationale for each requirement
     - name: Generate compliance report
       debug:
         msg:
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 5.1.8"
           - "========================================================"
-          - "Reference: CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.8"
+          - "Reference: {{ cis_reference }}"
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
@@ -132,16 +100,8 @@
           - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
-          - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_3 | trim }}"
-          - "  Rationale: {{ rationale_3 | trim }}"
+          - "  Result: {{ status_2 | trim }}"
+          - "  Rationale: Overall status matches requirement 2 which is based on requirement 1. PASS when no weak ciphers are found, FAIL when weak ciphers are found."
           - "========================================================"

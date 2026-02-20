@@ -1,0 +1,177 @@
+---
+- name: Remediation for CIS checkpoint 1.1.1.5
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.5"
+    req_1: "Run the provided CIS remediation script to fix Ensure jffs2 kernel module is not available"
+    req_2: "VERIFY: Run the CIS audit procedure to confirm Ensure jffs2 kernel module is not available is now properly configured"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the provided CIS remediation script to fix Ensure jffs2 kernel module is not available
+    - name: "Req 1 - Execute CIS remediation script for jffs2"
+      copy:
+        dest: "/tmp/cis_remediation_1.1.1.5.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             unset a_output2; l_output3="" l_dl="" # unset arrays and clear variables
+             l_mod_name="jffs2" # set module name
+             l_mod_type="fs" # set module type
+             l_mod_path="$(readlink -f /lib/modules/**/kernel/$l_mod_type | sort -u)"
+             f_module_fix()
+             {
+                l_dl="y" # Set to ignore duplicate checks
+                a_showconfig=() # Create array with modprobe output
+                while IFS= read -r l_showconfig; do
+                   a_showconfig+=("$l_showconfig")
+                done < <(modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+'"${l_mod_name//-/_}"'\b')
+                if  lsmod | grep "$l_mod_name" &> /dev/null; then # Check if the module is currently loaded
+                   a_output2+=(" - unloading kernel module: \"$l_mod_name\"")
+                   modprobe -r "$l_mod_name" 2>/dev/null; rmmod "$l_mod_name" 2>/dev/null
+                fi
+                if ! grep -Pq -- '\binstall\h+'"${l_mod_name//- /_}"'\h+\/bin\/(true|false)\b' <<< "${a_showconfig[*]}"; then
+                   a_output2+=(" - setting kernel  module: \"$l_mod_name\" to \"/bin/false\"")
+                   printf '%s\n' "install $l_mod_name /bin/false" >> /etc/modprobe.d/"$l_mod_name".conf
+                fi
+                if ! grep -Pq -- '\bblacklist\h+'"${l_mod_name//-/_}"'\b' <<< "${a_showconfig[*]}"; then
+                   a_output2+=(" - denylisting kernel  module: \"$l_mod_name\"")
+                   printf '%s\n' "blacklist $l_mod_name" >> /etc/modprobe.d/"$l_mod_name".conf
+                fi
+             }
+             for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
+                if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
+                   l_output3="$l_output3\n  - \"$l_mod_base_directory\""
+                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
+                   [ "$l_dl" != "y" ] && f_module_fix
+                else
+                   echo -e " - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\""
+                fi
+             done
+             [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
+             [ "${#a_output2[@]}" -gt 0 ] && printf '%s\n' "${a_output2[@]}"
+             echo -e "\n - remediation of kernel module: \"$l_mod_name\" complete\n"
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: "Req 1 - Run the remediation script"
+      shell: "/tmp/cis_remediation_1.1.1.5.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Req 1 - Remove temporary script"
+      file:
+        path: "/tmp/cis_remediation_1.1.1.5.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script for jffs2"
+        task_1_cmd: "/tmp/cis_remediation_1.1.1.5.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: remediation script executed successfully' if result_1.rc | default(-1) == 0 else 'FAILED: remediation script failed') | trim }}"
+
+    # Requirement 2: VERIFY: Run the CIS audit procedure to confirm Ensure jffs2 kernel module is not available is now properly configured
+    - name: "Req 2 - Verify jffs2 module is not available"
+      shell: |
+        {% raw %}
+        # Simple audit check for jffs2 module
+        echo "Checking if jffs2 module is loaded:"
+        lsmod | grep jffs2
+        
+        echo -e "\nChecking if jffs2 module is disabled in modprobe:"
+        if [ -f /etc/modprobe.d/jffs2.conf ]; then
+          cat /etc/modprobe.d/jffs2.conf
+        else
+          echo "No /etc/modprobe.d/jffs2.conf file found"
+        fi
+        
+        echo -e "\nChecking for jffs2 module files:"
+        find /lib/modules -name "*jffs2*" -type f 2>/dev/null | head -5
+        
+        # Exit with 0 if module is not loaded AND config exists, 1 otherwise
+        if lsmod | grep -q jffs2; then
+          echo "FAIL: jffs2 module is loaded"
+          exit 1
+        elif [ -f /etc/modprobe.d/jffs2.conf ] && grep -q "install jffs2 /bin/false" /etc/modprobe.d/jffs2.conf && grep -q "blacklist jffs2" /etc/modprobe.d/jffs2.conf; then
+          echo "PASS: jffs2 is properly configured"
+          exit 0
+        else
+          # Check if module exists in any kernel directory
+          if find /lib/modules -name "*jffs2*" -type f 2>/dev/null | grep -q .; then
+            echo "FAIL: jffs2 module exists but not properly disabled"
+            exit 1
+          else
+            echo "PASS: jffs2 module is not available on the system"
+            exit 0
+          fi
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify jffs2 module is not available"
+        task_2_cmd: "Check module status and configuration"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: system is compliant' if result_2.rc | default(-1) == 0 else 'FAILED: system is not compliant') | trim }}"
+
+    # Overall remediation status - based on verification result
+    - set_fact:
+        overall_status: "{{ status_2 | default('UNKNOWN') | trim }}"
+        overall_details: "{{ rationale_2 | default('Not evaluated') | trim }}"
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.1.5"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status }}"
+          - "  Details: {{ overall_details }}"
+          - "========================================================"

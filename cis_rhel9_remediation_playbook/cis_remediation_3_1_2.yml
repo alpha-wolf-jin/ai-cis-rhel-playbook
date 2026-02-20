@@ -1,0 +1,247 @@
+---
+- name: Remediation for CIS 3.1.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_3_1_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.1.2"
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Run the provided CIS remediation script to fix Ensure wireless interfaces are disabled"
+    req_2: "Verify: Run the CIS audit procedure to confirm Ensure wireless interfaces are disabled is now properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Check if modprobe.d backup exists"
+      stat:
+        path: "{{ state_guard_dir }}/modprobe.d.tar.gz"
+      register: _sg_modprobe_backup_stat
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore modprobe.d backup using tar"
+      shell: |
+        if [ -s "{{ state_guard_dir }}/modprobe.d.tar.gz" ]; then
+          rm -rf /etc/modprobe.d
+          mkdir -p /etc/modprobe.d
+          tar -xzpf "{{ state_guard_dir }}/modprobe.d.tar.gz" -C /etc/
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists and _sg_modprobe_backup_stat.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/modprobe.d directory using tar"
+      shell: |
+        if [ -d /etc/modprobe.d ]; then
+          tar -czpf "{{ state_guard_dir }}/modprobe.d.tar.gz" -C /etc/ modprobe.d
+        else
+          echo "Directory /etc/modprobe.d does not exist" > "{{ state_guard_dir }}/modprobe.d.absent"
+        fi
+      args:
+        executable: /bin/bash
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the provided CIS remediation script to fix Ensure wireless interfaces are disabled
+    - name: "Req 1 - Execute CIS remediation script for wireless interfaces"
+      shell: |
+        #!/usr/bin/env bash
+        
+        {
+           module_fix()
+           {
+              if ! modprobe -n -v "$l_mname" | grep -P -- '^\h*install \/bin\/(true|false)'; then
+                 echo -e " - setting module: \"$l_mname\" to be un-loadable"
+                 echo -e "install $l_mname /bin/false" >> /etc/modprobe.d/"$l_mname".conf
+              fi
+              if lsmod | grep "$l_mname" > /dev/null 2>&1; then
+                 echo -e " - unloading module \"$l_mname\""
+                 modprobe -r "$l_mname"
+              fi
+              if ! grep -Pq -- "^\h*blacklist\h+$l_mname\b" /etc/modprobe.d/*; then
+                 echo -e " - deny listing \"$l_mname\""
+                 echo -e "blacklist $l_mname" >> /etc/modprobe.d/"$l_mname".conf
+              fi
+           }
+           if [ -n "$(find /sys/class/net/*/ -type d -name wireless)" ]; then
+              l_dname=$(for driverdir in $(find /sys/class/net/*/ -type d -name wireless | xargs -0 dirname); do basename "$(readlink -f "$driverdir"/device/driver/module)";done | sort -u)
+              for l_mname in $l_dname; do
+                 module_fix
+              done
+           fi
+        }
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: "Store requirement 1 details"
+      set_fact:
+        task_1_name: "Execute CIS remediation script for wireless interfaces"
+        task_1_cmd: "CIS wireless remediation script (direct execution)"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: >-
+          stdout: {{ result_1.stdout | default('') | trim }}
+          stderr: {{ result_1.stderr | default('') | trim }}
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: Script executed successfully to disable wireless interfaces
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Verify: Run the CIS audit procedure to confirm Ensure wireless interfaces are disabled is now properly configured
+    - name: "Req 2 - Run CIS audit procedure for wireless interfaces"
+      shell: |
+        #!/usr/bin/env bash
+        
+        {
+           if [ -n "$(find /sys/class/net/*/ -type d -name wireless)" ]; then
+              l_dname=$(for driverdir in $(find /sys/class/net/*/ -type d -name wireless | xargs -0 dirname); do basename "$(readlink -f "$driverdir"/device/driver/module)";done | sort -u)
+              for l_mname in $l_dname; do
+                 if lsmod | grep "$l_mname" > /dev/null 2>&1; then
+                    echo "FAIL: Wireless module $l_mname is loaded"
+                 else
+                    echo "PASS: Wireless module $l_mname is not loaded"
+                 fi
+                 if ! modprobe -n -v "$l_mname" | grep -P -- '^\h*install \/bin\/(true|false)'; then
+                    echo "FAIL: Module $l_mname is not configured to be unloadable"
+                 else
+                    echo "PASS: Module $l_mname is configured to be unloadable"
+                 fi
+                 if ! grep -Pq -- "^\h*blacklist\h+$l_mname\b" /etc/modprobe.d/*; then
+                    echo "FAIL: Module $l_mname is not blacklisted"
+                 else
+                    echo "PASS: Module $l_mname is blacklisted"
+                 fi
+              done
+           else
+              echo "PASS: No wireless interfaces found"
+           fi
+        }
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Store requirement 2 details"
+      set_fact:
+        task_2_name: "Run CIS audit procedure for wireless interfaces"
+        task_2_cmd: "CIS audit script for wireless interfaces"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: >-
+          stdout: {{ result_2.stdout | default('') | trim }}
+          stderr: {{ result_2.stderr | default('') | trim }}
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'FAIL:' not in output and result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if 'FAIL:' not in output and result_2.rc | default(-1) == 0 %}
+            APPLIED: Audit passed - wireless interfaces are properly disabled
+          {% else %}
+            FAILED: Audit failed - wireless interfaces not properly disabled. Issues found: {{ output }}
+          {% endif %}
+
+    # Determine overall status
+    - name: "Determine overall remediation status"
+      set_fact:
+        overall_result: >-
+          {% if status_2 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+            PARTIALLY APPLIED
+          {% elif status_1 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if status_2 | trim == 'APPLIED' %}
+            System is compliant - wireless interfaces are disabled
+          {% elif status_1 | trim == 'APPLIED' and status_2 | trim == 'FAILED' %}
+            Remediation script ran but audit failed - manual verification needed
+          {% elif status_1 | trim == 'FAILED' %}
+            Remediation script failed to execute - manual intervention required
+          {% else %}
+            Cannot determine remediation status
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 3.1.2"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_result | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

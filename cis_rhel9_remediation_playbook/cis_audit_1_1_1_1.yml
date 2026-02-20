@@ -1,0 +1,234 @@
+---
+- name: Data Collection for CIS checkpoint 1.1.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    cis_checkpoint: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.1.1"
+    req_1: "Run script to determine if the cramfs kernel module is available on the system"
+    req_2: "Verify the cramfs kernel module is not loaded"
+    req_3: "Verify the cramfs kernel module is not loadable"
+    req_overall: "Ensure cramfs kernel module is not available"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        status_1: "UNKNOWN"
+        rationale_1: "Not executed yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        data_2: ""
+        status_2: "UNKNOWN"
+        rationale_2: "Not executed yet"
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not executed yet"
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Run script to determine if the cramfs kernel module is available on the system
+    - name: Req 1 - Execute CIS audit script for cramfs module availability
+      copy:
+        dest: "/tmp/cis_audit_1.1.1.1_1.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_mod_name="cramfs" l_mod_type="fs"
+             while IFS= read -r l_mod_path; do
+                if [ -d "$l_mod_path/${l_mod_name//-/\/}" ] &&  \
+                [ -n "$(ls -A "$l_mod_path/${l_mod_name//-/\/}")" ]; then
+                   printf '%s\n' "$l_mod_name exists in $l_mod_path"
+                fi
+             done < <(readlink -e /usr/lib/modules/**/kernel/$l_mod_type \
+             || readlink -e /lib/modules/**/kernel/$l_mod_type)
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the audit script
+      shell: "/tmp/cis_audit_1.1.1.1_1.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Req 1 - Remove temporary audit script
+      file:
+        path: "/tmp/cis_audit_1.1.1.1_1.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS audit script for cramfs module availability"
+        task_1_cmd: "Run provided bash script from CIS audit procedure"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('PASS' if result_1.stdout | default('') | trim == '' else 'FAIL') | trim }}"
+        rationale_1: "{{ ('PASS when script returns nothing (module not available), FAIL when script returns output (module exists)' if result_1.stdout | default('') | trim == '' else 'FAIL: cramfs module exists in filesystem') | trim }}"
+
+    # Requirement 2: Verify the cramfs kernel module is not loaded (only if module exists)
+    - name: Req 2 - Check if cramfs module is loaded
+      shell: |
+        {% raw %}
+        lsmod | grep 'cramfs'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | trim != ''
+
+    - name: Store requirement 2 details (when executed)
+      set_fact:
+        task_2_name: "Check if cramfs module is loaded"
+        task_2_cmd: "lsmod | grep 'cramfs'"
+        task_2_rc: "{{ result_2.rc | default(0) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('PASS' if result_2.stdout | default('') | trim == '' else 'FAIL') | trim }}"
+        rationale_2: "{{ ('PASS when no output (module not loaded), FAIL when output shows module is loaded' if result_2.stdout | default('') | trim == '' else 'FAIL: cramfs module is loaded') | trim }}"
+      when: data_1 | trim != ''
+
+    - name: Set requirement 2 as NA when module not available
+      set_fact:
+        task_2_name: "Check if cramfs module is loaded"
+        task_2_cmd: "lsmod | grep 'cramfs'"
+        task_2_rc: -1
+        data_2: "N/A - Module not available in filesystem"
+        status_2: "NA"
+        rationale_2: "Module not available in filesystem, check not applicable"
+      when: data_1 | trim == ''
+
+    # Requirement 3: Verify the cramfs kernel module is not loadable (only if module exists)
+    - name: Req 3 - Check if cramfs module is blacklisted or disabled
+      shell: |
+        {% raw %}
+        modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+cramfs\b'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: data_1 | trim != ''
+
+    - name: Store requirement 3 details (when executed)
+      set_fact:
+        task_3_name: "Check if cramfs module is blacklisted or disabled"
+        task_3_cmd: |
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+cramfs\b'
+        task_3_rc: "{{ result_3.rc | default(0) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'blacklist cramfs' in output and ('install cramfs /bin/false' in output or 'install cramfs /bin/true' in output) %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output != '' %}
+            {% if 'blacklist cramfs' in output and ('install cramfs /bin/false' in output or 'install cramfs /bin/true' in output) %}
+              PASS: Module is blacklisted and disabled with install to /bin/false or /bin/true
+            {% else %}
+              FAIL: Missing required blacklist or install configuration
+            {% endif %}
+          {% else %}
+            FAIL: No blacklist or install configuration found for cramfs module
+          {% endif %}
+      when: data_1 | trim != ''
+
+    - name: Set requirement 3 as NA when module not available
+      set_fact:
+        task_3_name: "Check if cramfs module is blacklisted or disabled"
+        task_3_cmd: |
+          modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+cramfs\b'
+        task_3_rc: -1
+        data_3: "N/A - Module not available in filesystem"
+        status_3: "NA"
+        rationale_3: "Module not available in filesystem, check not applicable"
+      when: data_1 | trim == ''
+
+    # Overall status determination
+    - name: Determine overall compliance status
+      set_fact:
+        status_overall: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim in ['PASS', 'NA'] and status_3 | trim in ['PASS', 'NA'] %}
+            {% if status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_overall: >-
+          {% if status_1 | trim == 'PASS' %}
+            PASS: cramfs module is not available on the system
+          {% elif status_1 | trim == 'FAIL' and status_2 | trim in ['PASS', 'NA'] and status_3 | trim in ['PASS', 'NA'] %}
+            {% if status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+              PASS: cramfs module exists but is not loaded and is blacklisted/disabled
+            {% else %}
+              FAIL: cramfs module exists and either is loaded or not properly disabled
+            {% endif %}
+          {% else %}
+            FAIL: cramfs module exists and checks failed
+          {% endif %}
+
+    # Final report
+    - name: Generate compliance report
+      debug:
+        msg:
+          - "========================================================"
+          - "        COMPLIANCE REPORT - CIS 1.1.1.1"
+          - "========================================================"
+          - "Reference: {{ cis_checkpoint }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL COMPLIANCE - {{ req_overall }}:"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - "========================================================"

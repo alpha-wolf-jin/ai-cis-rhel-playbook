@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
-Automated CIS RHEL 9 Playbook Generator
+Automated CIS RHEL 9 Remediation Playbook Generator
 
 This script:
 1. Reads checkpoint indices from a file or extracts from the benchmark PDF
 2. Looks up CIS RHEL 9 Benchmark data from structured JSON file
-3. Uses DeepSeek AI to generate playbook requirements based on each checkpoint
-4. Generates Ansible playbooks to audit all CIS checkpoints
+3. Uses DeepSeek AI to generate remediation requirements based on each checkpoint
+4. Generates Ansible playbooks to REMEDIATE (fix) all CIS checkpoints
 5. Saves all playbooks to the specified output directory
 
 Usage:
-    python3 auto_rhel9_cis_playbook.py
-    python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks
-    python3 auto_rhel9_cis_playbook.py --output-dir ./playbooks --target-host 192.168.122.16
+    python3 auto_remediation_rhel9_cis_playbook.py
+    python3 auto_remediation_rhel9_cis_playbook.py --output-dir ./remediation_playbooks
+    python3 auto_remediation_rhel9_cis_playbook.py --output-dir ./remediation_playbooks --target-host 192.168.122.16
 """
 
 import os
@@ -188,13 +188,13 @@ def process_checkpoint_automated(checkpoint_data, checkpoint: str, output_dir: P
             
             # Generate playbook filename
             safe_checkpoint_id = checkpoint_id.replace('.', '_')
-            base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
+            base_filename = f"cis_remediation_{safe_checkpoint_id}.yml"
             filename = str(output_dir / base_filename)
             result['filename'] = filename
             
             # Use minimal values for objective and requirements since we're just executing existing playbook
-            objective = f"Audit CIS checkpoint {checkpoint_id}: {checkpoint}"
-            requirements = [f"Execute existing playbook for CIS checkpoint {checkpoint_id}"]
+            objective = f"Remediate CIS checkpoint {checkpoint_id}: {checkpoint}"
+            requirements = [f"Execute existing remediation playbook for CIS checkpoint {checkpoint_id}"]
             
             # Call run_playbook_generation directly without CIS benchmark query
             success, output = run_playbook_generation(
@@ -235,9 +235,9 @@ def process_checkpoint_automated(checkpoint_data, checkpoint: str, output_dir: P
             requirements = playbook_spec.get('requirements', [])
             
             # Add CIS reference to requirements
-            requirements.append(f"""Create a task named 'Generate compliance report' that displays a debug msg with this EXACT format:
+            requirements.append(f"""Create a task named 'Generate remediation report' that displays a debug msg with this EXACT format:
 ========================================================
-        COMPLIANCE REPORT - CIS {checkpoint_id}
+        REMEDIATION REPORT - CIS {checkpoint_id}
 ========================================================
 Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint {checkpoint_id}
 ========================================================
@@ -247,23 +247,24 @@ REQUIREMENT 1 - <requirement description>:
   Command: <command executed>
   Exit code: <exit code>
   Data: <command output>
-  Status: PASS or FAIL
-  Rationale: <why PASS or FAIL based on the requirement's rationale>
+  Status: APPLIED or FAILED or SKIPPED
+  Details: <what was changed, why it failed, or why it was skipped>
 
 (repeat for each requirement)
 
 ========================================================
-OVERALL COMPLIANCE:
-  Result: PASS or FAIL
-  Rationale: <overall pass/fail logic explanation>
+OVERALL REMEDIATION:
+  Result: APPLIED or PARTIALLY APPLIED or FAILED or SKIPPED
+  Details: <summary of what was changed, why skipped, or what manual action is needed>
 ========================================================
 
-Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
-            requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks (except `set_fact`, `debug` tasks) so all checks complete and report status")
+Each requirement MUST have Status and Details lines. The OVERALL REMEDIATION section is REQUIRED at the end.
+Valid statuses: APPLIED (change was made), FAILED (change could not be applied), SKIPPED (prerequisite not installed, remediation not applicable, or manual human action is required).""")
+            requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all remediation tasks (except `set_fact`, `debug` tasks) so all steps complete and report status")
             
             # Print requirements before generating playbook
             print(f"\n{'='*100}")
-            print(f"📋 Generated Playbook Requirements for {checkpoint_id}")
+            print(f"📋 Generated Remediation Requirements for {checkpoint_id}")
             print(f"{'='*100}")
             print(f"Objective: {objective}")
             print(f"\nRequirements ({len(requirements)} items):")
@@ -275,12 +276,12 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
             
             # Step 3: Generate playbook filename
             safe_checkpoint_id = checkpoint_id.replace('.', '_')
-            base_filename = f"cis_audit_{safe_checkpoint_id}.yml"
+            base_filename = f"cis_remediation_{safe_checkpoint_id}.yml"
             filename = str(output_dir / base_filename)
             result['filename'] = filename
             
-            # Get the audit procedure directly from JSON data
-            audit_procedure = checkpoint_info.get('audit_procedure', '')
+            # Get the remediation procedure directly from JSON data
+            audit_procedure = checkpoint_info.get('remediation_procedure', '')
             
             # Step 4: Generate and optionally execute playbook
             success, output = run_playbook_generation(
@@ -356,7 +357,7 @@ def log_failed_checkpoint(checkpoint: str, error: str, log_file: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Automated CIS RHEL 9 Playbook Generator - Generates playbooks for all CIS checkpoints',
+        description='Automated CIS RHEL 9 Remediation Playbook Generator - Generates remediation playbooks for all CIS checkpoints',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -479,7 +480,7 @@ Examples:
         checkpoint_data = None
         if not getattr(args, 'skip_test', False):
             print("\n" + "="*100)
-            print("🔧 Loading CIS RHEL 9 Benchmark Data from JSON")
+            print("🔧 Loading CIS RHEL 9 Benchmark Data from JSON (for remediation)")
             print("="*100)
             
             checkpoint_data = load_checkpoint_data()
@@ -511,7 +512,7 @@ Examples:
         
         # Process all checkpoints
         print("\n" + "="*100)
-        print("🚀 Starting Automated Playbook Generation")
+        print("🚀 Starting Automated Remediation Playbook Generation")
         print("="*100)
         print(f"Total checkpoints: {len(checkpoints)}")
         print(f"Output directory: {output_dir.absolute()}")
@@ -582,7 +583,7 @@ Examples:
                 if not result['success']:
                     print(f"  - {result['checkpoint']}: {result['error'][:100]}...")
         
-        print("\n✅ Automated playbook generation completed!")
+        print("\n✅ Automated remediation playbook generation completed!")
             
     except KeyboardInterrupt:
         print("\n\n⚠️  Interrupted by user")

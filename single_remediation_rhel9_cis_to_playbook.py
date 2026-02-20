@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-CIS Checkpoint to Ansible Playbook Generator
+CIS Checkpoint to Ansible Remediation Playbook Generator
 
 This script:
 1. Reads CIS RHEL 9 Benchmark structured data from JSON file
-2. Uses DeepSeek AI to generate playbook requirements based on the checkpoint
-3. Generates an Ansible playbook to audit the CIS checkpoint
+2. Uses DeepSeek AI to generate remediation requirements based on the checkpoint
+3. Generates an Ansible playbook to REMEDIATE (fix) the CIS checkpoint
 4. Optionally executes the playbook on the target host
 
 Usage:
-    python3 single_rhel9_cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1"
-    python3 single_rhel9_cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --target-host 192.168.122.16
+    python3 single_remediation_rhel9_cis_to_playbook.py --checkpoint "1.1.1.1"
+    python3 single_remediation_rhel9_cis_to_playbook.py --checkpoint "1.1.1.1" --target-host 192.168.122.16
 """
 
 import os
@@ -28,7 +28,6 @@ load_dotenv()
 # =============================================================================
 
 DEFAULT_JSON_PATH = Path(__file__).parent / "resources" / "CIS_Red_Hat_Enterprise_Linux_9_Benchmark_v2.0.0.json"
-DEFAULT_JSON_PATH = Path(__file__).parent / "resources" / "CIS_Red_Hat_Enterprise_Linux_8_Benchmark_v4.0.0.json"
 
 
 def load_checkpoint_data(json_path: Path = None) -> list:
@@ -159,26 +158,25 @@ def get_checkpoint_info_from_json(checkpoint_data: list, checkpoint: str, verbos
 # Playbook Requirements Generation 
 # =============================================================================
 
-def extract_audit_steps_from_procedure(audit_procedure: str, checkpoint_id: str = "", title: str = "", rationale: str = "") -> list:
+def extract_remediation_steps_from_procedure(remediation_procedure: str, checkpoint_id: str = "", title: str = "", description: str = "") -> list:
     """
-    Extract individual audit steps/commands/scripts from the CIS audit procedure text using DeepSeek AI.
+    Extract individual remediation steps/commands/scripts from the CIS remediation procedure text using DeepSeek AI.
     
     Args:
-        audit_procedure: The complete audit procedure text from CIS benchmark
+        remediation_procedure: The complete remediation procedure text from CIS benchmark
         checkpoint_id: The checkpoint ID for context
         title: The checkpoint title
-        rationale: The rationale section from CIS benchmark (optional, used to make PASS conditions more accurate)
+        description: The description from CIS benchmark (optional, provides context)
         
     Returns:
-        list: List of requirement strings extracted from the audit procedure
+        list: List of requirement strings extracted from the remediation procedure
     """
-    if not audit_procedure or len(audit_procedure) < 20:
+    if not remediation_procedure or len(remediation_procedure) < 20:
         return []
 
     from langchain_openai import ChatOpenAI
     from langchain_core.prompts import ChatPromptTemplate
     
-    # Use reasoner for better logic extraction
     llm = ChatOpenAI(
         model="deepseek-chat",
         api_key=os.getenv("DEEPSEEK_API_KEY"),
@@ -186,55 +184,41 @@ def extract_audit_steps_from_procedure(audit_procedure: str, checkpoint_id: str 
         temperature=0
     )
     
-    # Build rationale section if provided
-    rationale_section = ""
-    if rationale and len(rationale.strip()) > 20:
-        rationale_section = f"""
-**Rationale (Use this to make PASS conditions more accurate and measurable):**
-{rationale.strip()}
+    description_section = ""
+    if description and len(description.strip()) > 20:
+        description_section = f"""
+**Description (context for understanding the remediation):**
+{description.strip()}
 """
     
-    prompt_template = """You are a CIS RHEL 9 security expert. Analyze the following CIS Audit Procedure and extract individual audit requirements.
+    prompt_template = """You are a CIS RHEL 9 security expert. Analyze the following CIS Remediation Procedure and extract individual remediation requirements.
 
 **Checkpoint ID:** {checkpoint_id}
 **Title:** {title}
-{rationale_section}
-**Audit Procedure:**
-{audit_procedure}
+{description_section}
+**Remediation Procedure:**
+{remediation_procedure}
 
 **Task:**
-1. Break down the audit procedure into individual, actionable audit steps.
-2. **MERGE related information**: If a step includes a description, a command, and an example output, they MUST be merged into a single requirement. Do not create separate requirements for the command and its example output.
-3. **Analyze expected values**: Carefully look for phrases like "is set to", "should be", "Example output:", or "verify... is...". Use these to determine the EXACT expected value.
-4. **CRITICAL - Use Rationale to Make PASS Conditions More Accurate and Measurable**: 
-   - **If Rationale section is provided above**, use it to make PASS conditions MORE ACCURATE and MEASURABLE
-   - **Prioritize Measurable Criteria**: When there are conflicting or different standards between the **Rationale** section and the **Audit Procedure** section, ALWAYS use the MORE MEASURABLE one in the requirement rationale
-   - **More measurable criteria** include: specific version numbers (e.g., "pam-1.3.1-25 or later"), exact values, numeric thresholds, clear pass/fail conditions, specific strings or patterns to match
-   - **Less measurable criteria** include: vague phrases like "similar to", "should be", "example output", or descriptive text without specific values
-   - **Example**: 
-     - Rationale says: "pam-1.3.1-25 or later is required" (MORE MEASURABLE - specific version requirement)
-     - Audit Procedure says: "Expected Output: The output should be similar to: pam-1.3.1-25.el8.x86_64" (LESS MEASURABLE - just an example)
-     - **Use the Rationale**: "Rationale: PASS when pam version is 1.3.1-25 or later (extract version from output using regex and compare numerically), FAIL otherwise"
-   - **CRITICAL**: Always compare both Rationale and Audit Procedure sections and choose the most specific, measurable criteria for the rationale
-5. **Specific Rationales**: Do NOT use generic rationales like "PASS when command shows compliant state". Instead, be specific and measurable.
-   - ✅ GOOD: "Rationale: PASS when output is 'kernel.yama.ptrace_scope = 1', '2', or '3', FAIL otherwise."
-   - ✅ GOOD: "Rationale: PASS when pam version extracted from output is >= 1.3.1-25 (use regex to extract version number and compare), FAIL otherwise."
-   - ❌ BAD: "Rationale: PASS when command shows compliant state, FAIL otherwise."
-   - ❌ BAD: "Rationale: PASS when output is similar to example, FAIL otherwise."
-6. **Complex Logic**: Identify any logical dependencies (AND/OR) between steps.
-7. **Requirement Format**: Each requirement MUST follow this format:
-   "Description of what to check using command: `<command>`. Rationale: PASS when <specific measurable condition>, FAIL when <specific condition>"
-8. **Bash Scripts**: If the procedure includes a bash script, include the FULL script content:
-   "Run the following script: ```#!/usr/bin/env bash\\n<script content>```. Rationale: PASS when <specific measurable condition>, FAIL when <condition>"
-9. **OVERALL Verify**: The LAST requirement MUST be an "OVERALL Verify" that combines the results of all previous requirements.
-   Example: "OVERALL Verify: <checkpoint title>. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+1. Break down the remediation procedure into individual, actionable remediation steps.
+2. **MERGE related information**: If a step includes a description and a command, they MUST be merged into a single requirement.
+3. **Extract exact commands**: Capture the exact commands, configurations, or changes that must be applied.
+4. **Idempotent operations**: Each step should be safe to run multiple times without causing problems.
+5. **Complex Logic**: Identify any logical dependencies (AND/OR) or conditional steps between requirements.
+6. **Requirement Format**: Each requirement MUST follow this format:
+   "Apply <change> using command: `<command>`. Expected result: <what should happen after remediation>"
+7. **Bash Scripts**: If the procedure includes a bash script, include the FULL script content:
+   "Run the following remediation script: ```#!/usr/bin/env bash\\n<script content>```. Expected result: <what the script accomplishes>"
+8. **SKIP when prerequisite software/package is not installed**: If the remediation requires a specific software or package (e.g., GDM, GNOME, sshd, httpd) to be present, the FIRST requirement MUST check if the software is installed. If NOT installed, ALL subsequent remediation steps should be SKIPPED with status "SKIPPED" and a message like "Remediation not applicable - <package> is not installed on this server". Do NOT install the prerequisite package.
+9. **VERIFY step**: The LAST requirement MUST be a verification step that confirms the remediation was applied correctly.
+   Example: "VERIFY: Run audit check to confirm {title} is properly configured. Expected result: System should now be compliant"
 
 **Output Format:**
 Return ONLY a JSON list of strings. No markdown code blocks, no explanations.
 Example:
 [
-  "Verify kernel.yama.ptrace_scope in running config using command: `sysctl kernel.yama.ptrace_scope`. Rationale: PASS when output is 'kernel.yama.ptrace_scope = 1', '2', or '3', FAIL otherwise",
-  "OVERALL Verify: Ensure ptrace_scope is restricted. Rationale: PASS when req_1=PASS, FAIL otherwise"
+  "Install sudo package using command: `dnf install -y sudo`. Expected result: sudo package is installed",
+  "VERIFY: Confirm sudo is installed using command: `rpm -q sudo`. Expected result: Output shows sudo package version"
 ]
 
 Generate the JSON list now:"""
@@ -246,28 +230,25 @@ Generate the JSON list now:"""
         response = chain.invoke({
             'checkpoint_id': checkpoint_id,
             'title': title,
-            'rationale_section': rationale_section,
-            'audit_procedure': audit_procedure
+            'description_section': description_section,
+            'remediation_procedure': remediation_procedure
         })
         
         response_text = response.content.strip()
         
-        # Clean up response - handle potential extra text before/after JSON
         import json
         import re
         
-        # Try to find JSON array pattern [...]
         json_match = re.search(r'\[\s*".*"\s*\]', response_text, re.DOTALL)
         if json_match:
             try:
                 requirements = json.loads(json_match.group(0))
                 if isinstance(requirements, list):
-                    print(f"    ✅ AI extracted {len(requirements)} requirements from audit procedure")
+                    print(f"    ✅ AI extracted {len(requirements)} remediation steps from procedure")
                     return requirements
             except json.JSONDecodeError:
                 pass
 
-        # Fallback cleanup
         if "```json" in response_text:
             response_text = response_text.split("```json")[1].split("```")[0].strip()
         elif "```" in response_text:
@@ -276,27 +257,27 @@ Generate the JSON list now:"""
         try:
             requirements = json.loads(response_text)
             if isinstance(requirements, list):
-                print(f"    ✅ AI extracted {len(requirements)} requirements from audit procedure")
+                print(f"    ✅ AI extracted {len(requirements)} remediation steps from procedure")
                 return requirements
         except json.JSONDecodeError as e:
-            print(f"    ⚠️ AI requirement extraction JSON parse error: {e}")
+            print(f"    ⚠️ AI remediation extraction JSON parse error: {e}")
             if response_text:
                 print(f"    Raw response preview: {response_text[:100]}...")
             return []
             
-        print(f"    ⚠️ AI returned non-list response for requirements extraction")
+        print(f"    ⚠️ AI returned non-list response for remediation extraction")
         return []
             
     except Exception as e:
-        print(f"    ⚠️ AI requirement extraction failed: {e}")
+        print(f"    ⚠️ AI remediation extraction failed: {e}")
         return []
 
 
 def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dict:
     """
-    Generate playbook requirements based on CIS checkpoint info.
+    Generate REMEDIATION playbook requirements based on CIS checkpoint info.
     
-    First attempts to extract requirements directly from the audit procedure,
+    First attempts to extract requirements directly from the remediation procedure,
     then uses DeepSeek AI to enhance/format them.
     
     Args:
@@ -314,15 +295,12 @@ def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dic
     checkpoint_id = checkpoint_info.get('checkpoint_id', 'Unknown')
     title = checkpoint_info.get('title', '')
     
-    audit_procedure = checkpoint_info.get('audit_procedure', '')
+    remediation_procedure = checkpoint_info.get('remediation_procedure', '')
     
-    # Use audit_procedure as source text for analysis
-    source_text = audit_procedure
+    # Use remediation_procedure as the primary source text
+    source_text = remediation_procedure
     
     # Check if source_text contains a complete bash script
-    # If it does, create a simple requirement directly without JSON parsing
-    # Any audit procedure that contains a bash shebang line is treated as a
-    # complete script — even if there is preamble text before the shebang.
     is_complete_script = (
         source_text and (
             '#!/usr/bin/env bash' in source_text or
@@ -338,24 +316,12 @@ def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dic
         if script_start > 0:
             usage_text = source_text[:script_start].strip()
             if usage_text:
-                usage_instructions = usage_text[:500]  # Preserve preamble text
+                usage_instructions = usage_text[:500]
         
-        # Extract the script content and any trailing notes
         raw_after_shebang = source_text[script_start:].strip() if script_start >= 0 else source_text.strip()
         
-        # Separate the bash script from trailing notes/instructions
-        # The script typically ends after the last closing brace `}` that is at
-        # column 0 (top-level block end), or after an `fi`/`done`/`esac` at col 0.
-        # Trailing text (e.g. "Note:", "- ...", etc.) provides pass/fail criteria.
         script_content = raw_after_shebang
         trailing_notes = ""
-        
-        # Try to find where the script ends and notes begin
-        # Look for common patterns that signal end-of-script content
-        note_patterns = [
-            _re.search(r'\n(?:Note|NOTE|Notes|NOTES)\s*:', raw_after_shebang),
-            _re.search(r'\n(?:•|-)\s+\w', raw_after_shebang),  # bullet point after script
-        ]
         
         # Find the last top-level closing brace to split script from notes
         last_brace = -1
@@ -375,35 +341,34 @@ def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dic
                 trailing_notes = remaining
         
         # Build the requirement with full script and context
-        script_requirement = f"Run the provided CIS audit script to verify {title if title else 'system compliance'}. "
+        script_requirement = f"Run the provided CIS remediation script to fix {title if title else 'system configuration'}. "
         if usage_instructions:
             script_requirement += f"{usage_instructions} "
         script_requirement += f"Execute the COMPLETE script as-is: ```bash\n{script_content}\n```. "
         
-        # Build rationale from trailing notes if available
         if trailing_notes:
-            script_requirement += f"Additional criteria from CIS benchmark: {trailing_notes}. "
-        script_requirement += "Rationale: PASS when script output shows '** PASS **' or indicates compliance, FAIL when script output shows '** FAIL **' or indicates non-compliance"
+            script_requirement += f"Additional notes from CIS benchmark: {trailing_notes}. "
+        script_requirement += "Expected result: Script applies the required configuration changes to make the system compliant"
         
         requirements = [
             script_requirement,
-            f"OVERALL Verify: {title if title else f'CIS checkpoint {checkpoint_id}'}. Rationale: PASS when req_1=PASS, FAIL otherwise"
+            f"VERIFY: Run the CIS audit procedure to confirm {title if title else f'CIS checkpoint {checkpoint_id}'} is now properly configured. Expected result: System should be compliant after remediation"
         ]
         
-        print(f"    ✅ Detected complete bash script - created requirement to use script directly")
+        print(f"    ✅ Detected complete bash script - created requirement to use remediation script directly")
         if trailing_notes:
-            print(f"       (includes trailing notes/criteria: {trailing_notes[:100]}...)")
+            print(f"       (includes trailing notes: {trailing_notes[:100]}...)")
         return {
-            'objective': f"Audit CIS checkpoint {checkpoint_id}: {title}" if title else f"Audit CIS checkpoint: {checkpoint_id}",
+            'objective': f"Remediate CIS checkpoint {checkpoint_id}: {title}" if title else f"Remediate CIS checkpoint: {checkpoint_id}",
             'requirements': requirements
         }
     
     # If no complete script, try to extract requirements using LLM
-    rationale = checkpoint_info.get('rationale', '') or ''
-    extracted_requirements = extract_audit_steps_from_procedure(source_text, checkpoint_id, title, rationale)
+    description = checkpoint_info.get('description', '') or ''
+    extracted_requirements = extract_remediation_steps_from_procedure(source_text, checkpoint_id, title, description)
     
     if extracted_requirements and len(extracted_requirements) >= 2:
-        print(f"    ✅ Extracted {len(extracted_requirements)} audit requirements directly from audit procedure")
+        print(f"    ✅ Extracted {len(extracted_requirements)} remediation steps directly from procedure")
         for i, req in enumerate(extracted_requirements[:3], 1):
             preview = req[:100] + '...' if len(req) > 100 else req
             print(f"       {i}. {preview}")
@@ -411,7 +376,7 @@ def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dic
             print(f"       ... and {len(extracted_requirements) - 3} more")
         
         return {
-            'objective': f"Audit CIS checkpoint {checkpoint_id}: {title}" if title else f"Audit CIS checkpoint: {checkpoint_id}",
+            'objective': f"Remediate CIS checkpoint {checkpoint_id}: {title}" if title else f"Remediate CIS checkpoint: {checkpoint_id}",
             'requirements': extracted_requirements
         }
     
@@ -425,20 +390,20 @@ def generate_playbook_requirements_from_checkpoint(checkpoint_info: dict) -> dic
         temperature=0
     )
     
-    # Build additional context from remediation procedure if available
+    # Build additional context from audit procedure if available
     additional_context = ""
-    remediation = checkpoint_info.get('remediation_procedure', '')
-    if remediation and len(remediation) > 50:
+    audit_proc = checkpoint_info.get('audit_procedure', '')
+    if audit_proc and len(audit_proc) > 50:
         additional_context = f"""
-**Remediation Procedure (for reference, do NOT use for audit requirements):**
-{remediation[:6000]}
+**Audit Procedure (for reference - use to verify remediation was applied correctly):**
+{audit_proc[:6000]}
 """
     
-    prompt_template = """You are an expert system administrator creating Ansible playbooks for CIS benchmark compliance auditing.
+    prompt_template = """You are an expert system administrator creating Ansible playbooks for CIS benchmark REMEDIATION.
 
 Based on the following CIS checkpoint information, generate:
-1. A clear playbook objective (one sentence) focused on AUDITING this security control
-2. A list of specific requirements for an Ansible playbook
+1. A clear playbook objective (one sentence) focused on REMEDIATING (fixing) this security control
+2. A list of specific requirements for an Ansible remediation playbook
 
 **CIS Checkpoint Information:**
 - Checkpoint ID: {checkpoint_id}
@@ -447,77 +412,66 @@ Based on the following CIS checkpoint information, generate:
 - Description: {description}
 - Rationale: {rationale}
 
-**Audit Procedure from CIS Benchmark:**
-{audit_procedure}
-
 **Remediation Procedure from CIS Benchmark:**
 {remediation_procedure}
+
+**Audit Procedure from CIS Benchmark (for verification reference):**
+{audit_procedure}
 {additional_context}
 **Task:**
-Extract structured requirements from the "Audit Procedure" section of the provided CIS Benchmark document.
+Extract structured remediation requirements from the "Remediation Procedure" section of the provided CIS Benchmark document.
 
 **Instructions:**
-1. **Deconstruct Logic**: Analyze the audit steps sequentially. Do not just summarize; extract the specific commands, configurations, or states that must be verified. Process each step in order and extract the exact technical details.
-2. **Define Requirements**: For every "Audit Procedure," create a "Technical Requirement" that states exactly what must be present or configured. Each requirement should be a clear, actionable statement.
-3. **Map Dependencies**:
-   - **Prerequisite Dependencies**: If a procedure step (Step B) can only be performed if a previous step (Step A) returns a specific result, mark Step A as a Prerequisite Dependency. Document this in the requirement's rationale or as a separate dependency note.
-   - **Logical AND Dependencies**: If multiple configurations must exist simultaneously for the control to be "Pass," link them as Logical AND dependencies. This should be reflected in the "OVERALL Verify" requirement at the end.
+1. **Deconstruct Logic**: Analyze the remediation steps sequentially. Extract the specific commands, configurations, or changes that must be applied.
+2. **Define Requirements**: For every remediation step, create a "Technical Requirement" that states exactly what configuration must be applied. Each requirement should be a clear, actionable statement.
+3. **Idempotency**: Ensure each step is safe to run multiple times. Use Ansible modules (like lineinfile, file, package, service) where possible.
+4. **Map Dependencies**: If steps have dependencies, document them.
 
 Generate Ansible playbook requirements that will:
-1. AUDIT the system to check if it complies with this CIS checkpoint
-2. COLLECT the current system state/configuration
-3. COMPARE against the expected values from CIS benchmark
-4. REPORT compliance status (PASS/FAIL) with details
+1. APPLY the remediation steps from the CIS benchmark
+2. CONFIGURE the system to comply with this CIS checkpoint
+3. VERIFY the remediation was applied correctly
+4. REPORT the remediation status
 
-**MERGE related information**: If a step includes a description, a command, and an example output, they MUST be merged into a single requirement. Do not create separate requirements for the command and its example output.
-
-**Analyze expected values**: Carefully look for phrases like "is set to", "should be", "Example output:", or "verify... is...". Use these to determine the EXACT expected value.
-
-**Prioritize Measurable Criteria**: When there are conflicting or different standards between the **Rationale** section and the **Audit Procedure** section, ALWAYS use the MORE MEASURABLE one in the requirement rationale.
-   - **More measurable criteria** include: specific version numbers (e.g., "pam-1.3.1-25 or later"), exact values, numeric thresholds, clear pass/fail conditions
-   - **Less measurable criteria** include: vague phrases like "similar to", "should be", "example output", or descriptive text without specific values
-   - **Example**: 
-     - Rationale says: "pam-1.3.1-25 or later is required" (MORE MEASURABLE - specific version requirement)
-     - Audit Procedure says: "Expected Output: The output should be similar to: pam-1.3.1-25.el8.x86_64" (LESS MEASURABLE - just an example)
-     - **Use the Rationale**: "Rationale: PASS when pam version is 1.3.1-25 or later (extract version from output and compare), FAIL otherwise"
-   - **CRITICAL**: Always compare both sections and choose the most specific, measurable criteria for the rationale
-
-**Specific Rationales**: Do NOT use generic rationales like "PASS when command shows compliant state". Instead, be specific.
-   - Example: "Rationale: PASS when output is 'kernel.yama.ptrace_scope = 1', '2', or '3', FAIL otherwise."
+**MERGE related information**: If a step includes a description and a command, they MUST be merged into a single requirement.
 
 **Output Format:**
 Return ONLY a valid JSON object with this exact structure (no markdown, no code blocks):
 {{
-    "objective": "Audit CIS checkpoint {checkpoint_id}: {title}",
+    "objective": "Remediate CIS checkpoint {checkpoint_id}: {title}",
     "requirements": [
-        "Check <condition> using command: `<command>`. Rationale: PASS when <expected result>, FAIL when <failure condition>",
-        "Verify <setting> with command: `<command>`. Rationale: PASS when <expected>, FAIL otherwise",
-        "Run the following audit script to check <module>: ```#!/usr/bin/env bash\\n<full script content here>```. Rationale: PASS when <condition>, FAIL when <condition>",
+        "Apply <change> using command: `<command from procedure>`. Expected result: <what should happen>",
+        "Edit <file> and <describe the change from procedure>. Expected result: <desired state>",
+        "Run the following remediation script: ```#!/usr/bin/env bash\\n<full script content from procedure>```. Expected result: <what the script fixes>",
+        "VERIFY: Confirm remediation by running: `<audit command>`. Expected result: System is now compliant",
         ...
     ]
 }}
+NOTE: Only include 'using command: ...' when the remediation procedure EXPLICITLY provides that command. If the procedure says 'Edit the file and add X', just describe the action — do NOT invent commands.
 
 **Script Inclusion Example:**
-If the audit procedure contains a script like:
+If the remediation procedure contains a script like:
   #!/usr/bin/env bash
   l_output="" l_output2=""
   ...
 You MUST include the ENTIRE script in the requirement, like:
-  "Run the following audit script to verify kernel module availability: ```#!/usr/bin/env bash\\nl_output=\"\" l_output2=\"\"\\n...full script...```. Rationale: PASS when script output shows module not available, FAIL otherwise"
+  "Run the following remediation script to fix kernel module configuration: ```#!/usr/bin/env bash\\nl_output=\"\" l_output2=\"\"\\n...full script...```. Expected result: Module is disabled and blacklisted"
 
 **Important Guidelines:**
-- Base requirements DIRECTLY on the audit procedure commands from the checkpoint information
-- Include the exact commands from the CIS benchmark audit procedure
-- Focus on AUDITING (checking compliance), not remediation
-- Each requirement should map to a specific audit step
-- CRITICAL: Each requirement MUST end with "Rationale: PASS when <condition>, FAIL when <condition>" explaining the pass/fail logic
-- Include expected values/outputs for comparison
-- Use the audit procedure commands directly from the CIS benchmark data
-- CRITICAL: If the audit procedure contains a SCRIPT (bash script, shell script), you MUST include the FULL script content in the requirement, NOT just "use the provided script". The requirement must be SELF-CONTAINED with all script details.
+- Base requirements DIRECTLY on the remediation procedure from the checkpoint information
+- **ONLY include commands/scripts that are EXPLICITLY provided in the remediation procedure**
+- **DO NOT invent or generate commands** when the remediation procedure only provides prose/text instructions (e.g., "Edit /etc/fstab and add nodev"). In that case, describe WHAT to do, not HOW — let the playbook generator decide the implementation.
+  - ✅ CORRECT (procedure provides command): "Remount /tmp using command: `mount -o remount /tmp`. Expected result: /tmp remounted"
+  - ✅ CORRECT (procedure gives prose only): "Edit /etc/fstab and add nodev to the mount options for /tmp partition. Expected result: /etc/fstab entry for /tmp includes nodev"
+  - ❌ WRONG (inventing a complex sed command not in the procedure): "Apply nodev using command: `sed -i '...' /etc/fstab`. Expected result: ..."
+- Focus on REMEDIATION (applying fixes), not just auditing
+- Each requirement should map to a specific remediation step
+- Each requirement MUST end with "Expected result: <what should happen>" explaining the expected outcome
+- CRITICAL: If the remediation procedure contains a SCRIPT, include the FULL script content in the requirement
 - When including scripts, format them as: "Run the following script: ```<full script content>```"
-- Never reference "the audit script" or "the provided script" without including the actual script code
-- The LAST requirement MUST be an "OVERALL Verify" that combines the results of all previous requirements.
-   Example: "OVERALL Verify: <checkpoint title>. Rationale: PASS when req_1=PASS AND req_2=PASS, FAIL otherwise"
+- **SKIP when prerequisite software/package is not installed**: If the remediation targets a specific software or service (e.g., GDM, GNOME, sshd, httpd, chrony, nftables), the FIRST requirement MUST check if that software is installed. If NOT installed, ALL subsequent steps should be SKIPPED with status "SKIPPED" and details explaining "Remediation not applicable - <package> is not installed on this server". Do NOT install prerequisite packages — only configure what is already present.
+- The LAST requirement MUST be a VERIFY step that confirms remediation was applied correctly
+   Example: "VERIFY: Run audit check to confirm {title} is properly configured. Expected result: System is compliant"
 
 Generate the JSON now:"""
 
@@ -537,11 +491,9 @@ Generate the JSON now:"""
     
     response_text = response.content.strip()
     
-    # Clean up response - handle potential extra text before/after JSON
     import json
     import re
     
-    # Try to find JSON object pattern {...}
     json_match = re.search(r'\{\s*".*"\s*\}', response_text, re.DOTALL)
     if json_match:
         try:
@@ -551,7 +503,6 @@ Generate the JSON now:"""
         except json.JSONDecodeError:
             pass
 
-    # Fallback cleanup
     if "```json" in response_text:
         response_text = response_text.split("```json")[1].split("```")[0].strip()
     elif "```" in response_text:
@@ -568,46 +519,40 @@ Generate the JSON now:"""
         # Build simple fallback requirements
         checkpoint_id = checkpoint_info.get('checkpoint_id', 'Unknown')
         title = checkpoint_info.get('title', '')
-        audit_proc = checkpoint_info.get('audit_procedure', '')
+        remed_proc = checkpoint_info.get('remediation_procedure', '')
         
-        # Check if we have a script in the audit procedure
-        source_text = audit_proc
+        source_text = remed_proc
         fallback_requirements = []
         
-        # Check if source_text contains a complete bash script
         if source_text and ('#!/usr/bin/env bash' in source_text or '#!/bin/bash' in source_text):
-            # Extract script content
             script_start = source_text.find('#!/')
             if script_start >= 0:
                 script_content = source_text[script_start:].strip()
-                # Extract usage instructions if available
                 usage_instructions = ""
                 if script_start > 0:
                     usage_text = source_text[:script_start].strip()
-                    if 'IF' in usage_text.upper() or 'verify:' in usage_text.lower():
+                    if usage_text:
                         usage_instructions = usage_text[:200]
                 
-                script_requirement = f"Run the provided audit script to verify {title if title else 'system compliance'}. "
+                script_requirement = f"Run the provided remediation script to fix {title if title else 'system configuration'}. "
                 if usage_instructions:
-                    script_requirement += f"Usage: {usage_instructions}. "
+                    script_requirement += f"Context: {usage_instructions}. "
                 script_requirement += f"The script: ```bash\n{script_content}\n```. "
-                script_requirement += "Rationale: PASS when script output shows '** PASS **' or indicates compliance, FAIL when script shows '** FAIL **' or indicates non-compliance"
+                script_requirement += "Expected result: System configuration is updated to be compliant"
                 
                 fallback_requirements.append(script_requirement)
-                fallback_requirements.append(f"OVERALL Verify: {title if title else f'CIS checkpoint {checkpoint_id}'}. Rationale: PASS when req_1=PASS, FAIL otherwise")
+                fallback_requirements.append(f"VERIFY: Confirm {title if title else f'CIS checkpoint {checkpoint_id}'} is now properly configured. Expected result: System is compliant")
             else:
-                # Script not found, use generic requirements
                 if title:
-                    fallback_requirements.append(f"Verify that: {title}. Rationale: PASS when verified, FAIL otherwise")
-                fallback_requirements.append(f"Check system configuration for CIS {checkpoint_id}. Rationale: PASS when compliant, FAIL otherwise")
+                    fallback_requirements.append(f"Apply remediation for: {title}. Expected result: System is compliant")
+                fallback_requirements.append(f"VERIFY: Check system configuration for CIS {checkpoint_id}. Expected result: Compliant")
         else:
-            # No script found, use generic requirements
             if title:
-                fallback_requirements.append(f"Verify that: {title}. Rationale: PASS when verified, FAIL otherwise")
-            fallback_requirements.append(f"Check system configuration for CIS {checkpoint_id}. Rationale: PASS when compliant, FAIL otherwise")
+                fallback_requirements.append(f"Apply remediation for: {title}. Expected result: System is compliant")
+            fallback_requirements.append(f"VERIFY: Check system configuration for CIS {checkpoint_id}. Expected result: Compliant")
         
         return {
-            'objective': f"Audit CIS checkpoint {checkpoint_id}: {title}" if title else f"Audit CIS checkpoint: {checkpoint_id}",
+            'objective': f"Remediate CIS checkpoint {checkpoint_id}: {title}" if title else f"Remediate CIS checkpoint: {checkpoint_id}",
             'requirements': fallback_requirements
         }
 
@@ -680,11 +625,11 @@ def run_playbook_generation(objective, requirements, target_host, test_host, bec
 # =============================================================================
 
 def interactive_mode(checkpoint_data, args):
-    """Interactive mode to query CIS checkpoints and generate playbooks."""
+    """Interactive mode to query CIS checkpoints and generate remediation playbooks."""
     print("\n" + "="*70)
-    print("CIS RHEL 9 Checkpoint to Ansible Playbook Generator")
+    print("CIS RHEL 9 Checkpoint to Ansible Remediation Playbook Generator")
     print("="*70)
-    print("\nEnter CIS checkpoint IDs to generate audit playbooks.")
+    print("\nEnter CIS checkpoint IDs to generate remediation playbooks.")
     print("Examples:")
     print("  - 1.1.1.1")
     print("  - 1.1.1.1 Ensure cramfs kernel module is not available")
@@ -712,7 +657,7 @@ def interactive_mode(checkpoint_data, args):
 
 
 def process_checkpoint(checkpoint_data, checkpoint: str, args):
-    """Process a single CIS checkpoint and generate playbook."""
+    """Process a single CIS checkpoint and generate remediation playbook."""
     
     verbose = getattr(args, 'verbose', False)
     
@@ -740,29 +685,27 @@ def process_checkpoint(checkpoint_data, checkpoint: str, args):
     print(f"\nDescription: {checkpoint_info.get('description', 'N/A')}")
     print(f"\nRationale: {checkpoint_info.get('rationale', 'N/A')}")
     
-    audit_proc = checkpoint_info.get('audit_procedure', '')
     remed_proc = checkpoint_info.get('remediation_procedure', '')
+    audit_proc = checkpoint_info.get('audit_procedure', '')
     checkpoint_id = checkpoint_info.get('checkpoint_id', 'N/A')
 
-    if audit_proc:
-        print("\n" + "-"*100)
-        print("🔍 AUDIT PROCEDURE:")
-        print("-"*100)
-        print(audit_proc)
-        #print(audit_proc[:2000] + ('...' if len(audit_proc) > 2000 else ''))
-    
     if remed_proc:
         print("\n" + "-"*100)
         print("🔧 REMEDIATION PROCEDURE:")
         print("-"*100)
         print(remed_proc)
-        #print(remed_proc[:2000] + ('...' if len(remed_proc) > 2000 else ''))
+    
+    if audit_proc:
+        print("\n" + "-"*100)
+        print("🔍 AUDIT PROCEDURE (for verification reference):")
+        print("-"*100)
+        print(audit_proc)
     
     print("-"*100)
     
-    # Step 3: Generate playbook requirements
+    # Step 3: Generate remediation playbook requirements
     print("\n" + "="*100)
-    print("STEP 3: Generating playbook requirements using DeepSeek AI")
+    print("STEP 3: Generating remediation playbook requirements using DeepSeek AI")
     print("="*100)
     
     playbook_spec = generate_playbook_requirements_from_checkpoint(checkpoint_info)
@@ -857,12 +800,11 @@ def process_checkpoint(checkpoint_data, checkpoint: str, args):
     #if not checkpoint_id or checkpoint_id in ['None', 'N/A', '']:
     #    checkpoint_id = checkpoint
 
-    #requirements.append(f"Add comment referencing CIS RHEL 9 Benchmark v4.0.0, checkpoint {checkpoint_id}")
-    requirements.append(f"""Create a task named 'Generate compliance report' that displays a debug msg with this format:
+    requirements.append(f"""Create a task named 'Generate remediation report' that displays a debug msg with this format:
 ========================================================
-        COMPLIANCE REPORT - CIS {checkpoint_id}
+        REMEDIATION REPORT - CIS {checkpoint_id}
 ========================================================
-Reference: CIS RHEL 9 Benchmark v4.0.0 checkpoint {checkpoint_id}
+Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint {checkpoint_id}
 ========================================================
 
 REQUIREMENT 1 - <requirement description>:
@@ -870,19 +812,21 @@ REQUIREMENT 1 - <requirement description>:
   Command: <command executed>
   Exit code: <exit code>
   Data: <command output>
-  Status: PASS or FAIL
-  Rationale: <why PASS or FAIL based on the requirement's rationale>
+  Status: APPLIED or FAILED or SKIPPED
+  Details: <what was changed or why it failed or why it was skipped>
 
 (repeat for each requirement)
 
 ========================================================
-OVERALL COMPLIANCE:
-  Result: PASS or FAIL
-  Rationale: <overall pass/fail logic explanation>
+OVERALL REMEDIATION:
+  Result: APPLIED or PARTIALLY APPLIED or FAILED or SKIPPED
+  Details: <summary of what was changed, why skipped, or what manual action is needed>
 ========================================================
 
-Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE section is REQUIRED at the end.""")
-    requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all audit tasks (except `set_fact`, `debug` tasks) so all checks complete and report status")
+Each requirement MUST have Status and Details lines. The OVERALL REMEDIATION section is REQUIRED at the end.
+Valid statuses: APPLIED (change was made), FAILED (change could not be applied), SKIPPED (prerequisite not installed, remediation not applicable to this server, or manual human action is required).""")
+    requirements.append("CRITICAL: Use ignore_errors: true or failed_when: false on all remediation tasks (except `set_fact`, `debug` tasks) so all steps complete and report status")
+    requirements.append("CRITICAL: If the remediation targets a specific software/service (e.g., GDM, GNOME, sshd, httpd), FIRST check if it is installed. If NOT installed, SKIP all remediation steps with status 'SKIPPED' and details explaining why. Do NOT install prerequisite packages — only remediate what is already present on the server.")
     
     # Step 4: Generate playbook filename
     # Extract only digits and dots from checkpoint_id (e.g., "1.8.3" from "1.8.3" or "1.8.3 Ensure...")
@@ -993,7 +937,7 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
     # Replace dots with underscores for filename (e.g., "1.8.3" -> "1_8_3")
     #safe_checkpoint_id = clean_checkpoint_id.replace('.', '_')
     safe_checkpoint_id = checkpoint_id.replace('.', '_')
-    base_filename = args.filename if args.filename else f"cis_audit_{safe_checkpoint_id}.yml"
+    base_filename = args.filename if args.filename else f"cis_remediation_{safe_checkpoint_id}.yml"
     print(f"🔍 DEBUG: Final filename: {base_filename}")
     
     # Handle output directory
@@ -1010,26 +954,25 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
 
     # Step 4: Generate and optionally execute playbook
     print("\n" + "="*100)
-    print("STEP 4: Generating Ansible Playbook")
+    print("STEP 4: Generating Ansible Remediation Playbook")
     print("="*100)
     print(f"Target Host:    {args.target_host}")
     print(f"Become User:    {args.become_user}")
     print(f"Output File:    {filename}")
     
-    # Get the audit procedure from checkpoint info (directly from JSON)
-    audit_procedure = checkpoint_info.get('audit_procedure', '')
+    # Get the remediation procedure from checkpoint info (directly from JSON)
+    remediation_procedure = checkpoint_info.get('remediation_procedure', '')
     
-    if audit_procedure and len(audit_procedure) > 50:
-        print(f"Audit Proc:     {len(audit_procedure)} chars (CIS Benchmark audit procedure will be used)")
-        # Show a preview of the audit procedure
-        preview_lines = audit_procedure[:500].split('\n')[:5]
+    if remediation_procedure and len(remediation_procedure) > 50:
+        print(f"Remed Proc:     {len(remediation_procedure)} chars (CIS Benchmark remediation procedure will be used)")
+        preview_lines = remediation_procedure[:500].split('\n')[:5]
         for line in preview_lines:
             if line.strip():
                 print(f"                {line[:80]}{'...' if len(line) > 80 else ''}")
-        if len(audit_procedure) > 500:
-            print(f"                ... ({len(audit_procedure) - 500} more chars)")
+        if len(remediation_procedure) > 500:
+            print(f"                ... ({len(remediation_procedure) - 500} more chars)")
     else:
-        print(f"Audit Proc:     Not available (using requirements only)")
+        print(f"Remed Proc:     Not available (using requirements only)")
     
     if args.skip_execution:
         print("⚠️  Execution will be SKIPPED (--skip-execution flag)")
@@ -1040,7 +983,7 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
     #print("FileName: ", filename)
     #ok = input("Enter: ")
 
-    # audit_procedure was already extracted above in Step 4
+    # remediation_procedure was already extracted above in Step 4
     success, output = run_playbook_generation(
         objective=objective,
         requirements=requirements,
@@ -1049,7 +992,7 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
         become_user=args.become_user,
         filename=filename,
         skip_execution=args.skip_execution,
-        audit_procedure=audit_procedure if audit_procedure and len(audit_procedure) > 50 else None,
+        audit_procedure=remediation_procedure if remediation_procedure and len(remediation_procedure) > 50 else None,
         enhance=args.enhance,
         skip_test=getattr(args, 'skip_test', False)
     )
@@ -1060,13 +1003,13 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
     print("="*100)
     
     if success:
-        print(f"✅ Successfully generated audit playbook!")
+        print(f"✅ Successfully generated remediation playbook!")
         print(f"\n📋 CIS Checkpoint: {checkpoint_info.get('checkpoint_id', checkpoint)}")
         print(f"📄 Title: {checkpoint_info.get('title', 'N/A')}")
         print(f"📁 Playbook: {filename}")
         print(f"🎯 Target: {args.target_host}")
     else:
-        print(f"❌ Playbook generation failed: {output}")
+        print(f"❌ Remediation playbook generation failed: {output}")
 
 
 # =============================================================================
@@ -1075,24 +1018,24 @@ Each requirement MUST have Status and Rationale lines. The OVERALL COMPLIANCE se
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate Ansible audit playbooks from CIS RHEL 9 checkpoints',
+        description='Generate Ansible REMEDIATION playbooks from CIS RHEL 9 checkpoints',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Interactive mode
-  python3 cis_checkpoint_to_playbook.py
+  python3 single_remediation_rhel9_cis_to_playbook.py
   
   # Single checkpoint
-  python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1"
+  python3 single_remediation_rhel9_cis_to_playbook.py --checkpoint "1.1.1.1"
   
   # With custom target host
-  python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --target-host 192.168.122.16
+  python3 single_remediation_rhel9_cis_to_playbook.py --checkpoint "1.1.1.1" --target-host 192.168.122.16
   
   # Save to custom directory
-  python3 cis_checkpoint_to_playbook.py --checkpoint "1.1.1.1" --output-dir ./playbooks
+  python3 single_remediation_rhel9_cis_to_playbook.py --checkpoint "1.1.1.1" --output-dir ./remediation_playbooks
   
   # Skip execution (generate only)
-  python3 cis_checkpoint_to_playbook.py --checkpoint "5.2.4" --skip-execution
+  python3 single_remediation_rhel9_cis_to_playbook.py --checkpoint "5.2.4" --skip-execution
 """
     )
     
@@ -1128,7 +1071,7 @@ Examples:
         '--filename', '-f',
         type=str,
         default=None,
-        help='Output filename for the generated playbook (default: cis_audit_<checkpoint>.yml)'
+        help='Output filename for the generated playbook (default: cis_remediation_<checkpoint>.yml)'
     )
     
     parser.add_argument(
@@ -1198,11 +1141,11 @@ Examples:
                 checkpoint_id = checkpoint_match.group(1) if checkpoint_match else "0.0.0"
                 
                 # Generate filename from checkpoint
-                filename = args.filename if args.filename else f"cis_rhel9_scan_playbook/cis_audit_{checkpoint_id.replace('.', '_')}.yml"
+                filename = args.filename if args.filename else f"cis_rhel9_remediation_playbook/cis_remediation_{checkpoint_id.replace('.', '_')}.yml"
                 
                 # Use minimal values for objective and requirements since we're just executing existing playbook
-                objective = f"Audit CIS checkpoint {checkpoint_id}: {args.checkpoint}"
-                requirements = [f"Execute existing playbook for CIS checkpoint {checkpoint_id}"]
+                objective = f"Remediate CIS checkpoint {checkpoint_id}: {args.checkpoint}"
+                requirements = [f"Execute existing remediation playbook for CIS checkpoint {checkpoint_id}"]
                 
                 # Call run_playbook_generation directly without CIS benchmark query
                 run_playbook_generation(
@@ -1223,7 +1166,7 @@ Examples:
         else:
             # Load checkpoint data from structured JSON file
             print("\n" + "="*100)
-            print("🔧 Loading CIS RHEL 9 Benchmark Data from JSON")
+            print("🔧 Loading CIS RHEL 9 Benchmark Data from JSON (for remediation)")
             print("="*100)
             
             checkpoint_data = load_checkpoint_data()

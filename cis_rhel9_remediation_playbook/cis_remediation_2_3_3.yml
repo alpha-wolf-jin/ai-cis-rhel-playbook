@@ -1,0 +1,275 @@
+---
+- name: Remediation for CIS 2.3.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_3_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.3"
+    
+    # Requirement definitions - exact text from requirements
+    req_1: "Check if chrony package is installed"
+    req_2: "Apply configuration to ensure chronyd does not run as root by editing /etc/sysconfig/chronyd to ensure the OPTIONS line does not contain '-u root'"
+    req_3: "Apply configuration reload for chronyd.service"
+    req_4: "Run audit check to confirm Ensure chrony is not run as the root user is properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: "State Guard - Restore /etc/sysconfig/chronyd from backup"
+      copy:
+        src: "{{ state_guard_dir }}/chronyd.present"
+        dest: "/etc/sysconfig/chronyd"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Check if /etc/sysconfig/chronyd exists"
+      stat:
+        path: "/etc/sysconfig/chronyd"
+      register: _sg_chronyd_stat
+
+    - name: "State Guard - Backup /etc/sysconfig/chronyd (present)"
+      copy:
+        src: "/etc/sysconfig/chronyd"
+        dest: "{{ state_guard_dir }}/chronyd.present"
+        remote_src: true
+      when: _sg_chronyd_stat.stat.exists
+
+    - name: "State Guard - Mark /etc/sysconfig/chronyd as absent"
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/chronyd.absent"
+      when: not _sg_chronyd_stat.stat.exists
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        status_1: "SKIPPED"
+        status_2: "SKIPPED"
+        status_3: "SKIPPED"
+        status_4: "SKIPPED"
+        rationale_1: "Not executed yet"
+        rationale_2: "Not executed yet"
+        rationale_3: "Not executed yet"
+        rationale_4: "Not executed yet"
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        chrony_installed: false
+
+    # Requirement 1: Check if chrony package is installed
+    - name: "Req 1 - Check chrony package installation"
+      shell: |
+        rpm -q chrony
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: "Store requirement 1 details and determine chrony installation status"
+      set_fact:
+        task_1_name: "Check chrony package installation"
+        task_1_cmd: "rpm -q chrony"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        chrony_installed: "{{ result_1.rc | default(-1) == 0 }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'SKIPPED' if result_1.rc | default(-1) == 1 and 'is not installed' in result_1.stdout | default('') else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: chrony package is installed' if result_1.rc | default(-1) == 0 else 'SKIPPED: chrony package is not installed - remediation not applicable' if result_1.rc | default(-1) == 1 and 'is not installed' in result_1.stdout | default('') else 'FAILED: could not determine chrony installation status') | trim }}"
+
+    # Requirement 2: Apply configuration to ensure chronyd does not run as root
+    - name: "Req 2 - Remove '-u root' from chronyd OPTIONS"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/sysconfig/chronyd 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        sed -i -E 's/^[[:space:]]*OPTIONS[[:space:]]*=[[:space:]]*"[^"]*-u root[^"]*"$/OPTIONS="-F 2"/' /etc/sysconfig/chronyd
+        echo "=== AFTER ==="
+        cat /etc/sysconfig/chronyd 2>/dev/null || echo "File does not exist"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: chrony_installed
+
+    - name: "Store requirement 2 details"
+      set_fact:
+        task_2_name: "Remove '-u root' from chronyd OPTIONS"
+        task_2_cmd: |
+          sed -i -E 's/^[[:space:]]*OPTIONS[[:space:]]*=[[:space:]]*\"[^\"]*-u root[^\"]*\"$/OPTIONS=\"-F 2\"/' /etc/sysconfig/chronyd
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: configuration updated successfully' if result_2.rc | default(-1) == 0 else 'FAILED: could not update configuration') | trim }}"
+      when: chrony_installed
+
+    # Requirement 3: Apply configuration reload for chronyd.service
+    - name: "Req 3 - Reload chronyd service configuration"
+      shell: |
+        systemctl reload-or-restart chronyd.service
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: chrony_installed
+
+    - name: "Store requirement 3 details"
+      set_fact:
+        task_3_name: "Reload chronyd service configuration"
+        task_3_cmd: "systemctl reload-or-restart chronyd.service"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('APPLIED' if result_3.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_3: "{{ ('APPLIED: service configuration reloaded' if result_3.rc | default(-1) == 0 else 'FAILED: could not reload service') | trim }}"
+      when: chrony_installed
+
+    # Requirement 4: Run audit check to verify compliance
+    - name: "Req 4 - Verify chrony is not run as root"
+      shell: |
+        grep -E '^[[:space:]]*OPTIONS[[:space:]]*=' /etc/sysconfig/chronyd 2>/dev/null | grep -vq -- '-u root' && echo 'Compliant' || echo 'Not Compliant'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: chrony_installed
+
+    - name: "Store requirement 4 details"
+      set_fact:
+        task_4_name: "Verify chrony is not run as root"
+        task_4_cmd: "grep -E '^[[:space:]]*OPTIONS[[:space:]]*=' /etc/sysconfig/chronyd 2>/dev/null | grep -vq -- '-u root' && echo 'Compliant' || echo 'Not Compliant'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output == 'Compliant' %}
+            APPLIED
+          {% elif output == 'Not Compliant' %}
+            FAILED
+          {% elif chrony_installed %}
+            FAILED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output == 'Compliant' %}
+            APPLIED: chrony is not configured to run as root
+          {% elif output == 'Not Compliant' %}
+            FAILED: chrony may still be configured to run as root
+          {% elif chrony_installed %}
+            FAILED: verification command failed
+          {% else %}
+            SKIPPED: chrony not installed - verification not applicable
+          {% endif %}
+      when: chrony_installed
+
+    # Determine overall remediation status (FIXED based on feedback)
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' or status_4 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            Remediation skipped - chrony package is not installed
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            Remediation applied successfully - chrony is not configured to run as root
+          {% elif status_2 | trim == 'FAILED' or status_3 | trim == 'FAILED' or status_4 | trim == 'FAILED' %}
+            Remediation failed - could not apply configuration changes
+          {% else %}
+            Remediation status unknown
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.3.3"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.3.3"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

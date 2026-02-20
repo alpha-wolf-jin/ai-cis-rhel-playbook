@@ -1,0 +1,427 @@
+---
+- name: Remediation for CIS 5.3.3.3.3 - Ensure pam_pwhistory includes use_authtok
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_5_3_3_3_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.3.3.3.3"
+    
+    req_1: "Run verification script to check if use_authtok is present in pam_pwhistory.so"
+    req_2: "Run remediation script to add use_authtok to pam_pwhistory.so if missing"
+    req_3: "Apply authselect changes to update /etc/pam.d files"
+    req_4: "Verify pam_pwhistory includes use_authtok after remediation"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Get active authselect profile path
+      shell: |
+        l_pam_profile="$(head -1 /etc/authselect/authselect.conf 2>/dev/null || echo '')"
+        if [ -n "$l_pam_profile" ]; then
+          if echo "$l_pam_profile" | grep -q '^custom/'; then
+            echo "/etc/authselect/$l_pam_profile"
+          else
+            echo "/usr/share/authselect/default/$l_pam_profile"
+          fi
+        else
+          echo ""
+        fi
+      args:
+        executable: /bin/bash
+      register: _sg_profile_path
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Restore authselect profile files from backup
+      copy:
+        src: "{{ state_guard_dir }}/password-auth.present"
+        dest: "{{ _sg_profile_path.stdout }}/password-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and _sg_profile_path.stdout != ''
+      ignore_errors: true
+
+    - name: State Guard - Restore authselect profile files from backup - system-auth
+      copy:
+        src: "{{ state_guard_dir }}/system-auth.present"
+        dest: "{{ _sg_profile_path.stdout }}/system-auth"
+        remote_src: true
+      when: _sg_flag.stat.exists and _sg_profile_path.stdout != ''
+      ignore_errors: true
+
+    - name: State Guard - Apply authselect changes to restore PAM files
+      shell: authselect apply-changes
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Check if authselect is installed and get profile path
+      shell: |
+        if ! command -v authselect >/dev/null 2>&1; then
+          echo "SKIP"
+          exit 0
+        fi
+        l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+        if echo "$l_pam_profile" | grep -q '^custom/'; then
+          echo "/etc/authselect/$l_pam_profile"
+        else
+          echo "/usr/share/authselect/default/$l_pam_profile"
+        fi
+      args:
+        executable: /bin/bash
+      register: _sg_profile_info
+      ignore_errors: true
+
+    - name: State Guard - Backup authselect profile files
+      copy:
+        src: "{{ _sg_profile_info.stdout }}/password-auth"
+        dest: "{{ state_guard_dir }}/password-auth.present"
+        remote_src: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+      ignore_errors: true
+
+    - name: State Guard - Backup authselect profile files - system-auth
+      copy:
+        src: "{{ _sg_profile_info.stdout }}/system-auth"
+        dest: "{{ state_guard_dir }}/system-auth.present"
+        remote_src: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+      ignore_errors: true
+
+    - name: State Guard - Backup /etc/pam.d/password-auth
+      copy:
+        src: "/etc/pam.d/password-auth"
+        dest: "{{ state_guard_dir }}/etc_pam_d_password-auth.present"
+        remote_src: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+      ignore_errors: true
+
+    - name: State Guard - Backup /etc/pam.d/system-auth
+      copy:
+        src: "/etc/pam.d/system-auth"
+        dest: "{{ state_guard_dir }}/etc_pam_d_system-auth.present"
+        remote_src: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    - name: Req 1 - Create CIS verification script
+      copy:
+        dest: "/tmp/cis_verify_5_3_3_3_3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwhistory\.so\h+([^#\n\ r]+\h+)?use_authtok\b' "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+    - name: Req 1 - Execute CIS verification script
+      shell: "/tmp/cis_verify_5_3_3_3_3.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+    - name: Req 1 - Remove temporary verification script
+      file:
+        path: "/tmp/cis_verify_5_3_3_3_3.sh"
+        state: absent
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Verify if use_authtok is present in pam_pwhistory.so"
+        task_1_cmd: "bash /tmp/cis_verify_5_3_3_3_3.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 and result_1.stdout | default('') | trim != '' %}
+            APPLIED
+          {% elif result_1.rc | default(-1) == 0 and result_1.stdout | default('') | trim == '' %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED: authselect not installed or not configured
+          {% elif result_1.rc | default(-1) == 0 and result_1.stdout | default('') | trim != '' %}
+            APPLIED: use_authtok is already present in pam_pwhistory.so lines
+          {% elif result_1.rc | default(-1) == 0 and result_1.stdout | default('') | trim == '' %}
+            FAILED: use_authtok not found in pam_pwhistory.so lines, remediation required
+          {% else %}
+            FAILED: Verification script execution failed
+          {% endif %}
+
+    - name: Req 2 - Create CIS remediation script
+      copy:
+        dest: "/tmp/cis_remediate_5_3_3_3_3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             for l_authselect_file in "$l_pam_profile_path"/password-auth "$l_pam_profile_path"/system-auth; do
+                if  grep -Pq '^\h*password\h+([^#\n\r]+)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\ b' "$l_authselect_file"; then
+                   echo "- \"use_authtok\" is already set"
+                else
+                   echo "- \"use_authtok\" is not set. Updating template"
+                   sed -ri 's/(^\s*password\s+(requisite|required|sufficient)\s+pam_pwhistory\.so\s+.*)$ /& use_authtok/g' "$l_authselect_file"
+                fi
+             done
+          }
+          {% endraw %}
+      register: script_create_2
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP' and result_1.stdout | default('') | trim == ''
+
+    - name: Req 2 - Execute CIS remediation script
+      shell: "/tmp/cis_remediate_5_3_3_3_3.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP' and result_1.stdout | default('') | trim == ''
+
+    - name: Req 2 - Remove temporary remediation script
+      file:
+        path: "/tmp/cis_remediate_5_3_3_3_3.sh"
+        state: absent
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP' and result_1.stdout | default('') | trim == ''
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Add use_authtok to pam_pwhistory.so if missing"
+        task_2_cmd: "bash /tmp/cis_remediate_5_3_3_3_3.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED
+          {% elif result_1.stdout | default('') | trim != '' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED: authselect not installed or not configured
+          {% elif result_1.stdout | default('') | trim != '' %}
+            SKIPPED: use_authtok already present, no remediation needed
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Remediation script executed successfully
+          {% else %}
+            FAILED: Remediation script execution failed
+          {% endif %}
+
+    - name: Req 3 - Apply authselect changes to update PAM files
+      shell: authselect apply-changes
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP' and result_1.stdout | default('') | trim == '' and result_2.rc | default(-1) == 0
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Apply authselect changes to update /etc/pam.d files"
+        task_3_cmd: "authselect apply-changes"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED
+          {% elif result_1.stdout | default('') | trim != '' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) != 0 %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED: authselect not installed or not configured
+          {% elif result_1.stdout | default('') | trim != '' %}
+            SKIPPED: use_authtok already present, no changes to apply
+          {% elif result_2.rc | default(-1) != 0 %}
+            SKIPPED: Remediation script failed, no changes to apply
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: authselect changes applied successfully
+          {% else %}
+            FAILED: authselect apply-changes command failed
+          {% endif %}
+
+    - name: Req 4 - Create verification script for post-remediation check
+      copy:
+        dest: "/tmp/cis_final_verify_5_3_3_3_3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             l_pam_profile="$(head -1 /etc/authselect/authselect.conf)"
+             if grep -Pq -- '^custom\/' <<< "$l_pam_profile"; then
+                l_pam_profile_path="/etc/authselect/$l_pam_profile"
+             else
+                l_pam_profile_path="/usr/share/authselect/default/$l_pam_profile"
+             fi
+             grep -P -- '^\h*password\h+(requisite|required|sufficient)\h+pam_pwhistory\.so\h+([^#\n\r]+\h+)?use_authtok\b' "$l_pam_profile_path"/{password,system}-auth
+          }
+          {% endraw %}
+      register: script_create_4
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+    - name: Req 4 - Execute final verification script
+      shell: "/tmp/cis_final_verify_5_3_3_3_3.sh"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+    - name: Req 4 - Remove temporary verification script
+      file:
+        path: "/tmp/cis_final_verify_5_3_3_3_3.sh"
+        state: absent
+      ignore_errors: true
+      when: _sg_profile_info.stdout != '' and _sg_profile_info.stdout != 'SKIP'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify pam_pwhistory includes use_authtok after remediation"
+        task_4_cmd: "bash /tmp/cis_final_verify_5_3_3_3_3.sh"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED
+          {% elif result_4.stdout | default('') | trim != '' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if _sg_profile_info.stdout == '' or _sg_profile_info.stdout == 'SKIP' %}
+            SKIPPED: authselect not installed or not configured
+          {% elif result_4.stdout | default('') | trim != '' %}
+            APPLIED: Verification shows use_authtok is present in pam_pwhistory.so lines
+          {% else %}
+            FAILED: use_authtok not found in pam_pwhistory.so lines after remediation
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 5.3.3.3.3"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: >-
+               {{ 'REMEDIATION COMPLETED: All steps applied successfully' if status_4 | trim == 'APPLIED' else
+                 'REMEDIATION PARTIALLY APPLIED: Some steps succeeded' if (status_2 | trim == 'APPLIED' or status_3 | trim == 'APPLIED') else
+                 'REMEDIATION SKIPPED: authselect not installed or already compliant' if status_1 | trim == 'SKIPPED' or (status_1 | trim == 'APPLIED' and status_2 | trim == 'SKIPPED') else
+                 'REMEDIATION FAILED: One or more steps failed' }}"
+          - "========================================================"

@@ -1,0 +1,302 @@
+---
+- name: Remediation for CIS 1.7.5
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_7_5"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.5"
+    req_1: "Apply ownership of /etc/issue to root:root using command: chown root:root $(readlink -e /etc/issue)"
+    req_2: "Apply permissions to /etc/issue to remove execute for owner and write/execute for group and others using command: chmod u-x,go-wx $(readlink -e /etc/issue)"
+    req_3: "VERIFY: Run audit check to confirm Ensure access to /etc/issue is configured is properly configured"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore original ownership if needed"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -f "{{ state_guard_dir }}/etc_issue.owner" ] && [ -n "$target" ] && [ -f "$target" ]; then
+          old_owner=$(cat "{{ state_guard_dir }}/etc_issue.owner")
+          chown "$old_owner" "$target"
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Restore original permissions if needed"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -f "{{ state_guard_dir }}/etc_issue.mode" ] && [ -n "$target" ] && [ -f "$target" ]; then
+          old_mode=$(cat "{{ state_guard_dir }}/etc_issue.mode")
+          chmod "$old_mode" "$target"
+        fi
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Capture current ownership of /etc/issue target"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -n "$target" ] && [ -f "$target" ]; then
+          stat -c "%U:%G" "$target"
+        else
+          echo "FILE_NOT_FOUND"
+        fi
+      args:
+        executable: /bin/bash
+      register: _sg_owner
+      ignore_errors: true
+
+    - name: "State Guard - Save current ownership"
+      copy:
+        content: "{{ _sg_owner.stdout | default('') | trim }}"
+        dest: "{{ state_guard_dir }}/etc_issue.owner"
+      when: _sg_owner.stdout is defined and _sg_owner.stdout != ""
+
+    - name: "State Guard - Capture current permissions of /etc/issue target"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -n "$target" ] && [ -f "$target" ]; then
+          stat -c "%a" "$target"
+        else
+          echo "FILE_NOT_FOUND"
+        fi
+      args:
+        executable: /bin/bash
+      register: _sg_mode
+      ignore_errors: true
+
+    - name: "State Guard - Save current permissions"
+      copy:
+        content: "{{ _sg_mode.stdout | default('') | trim }}"
+        dest: "{{ state_guard_dir }}/etc_issue.mode"
+      when: _sg_mode.stdout is defined and _sg_mode.stdout != ""
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    - name: "Req 1 - Apply ownership to root:root"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -z "$target" ] || [ ! -f "$target" ]; then
+          echo "SKIP: /etc/issue target not found"
+          exit 0
+        fi
+        echo "=== BEFORE ==="
+        stat -c "%U:%G" "$target"
+        echo "=== APPLYING CHANGE ==="
+        chown root:root "$target"
+        echo "=== AFTER ==="
+        stat -c "%U:%G" "$target"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Apply ownership to root:root"
+        task_1_cmd: "chown root:root $(readlink -e /etc/issue)"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('SKIP:') %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output is search('SKIP:') %}
+            SKIPPED: /etc/issue target file not found, remediation not applicable
+          {% elif result_1.rc | default(-1) == 0 %}
+            APPLIED: Ownership changed to root:root as shown in output
+          {% else %}
+            FAILED: Could not change ownership, check if file exists and has proper permissions
+          {% endif %}
+
+    - name: "Req 2 - Apply permissions to remove execute/write"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -z "$target" ] || [ ! -f "$target" ]; then
+          echo "SKIP: /etc/issue target not found"
+          exit 0
+        fi
+        echo "=== BEFORE ==="
+        stat -c "%a" "$target"
+        echo "=== APPLYING CHANGE ==="
+        chmod u-x,go-wx "$target"
+        echo "=== AFTER ==="
+        stat -c "%a" "$target"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply permissions to remove execute/write"
+        task_2_cmd: "chmod u-x,go-wx $(readlink -e /etc/issue)"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output is search('SKIP:') %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output is search('SKIP:') %}
+            SKIPPED: /etc/issue target file not found, remediation not applicable
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Permissions changed to remove execute for owner and write/execute for group/others
+          {% else %}
+            FAILED: Could not change permissions, check if file exists and has proper permissions
+          {% endif %}
+
+    - name: "Req 3 - Verify remediation was applied correctly"
+      shell: |
+        target=$(readlink -e /etc/issue 2>/dev/null)
+        if [ -z "$target" ] || [ ! -f "$target" ]; then
+          echo "FAIL: /etc/issue target not found"
+          exit 1
+        fi
+        
+        # Check ownership
+        owner=$(stat -c "%U:%G" "$target")
+        if [ "$owner" != "root:root" ]; then
+          echo "FAIL: Ownership is $owner, expected root:root"
+          exit 1
+        fi
+        
+        # Check permissions
+        mode=$(stat -c "%a" "$target")
+        owner_digit=$((mode / 100))
+        group_digit=$(((mode % 100) / 10))
+        others_digit=$((mode % 10))
+        
+        # Owner should not have execute (bit 0 = 0)
+        if [ $((owner_digit % 2)) -ne 0 ]; then
+          echo "FAIL: Owner has execute permission (mode digit: $owner_digit)"
+          exit 1
+        fi
+        
+        # Group should not have write or execute (bits 1 and 0 = 00)
+        if [ $((group_digit & 3)) -ne 0 ]; then
+          echo "FAIL: Group has write or execute permission (mode digit: $group_digit)"
+          exit 1
+        fi
+        
+        # Others should not have write or execute (bits 1 and 0 = 00)
+        if [ $((others_digit & 3)) -ne 0 ]; then
+          echo "FAIL: Others have write or execute permission (mode digit: $others_digit)"
+          exit 1
+        fi
+        
+        echo "PASS: /etc/issue is properly configured (owner: $owner, mode: $mode)"
+        exit 0
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify remediation was applied correctly"
+        task_3_cmd: "Audit check for /etc/issue ownership and permissions"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED: Verification passed - /etc/issue has correct ownership and permissions
+          {% else %}
+            FAILED: Verification failed - {{ output }}
+          {% endif %}
+
+    - name: "Generate remediation report"
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.7.5"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.7.5"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - "========================================================"

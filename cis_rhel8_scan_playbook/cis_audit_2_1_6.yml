@@ -1,105 +1,120 @@
 ---
-- name: Data Collection for CIS 2.1.6 - Ensure dnsmasq services are not in use
+- name: Data Collection for CIS checkpoint 2.1.6
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 2.1.6"
-    req_1: "Verify the dnsmasq package is not installed"
-    req_2: "If the dnsmasq package is installed, verify the dnsmasq.service is not enabled"
-    req_3: "If the dnsmasq package is installed, verify the dnsmasq.service is not active"
+    cis_reference: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.6"
+    req_1: "Check if dnsmasq package is installed using command: 'rpm -q dnsmasq'"
+    req_2: "If the dnsmasq package is installed, check if the dnsmasq.service is enabled"
+    req_3: "If the dnsmasq package is installed, check if the dnsmasq.service is active"
     req_4: "OVERALL Verify: Ensure dnsmasq services are not in use"
 
   tasks:
     - name: Initialize data variables
       set_fact:
-        data_1: "Not collected yet"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
-        data_2: "Not collected yet"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
-        data_3: "Not collected yet"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
 
-    # Requirement 1: Verify the dnsmasq package is not installed
-    - name: "Req 1 - Check if dnsmasq package is installed"
+    # Requirement 1: Check if dnsmasq package is installed
+    - name: Req 1 - Check dnsmasq package installation
       shell: rpm -q dnsmasq
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
-      failed_when: false
       changed_when: false
 
-    - name: Store requirement 1 details and determine status
+    - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check if dnsmasq package is installed"
+        task_1_name: "Check dnsmasq package installation"
         task_1_cmd: "rpm -q dnsmasq"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'package dnsmasq is not installed') else 'FAIL') | trim }}"
-        rationale_1: "PASS when output is 'package dnsmasq is not installed', FAIL if a package version is returned"
+        rationale_1: "{{ ('PASS: Package dnsmasq is not installed' if (result_1.stdout | default('') | trim == 'package dnsmasq is not installed') else 'FAIL: Package dnsmasq is installed') | trim }}"
 
-    # Requirement 2: If the dnsmasq package is installed, verify the dnsmasq.service is not enabled
-    - name: "Req 2 - Check if dnsmasq service is enabled"
+    # Requirement 2: Check if dnsmasq.service is enabled (only if package is installed)
+    - name: Req 2 - Check if dnsmasq.service is enabled
       shell: systemctl is-enabled dnsmasq.service 2>/dev/null | grep 'enabled'
       args:
         executable: /bin/bash
       register: result_2
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 == 'FAIL'
 
-    - name: Store requirement 2 details and determine status
+    - name: Store requirement 2 details
       set_fact:
-        task_2_name: "Check if dnsmasq service is enabled"
+        task_2_name: "Check if dnsmasq.service is enabled"
         task_2_cmd: "systemctl is-enabled dnsmasq.service 2>/dev/null | grep 'enabled'"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        task_2_rc: "{{ result_2.rc | default(0) }}"
         data_2: "{{ result_2.stdout | default('') | trim }}"
         status_2: "{{ ('PASS' if (result_2.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_2: "PASS when no output is returned (service is not enabled), FAIL if 'enabled' is returned"
-      when: status_1 | trim == 'FAIL'
+        rationale_2: "{{ ('PASS: Service dnsmasq.service is not enabled' if (result_2.stdout | default('') | trim == '') else 'FAIL: Service dnsmasq.service is enabled') | trim }}"
+      when: status_1 == 'FAIL'
 
-    # Requirement 3: If the dnsmasq package is installed, verify the dnsmasq.service is not active
-    - name: "Req 3 - Check if dnsmasq service is active"
+    - name: Set requirement 2 as NA when package not installed
+      set_fact:
+        task_2_name: "Check if dnsmasq.service is enabled"
+        task_2_cmd: "systemctl is-enabled dnsmasq.service 2>/dev/null | grep 'enabled'"
+        task_2_rc: "NA"
+        data_2: "Package not installed - check not required"
+        status_2: "NA"
+        rationale_2: "Package dnsmasq is not installed, so service check is not applicable"
+      when: status_1 == 'PASS'
+
+    # Requirement 3: Check if dnsmasq.service is active (only if package is installed)
+    - name: Req 3 - Check if dnsmasq.service is active
       shell: systemctl is-active dnsmasq.service 2>/dev/null | grep '^active'
       args:
         executable: /bin/bash
       register: result_3
       ignore_errors: true
-      failed_when: false
       changed_when: false
-      when: status_1 | trim == 'FAIL'
+      when: status_1 == 'FAIL'
 
-    - name: Store requirement 3 details and determine status
+    - name: Store requirement 3 details
       set_fact:
-        task_3_name: "Check if dnsmasq service is active"
+        task_3_name: "Check if dnsmasq.service is active"
         task_3_cmd: "systemctl is-active dnsmasq.service 2>/dev/null | grep '^active'"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        task_3_rc: "{{ result_3.rc | default(0) }}"
         data_3: "{{ result_3.stdout | default('') | trim }}"
         status_3: "{{ ('PASS' if (result_3.stdout | default('') | trim == '') else 'FAIL') | trim }}"
-        rationale_3: "PASS when no output is returned (service is not active), FAIL if 'active' is returned"
-      when: status_1 | trim == 'FAIL'
+        rationale_3: "{{ ('PASS: Service dnsmasq.service is not active' if (result_3.stdout | default('') | trim == '') else 'FAIL: Service dnsmasq.service is active') | trim }}"
+      when: status_1 == 'FAIL'
 
-    # Requirement 4: OVERALL Verify - Ensure dnsmasq services are not in use
-    - name: Determine overall compliance status
+    - name: Set requirement 3 as NA when package not installed
       set_fact:
-        status_4: >
-          {{ (
-            'PASS' if
-            (status_1 | trim == 'PASS') or
-            (status_1 | trim == 'FAIL' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS')
-            else 'FAIL'
-          ) | trim }}
-        rationale_4: "PASS when req_1=PASS OR (req_1=FAIL AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        task_3_name: "Check if dnsmasq.service is active"
+        task_3_cmd: "systemctl is-active dnsmasq.service 2>/dev/null | grep '^active'"
+        task_3_rc: "NA"
+        data_3: "Package not installed - check not required"
+        status_3: "NA"
+        rationale_3: "Package dnsmasq is not installed, so service check is not applicable"
+      when: status_1 == 'PASS'
 
-    # Final report
+    # Requirement 4: Overall compliance check
+    - name: Calculate overall compliance
+      set_fact:
+        task_4_name: "Overall compliance verification"
+        task_4_cmd: "N/A - Derived from requirements 1-3"
+        task_4_rc: "0"
+        data_4: "Package check: {{ status_1 }}, Service enabled: {{ status_2 }}, Service active: {{ status_3 }}"
+        status_4: "{{ ('PASS' if (status_1 == 'PASS') or (status_1 == 'FAIL' and status_2 == 'PASS' and status_3 == 'PASS') else 'FAIL') | trim }}"
+        rationale_4: "{{ ('PASS: dnsmasq services are not in use (package not installed)' if status_1 == 'PASS' else ('PASS: dnsmasq package is installed but service is neither enabled nor active' if (status_2 == 'PASS' and status_3 == 'PASS') else 'FAIL: dnsmasq package is installed and service is either enabled or active')) | trim }}"
+
+    # Final compliance report
     - name: Generate compliance report
       debug:
         msg:
@@ -110,35 +125,39 @@
           - "========================================================"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
-          - "  Task: {{ task_1_name | default('Task not recorded') }}"
-          - "  Command: {{ task_1_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Task: {{ task_1_name }}"
+          - "  Command: {{ task_1_cmd }}"
+          - "  Exit code: {{ task_1_rc }}"
           - "  Data: {{ data_1 | default('') | trim }}"
           - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 2 - {{ req_2 }}:"
-          - "  Task: {{ task_2_name | default('Task not recorded') }}"
-          - "  Command: {{ task_2_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Task: {{ task_2_name }}"
+          - "  Command: {{ task_2_cmd }}"
+          - "  Exit code: {{ task_2_rc }}"
           - "  Data: {{ data_2 | default('') | trim }}"
-          - "  Status: {{ status_2 | default('NA') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 3 - {{ req_3 }}:"
-          - "  Task: {{ task_3_name | default('Task not recorded') }}"
-          - "  Command: {{ task_3_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Task: {{ task_3_name }}"
+          - "  Command: {{ task_3_cmd }}"
+          - "  Exit code: {{ task_3_rc }}"
           - "  Data: {{ data_3 | default('') | trim }}"
-          - "  Status: {{ status_3 | default('NA') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name }}"
+          - "  Command: {{ task_4_cmd }}"
+          - "  Exit code: {{ task_4_rc }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
           - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
           - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - "  Result: {{ status_4 | trim }}"
+          - "  Rationale: {{ rationale_4 | trim }}"
           - "========================================================"

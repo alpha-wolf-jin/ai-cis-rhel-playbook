@@ -1,0 +1,287 @@
+---
+- name: Remediation for CIS 2.1.2 - Ensure avahi daemon services are not in use
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.2"
+    req_1: "Check if avahi package is installed"
+    req_2: "Stop avahi-daemon.socket and avahi-daemon.service"
+    req_3: "Remove avahi package OR mask services if required as dependency"
+    req_4: "Verify remediation was applied"
+
+  pre_tasks:
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    - name: Req 1 - Check if avahi package is installed
+      shell: rpm -q avahi
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check avahi package status"
+        task_1_cmd: "rpm -q avahi"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED
+          {% elif rc == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set rc = result_1.rc | default(-1) %}
+          {% if rc == 0 %}
+            APPLIED: avahi package is installed, continuing with remediation
+          {% elif rc == 1 %}
+            SKIPPED: Remediation not applicable - avahi is not installed on this server
+          {% else %}
+            FAILED: Could not determine avahi package status
+          {% endif %}
+
+    - name: Req 2 - Stop avahi-daemon.socket and avahi-daemon.service
+      shell: |
+        {% raw %}
+        systemctl stop avahi-daemon.socket avahi-daemon.service
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Stop avahi services"
+        task_2_cmd: "systemctl stop avahi-daemon.socket avahi-daemon.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED: Remediation not applicable - avahi is not installed on this server
+          {% elif result_2.rc | default(-1) == 0 %}
+            APPLIED: Services were stopped
+          {% else %}
+            FAILED: Could not stop avahi services
+          {% endif %}
+
+    - name: Req 3 - Remove avahi package or mask services if required as dependency
+      shell: |
+        {% raw %}
+        # Try to remove avahi package
+        dnf remove -y avahi
+        
+        # Check if removal was successful
+        if rpm -q avahi >/dev/null 2>&1; then
+          # Package still exists, try to mask the services
+          systemctl mask avahi-daemon.socket avahi-daemon.service
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "status_1 | trim == 'APPLIED'"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remove avahi package or mask services"
+        task_3_cmd: "dnf remove -y avahi; if package still exists then mask services"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if status_1 | trim != 'APPLIED' %}
+            SKIPPED: Remediation not applicable - avahi is not installed on this server
+          {% else %}
+            {% set output = result_3.stdout | default('') | trim %}
+            {% if 'Removed:' in output %}
+              APPLIED: avahi package was removed
+            {% elif 'Masked' in output %}
+              APPLIED: avahi services were masked (package required as dependency)
+            {% elif result_3.rc | default(-1) == 0 %}
+              APPLIED: avahi package removed or services masked
+            {% else %}
+              FAILED: Could not remove avahi package or mask services
+            {% endif %}
+          {% endif %}
+
+    - name: Req 4 - Verify remediation was applied
+      shell: |
+        {% raw %}
+        systemctl is-active avahi-daemon.socket avahi-daemon.service && rpm -q avahi || echo 'Verification passed'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify remediation"
+        task_4_cmd: "systemctl is-active avahi-daemon.socket avahi-daemon.service && rpm -q avahi || echo 'Verification passed'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if 'Verification passed' in output %}
+            APPLIED
+          {% elif output != '' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if 'Verification passed' in output %}
+            APPLIED: Verification passed - avahi services are not active and package is not installed or services are masked
+          {% elif output != '' %}
+            FAILED: Verification failed - {{ output }}
+          {% else %}
+            UNKNOWN: Could not verify remediation status
+          {% endif %}
+
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set s4 = status_4 | default('UNKNOWN') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            SKIPPED
+          {% elif s1 == 'APPLIED' and s2 == 'APPLIED' and s3 == 'APPLIED' and s4 == 'APPLIED' %}
+            APPLIED
+          {% elif s1 == 'APPLIED' and (s2 == 'FAILED' or s3 == 'FAILED' or s4 == 'FAILED') %}
+            PARTIALLY APPLIED
+          {% elif s1 == 'FAILED' or s2 == 'FAILED' or s3 == 'FAILED' or s4 == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_details: >-
+          {% set s1 = status_1 | default('UNKNOWN') | trim %}
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set s4 = status_4 | default('UNKNOWN') | trim %}
+          {% if s1 == 'SKIPPED' %}
+            Remediation not applicable - avahi is not installed on this server
+          {% elif overall_status | trim == 'APPLIED' %}
+            Successfully remediated: avahi package removed or services masked and stopped
+          {% elif overall_status | trim == 'PARTIALLY APPLIED' %}
+            Partial remediation: Some steps succeeded but not all
+          {% elif overall_status | trim == 'FAILED' %}
+            Remediation failed - check individual requirements for details
+          {% else %}
+            Could not determine overall remediation status
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

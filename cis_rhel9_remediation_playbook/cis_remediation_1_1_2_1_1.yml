@@ -1,0 +1,323 @@
+---
+- name: Remediation for CIS 1.1.2.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.1.1"
+    req_1: "Apply systemd configuration to ensure /tmp is mounted at boot time using command: systemctl unmask tmp.mount"
+    req_2: "Apply /tmp mount configuration in /etc/fstab using appropriate entry"
+    req_3: |
+      VERIFY: Confirm /tmp is a separate partition using command: mount | grep -E '\s/tmp\s'
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        systemd_available: false
+        skip_remediation: false
+
+    # Check if systemd is available (prerequisite check)
+    - name: Check if systemd is available
+      shell: |
+        {% raw %}
+        command -v systemctl >/dev/null 2>&1
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: systemd_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set systemd availability and skip flag
+      set_fact:
+        systemd_available: "{{ systemd_check.rc | default(1) == 0 }}"
+        skip_remediation: "{{ systemd_check.rc | default(1) != 0 }}"
+
+    # Set SKIPPED status for all requirements if systemd not available
+    - name: Set skipped status when systemd not available
+      set_fact:
+        task_1_name: "Check if systemd is available"
+        task_1_cmd: "command -v systemctl"
+        task_1_rc: "{{ systemd_check.rc | default(-1) }}"
+        data_1: "{{ systemd_check.stdout | default('') | trim }}"
+        status_1: "SKIPPED"
+        rationale_1: "SKIPPED: systemd is not available on this system"
+        task_2_name: "Check if systemd is available"
+        task_2_cmd: "command -v systemctl"
+        task_2_rc: "{{ systemd_check.rc | default(-1) }}"
+        data_2: "{{ systemd_check.stdout | default('') | trim }}"
+        status_2: "SKIPPED"
+        rationale_2: "SKIPPED: systemd is not available on this system"
+        task_3_name: "Check if systemd is available"
+        task_3_cmd: "command -v systemctl"
+        task_3_rc: "{{ systemd_check.rc | default(-1) }}"
+        data_3: "{{ systemd_check.stdout | default('') | trim }}"
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: systemd is not available on this system"
+      when: skip_remediation | bool
+
+    # Requirement 1: Apply systemd configuration (only if systemd is available)
+    - name: Req 1 - Check if tmp.mount is already unmasked
+      shell: |
+        {% raw %}
+        systemctl is-enabled tmp.mount 2>/dev/null | grep -q masked && echo "masked" || echo "not masked"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: tmp_mount_status
+      ignore_errors: true
+      changed_when: false
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+
+    - name: Req 1 - Unmask tmp.mount unit if masked
+      shell: |
+        {% raw %}
+        systemctl unmask tmp.mount
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'masked' in tmp_mount_status.stdout"
+
+    - name: Req 1 - Store requirement 1 details when unmasked
+      set_fact:
+        task_1_name: "Unmask tmp.mount unit"
+        task_1_cmd: "systemctl unmask tmp.mount"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: tmp.mount unit unmasked successfully' if result_1.rc | default(-1) == 0 else 'FAILED: Could not unmask tmp.mount unit') | trim }}"
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'masked' in tmp_mount_status.stdout"
+
+    - name: Req 1 - Store requirement 1 details when already unmasked
+      set_fact:
+        task_1_name: "Check tmp.mount unit status"
+        task_1_cmd: "systemctl is-enabled tmp.mount"
+        task_1_rc: "{{ tmp_mount_status.rc | default(-1) }}"
+        data_1: "{{ tmp_mount_status.stdout | default('') | trim }}"
+        status_1: "APPLIED"
+        rationale_1: "APPLIED: tmp.mount unit is already unmasked"
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'masked' not in tmp_mount_status.stdout"
+
+    # Requirement 2: Apply /tmp mount configuration in /etc/fstab (only if systemd is available)
+    - name: Req 2 - Determine current /tmp filesystem type
+      shell: |
+        {% raw %}
+        findmnt -n -o FSTYPE /tmp 2>/dev/null || echo "not mounted"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: tmp_fstype
+      ignore_errors: true
+      changed_when: false
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+
+    - name: Req 2 - Determine current /tmp device if not tmpfs
+      shell: |
+        {% raw %}
+        findmnt -n -o SOURCE /tmp 2>/dev/null || echo "no device"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: tmp_device
+      ignore_errors: true
+      changed_when: false
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'tmpfs' not in tmp_fstype.stdout"
+
+    - name: Req 2 - Check current /tmp fstab entry
+      shell: |
+        {% raw %}
+        grep -E '^\s*/tmp\s+' /etc/fstab || echo "No /tmp entry found"
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: current_tmp_entry
+      ignore_errors: true
+      changed_when: false
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+
+    - name: Req 2 - Add appropriate /tmp entry to fstab if not present
+      shell: |
+        # Set variables from Ansible before raw block
+        tmp_fstype_val="{{ tmp_fstype.stdout | default('') }}"
+        tmp_device_val="{{ tmp_device.stdout | default('') }}"
+        
+        {% raw %}
+        if ! grep -E '^\s*/tmp\s+' /etc/fstab; then
+          # Determine appropriate entry based on current mount
+          if [ "$tmp_fstype_val" = "tmpfs" ]; then
+            echo 'tmpfs /tmp tmpfs defaults,rw,nosuid,nodev,noexec,relatime,size=2G 0 0' >> /etc/fstab
+            echo "Added tmpfs entry for /tmp"
+          elif [ -n "$tmp_device_val" ] && [ "$tmp_device_val" != "no device" ]; then
+            # Use the current device and filesystem type
+            echo "$tmp_device_val /tmp $tmp_fstype_val defaults,nodev,nosuid,noexec 0 0" >> /etc/fstab
+            echo "Added disk entry for /tmp using device $tmp_device_val"
+          else
+            # Default to tmpfs if we cannot determine
+            echo 'tmpfs /tmp tmpfs defaults,rw,nosuid,nodev,noexec,relatime,size=2G 0 0' >> /etc/fstab
+            echo "Added default tmpfs entry for /tmp"
+          fi
+        else
+          echo "/tmp entry already exists in /etc/fstab"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'No /tmp entry found' in current_tmp_entry.stdout"
+
+    - name: Req 2 - Store requirement 2 details when entry exists
+      set_fact:
+        task_2_name: "Check /etc/fstab for existing /tmp entry"
+        task_2_cmd: |
+          grep -E '^\s*/tmp\s+' /etc/fstab
+        task_2_rc: "{{ current_tmp_entry.rc | default(-1) }}"
+        data_2: "{{ current_tmp_entry.stdout | default('') | trim }}"
+        status_2: "APPLIED"
+        rationale_2: "APPLIED: /tmp entry already exists in /etc/fstab"
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'No /tmp entry found' not in current_tmp_entry.stdout"
+
+    - name: Req 2 - Store requirement 2 details when adding entry
+      set_fact:
+        task_2_name: "Add /tmp entry to /etc/fstab"
+        task_2_cmd: "Add appropriate fstab entry based on current /tmp configuration"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED: Added /tmp entry to /etc/fstab based on current configuration
+          {% else %}
+            FAILED: Could not add /tmp entry to /etc/fstab
+          {% endif %}
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+        - "'No /tmp entry found' in current_tmp_entry.stdout"
+
+    # Requirement 3: Verify /tmp is a separate partition (only if systemd is available)
+    - name: Req 3 - Verify /tmp mount status
+      shell: |
+        {% raw %}
+        mount | grep -E '\s/tmp\s'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify /tmp mount status"
+        task_3_cmd: |
+          mount | grep -E '\s/tmp\s'
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('APPLIED' if result_3.rc | default(-1) == 0 and result_3.stdout | default('') | trim != '' else 'FAILED') | trim }}"
+        rationale_3: "{{ ('APPLIED: /tmp is mounted as separate partition' if result_3.rc | default(-1) == 0 and result_3.stdout | default('') | trim != '' else 'FAILED: /tmp is not mounted as separate partition') | trim }}"
+      when:
+        - systemd_available | bool
+        - not skip_remediation | bool
+
+    # Determine overall status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if skip_remediation | bool %}
+            SKIPPED
+          {% elif status_3 | default('FAILED') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('FAILED') | trim == 'APPLIED' or status_2 | default('FAILED') | trim == 'APPLIED' %}
+            PARTIALLY APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_details: >-
+          {% if skip_remediation | bool %}
+            SKIPPED: systemd is not available on this system
+          {% elif status_3 | default('FAILED') | trim == 'APPLIED' %}
+            /tmp is properly configured as a separate partition
+          {% elif status_1 | default('FAILED') | trim == 'APPLIED' or status_2 | default('FAILED') | trim == 'APPLIED' %}
+            Systemd configuration and/or fstab entry applied but verification failed
+          {% else %}
+            All remediation steps failed
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.1.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

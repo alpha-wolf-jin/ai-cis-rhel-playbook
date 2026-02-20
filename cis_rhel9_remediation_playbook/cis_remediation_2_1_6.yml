@@ -1,0 +1,288 @@
+---
+- name: Remediation for CIS 2.1.6
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_6"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.6"
+    req_1: "Check if samba package is installed using command: rpm -q samba"
+    req_2: "Stop smb.service using command: systemctl stop smb.service"
+    req_3: "Remove samba package using command: dnf remove -y samba"
+    req_4: "Mask smb.service using command: systemctl mask smb.service"
+    req_5: "VERIFY: Run audit check to confirm Ensure samba file server services are not in use is properly configured"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+
+    # Requirement 1: Check if samba package is installed
+    - name: "Req 1 - Check if samba is installed"
+      shell: rpm -q samba
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if samba is installed"
+        task_1_cmd: "rpm -q samba"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% elif 'not installed' in result_1.stderr | default('') | trim %}
+            SKIPPED
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED: samba package is installed, remediation applicable
+          {% elif 'not installed' in result_1.stderr | default('') | trim %}
+            SKIPPED: samba is not installed on this server
+          {% elif result_1.rc | default(-1) == 1 %}
+            SKIPPED: samba is not installed on this server
+          {% else %}
+            FAILED: Could not determine if samba is installed
+          {% endif %}
+
+    # Requirement 2: Stop smb.service (only if samba is installed)
+    - name: "Req 2 - Stop smb.service"
+      shell: |
+        echo "=== Checking service status BEFORE ==="
+        systemctl status smb 2>/dev/null || echo "Service smb not found or inactive"
+        echo "=== Stopping smb.service ==="
+        systemctl stop smb.service
+        echo "=== Checking service status AFTER ==="
+        systemctl status smb 2>/dev/null || echo "Service smb stopped successfully"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: status_1 | default('SKIPPED') | trim == 'APPLIED'
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Stop smb.service"
+        task_2_cmd: "systemctl stop smb.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: smb.service stopped successfully' if result_2.rc | default(-1) == 0 else 'FAILED: could not stop smb.service') | trim }}"
+      when: status_1 | default('SKIPPED') | trim == 'APPLIED'
+
+    # Requirement 3: Remove samba package (only if samba is installed)
+    - name: "Req 3 - Remove samba package"
+      shell: |
+        echo "=== Attempting to remove samba package ==="
+        dnf remove -y samba
+        echo "=== Checking if samba is still installed ==="
+        rpm -q samba 2>&1
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: status_1 | default('SKIPPED') | trim == 'APPLIED'
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remove samba package"
+        task_3_cmd: "dnf remove -y samba"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if 'not installed' in output %}
+            APPLIED
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if 'not installed' in output %}
+            APPLIED: samba package successfully removed
+          {% elif result_3.rc | default(-1) == 0 %}
+            APPLIED: samba package removal command completed successfully
+          {% else %}
+            FAILED: samba package removal may have failed, likely required as a dependency
+          {% endif %}
+      when: status_1 | default('SKIPPED') | trim == 'APPLIED'
+
+    # Requirement 4: Mask smb.service (only if samba package removal failed, likely due to dependency)
+    - name: "Req 4 - Mask smb.service"
+      shell: |
+        echo "=== Checking service mask status BEFORE ==="
+        systemctl is-enabled smb 2>/dev/null || echo "Service smb not found or disabled"
+        echo "=== Masking smb.service ==="
+        systemctl mask smb.service
+        echo "=== Checking service mask status AFTER ==="
+        systemctl is-enabled smb 2>/dev/null || echo "Service smb is now masked"
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: >
+        status_1 | default('SKIPPED') | trim == 'APPLIED' and
+        status_3 | default('APPLIED') | trim == 'FAILED'
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Mask smb.service"
+        task_4_cmd: "systemctl mask smb.service"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: "{{ ('APPLIED' if result_4.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_4: "{{ ('APPLIED: smb.service masked successfully' if result_4.rc | default(-1) == 0 else 'FAILED: could not mask smb.service') | trim }}"
+      when: >
+        status_1 | default('SKIPPED') | trim == 'APPLIED' and
+        status_3 | default('APPLIED') | trim == 'FAILED'
+
+    # Requirement 5: VERIFY remediation
+    - name: "Req 5 - Verify samba file server services are not in use"
+      shell: |
+        echo "=== Verification checks ==="
+        echo "1. Checking if smb.service is masked or not found:"
+        systemctl is-enabled smb 2>/dev/null | grep -q 'masked\|Failed' && echo 'PASS: Service masked or not found' || echo 'FAIL: Service is enabled and not masked'
+        echo ""
+        echo "2. Checking if samba package is not installed:"
+        rpm -q samba 2>&1 | grep -q 'not installed' && echo 'PASS: Package not installed' || (echo 'WARN: Package installed as dependency, service must be masked' && systemctl is-enabled smb | grep -q masked && echo 'PASS: Service is masked' || echo 'FAIL: Service is not masked')
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Verify remediation"
+        task_5_cmd: |
+          systemctl is-enabled smb 2>/dev/null | grep -q 'masked\|Failed' && echo 'Service masked or not found'; rpm -q samba 2>&1 | grep -q 'not installed' && echo 'Package not installed' || (echo 'Package installed as dependency, service must be masked' && systemctl is-enabled smb | grep -q masked)
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if 'PASS:' in output and 'FAIL:' not in output %}
+            APPLIED
+          {% elif 'PASS:' in output and 'WARN:' in output and 'FAIL:' not in output %}
+            APPLIED
+          {% elif status_1 | default('SKIPPED') | trim == 'SKIPPED' %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_5: >-
+          {% set output = result_5.stdout | default('') | trim %}
+          {% if 'PASS:' in output and 'FAIL:' not in output %}
+            APPLIED: System is compliant with CIS checkpoint 2.1.6
+          {% elif 'PASS:' in output and 'WARN:' in output and 'FAIL:' not in output %}
+            APPLIED: Package installed as dependency, service is masked
+          {% elif status_1 | default('SKIPPED') | trim == 'SKIPPED' %}
+            SKIPPED: samba not installed, remediation not applicable
+          {% else %}
+            FAILED: System is not compliant with CIS checkpoint 2.1.6
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.6"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.6"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('SKIPPED') | trim }}"
+          - "  Details: {{ rationale_2 | default('SKIPPED: samba not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('SKIPPED') | trim }}"
+          - "  Details: {{ rationale_3 | default('SKIPPED: samba not installed') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('SKIPPED') | trim }}"
+          - "  Details: {{ rationale_4 | default('SKIPPED: samba not installed or package removal succeeded') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - "========================================================"

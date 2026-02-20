@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Generic Ansible Playbook Generator (LangGraph Version)
+Generic Ansible Remediation Playbook Generator (LangGraph Version)
 
-This script wraps the existing playbook generator with LangGraph for better
+This script wraps the remediation playbook generator with LangGraph for better
 state management, retry logic, and workflow visualization.
 
 The interface (inputs, outputs, and main functions) remains exactly the same
-as deepseek_generate_playbook.py for compatibility.
+as deepseek_generate_remediation_playbook.py for compatibility.
 """
 
 from typing import TypedDict, Literal
@@ -41,7 +41,7 @@ class PlaybookGenerationState(TypedDict):
     example_output: str
     filename: str
     max_retries: int
-    audit_procedure: str  # CIS Benchmark audit procedure
+    audit_procedure: str  # CIS Benchmark remediation procedure (kept as audit_procedure for interface compat)
     
     # Workflow state
     attempt: int
@@ -220,7 +220,7 @@ def generate_playbook_node(state: PlaybookGenerationState) -> PlaybookGeneration
                         feedback_lines.append(line)
                         # Get next 20-30 lines for context
                         for j in range(i+1, min(i+30, len(lines))):
-                            if lines[j].strip().startswith('- **') and 'PLAYBOOK' not in lines[j].upper() and 'DATA COLLECTION' not in lines[j].upper():
+                            if lines[j].strip().startswith('- **') and 'PLAYBOOK' not in lines[j].upper() and 'DATA COLLECTION' not in lines[j].upper() and 'REMEDIATION' not in lines[j].upper():
                                 break
                             feedback_lines.append(lines[j])
                         break
@@ -304,7 +304,7 @@ def check_syntax_node(state: PlaybookGenerationState) -> PlaybookGenerationState
         state['syntax_valid'] = True  # Assume valid if unchanged
         return state
     
-    is_valid, error_msg = check_playbook_syntax(state['filename'], state['test_host'])
+    is_valid, error_msg = check_playbook_syntax(state['filename'], state['test_host'], remote_user=state['become_user'])
     
     state['syntax_valid'] = is_valid
     if not is_valid:
@@ -412,7 +412,8 @@ def test_on_test_host_node(state: PlaybookGenerationState) -> PlaybookGeneration
         state['test_host'],
         check_mode=False,
         verbose="vvv",  # Use default verbose level
-        skip_debug=True  # Skip debug tasks for cleaner output to analyze
+        skip_debug=True,  # Skip debug tasks for cleaner output to analyze
+        remote_user=state['become_user']
     )
     
     state['test_success'] = test_success
@@ -511,16 +512,19 @@ def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationSta
             return state
         
         # Proceed to target execution only when ALL criteria are met:
-        # 1. DATA COLLECTION: PASS
-        # 2. COMPLIANCE ANALYSIS: PASS
+        # 1. DATA_COLLECTION: PASS
+        # 2. REMEDIATION EXECUTION: PASS
+        # 3. REMEDIATION VERIFICATION: PASS
         # NOTE: PLAYBOOK ANALYSIS is now handled separately (after syntax check, before test execution)
         data_collection_pass = analysis_statuses.get('data_collection') == 'PASS'
-        compliance_analysis_pass = analysis_statuses.get('compliance_analysis') == 'PASS'
+        remediation_execution_pass = analysis_statuses.get('remediation_execution') == 'PASS'
+        remediation_verification_pass = analysis_statuses.get('remediation_verification') == 'PASS'
         
         # Check if all main sections pass
         all_main_sections_pass = (
             data_collection_pass and
-            compliance_analysis_pass
+            remediation_execution_pass and
+            remediation_verification_pass
         )
         
         state['analysis_passed'] = all_main_sections_pass
@@ -533,10 +537,12 @@ def analyze_output_node(state: PlaybookGenerationState) -> PlaybookGenerationSta
             failed_criteria = []
             if not data_collection_pass:
                 failed_criteria.append("DATA COLLECTION: not PASS")
-            if not compliance_analysis_pass:
-                failed_criteria.append("COMPLIANCE ANALYSIS: not PASS")
+            if not remediation_execution_pass:
+                failed_criteria.append("REMEDIATION EXECUTION: not PASS")
+            if not remediation_verification_pass:
+                failed_criteria.append("REMEDIATION VERIFICATION: not PASS")
             
-            print(f"\n⚠️  AI COMPLIANCE ANALYSIS criteria not met - will enhance playbook")
+            print(f"\n⚠️  AI REMEDIATION ANALYSIS criteria not met - will enhance playbook")
             print(f"   Failed criteria: {', '.join(failed_criteria)}")
             #state['error_message'] = analysis_message
             
@@ -680,7 +686,8 @@ def execute_on_target_host_node(state: PlaybookGenerationState) -> PlaybookGener
         state['target_host'],
         check_mode=False,
         verbose="v",  # Use default verbose level to capture compliance report output
-        skip_debug=True  # Skip debug tasks on target host
+        skip_debug=True,  # Skip debug tasks on target host
+        remote_user=state['become_user']
     )
     
     state['final_success'] = final_success
@@ -1312,7 +1319,7 @@ def generate_playbook_workflow(
                                 if playbook_structure_analysis and line_stripped in playbook_structure_analysis:
                                     continue
                                 # Look for key failure indicators (focus on different sections)
-                                if any(keyword in line_stripped.upper() for keyword in ['DATA COLLECTION', 'COMPLIANCE ANALYSIS', 'PLAYBOOK ANALYSIS', 'INSUFFICIENT', 'MISALIGNMENT']):
+                                if any(keyword in line_stripped.upper() for keyword in ['DATA COLLECTION', 'REMEDIATION EXECUTION', 'REMEDIATION VERIFICATION', 'PLAYBOOK ANALYSIS', 'INSUFFICIENT', 'MISALIGNMENT']):
                                     if line_stripped not in seen_lines:
                                         key_lines.append(line_stripped)
                                         seen_lines.add(line_stripped)

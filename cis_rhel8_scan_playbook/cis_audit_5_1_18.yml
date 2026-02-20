@@ -1,13 +1,15 @@
 ---
-- name: Data Collection for CIS 5.1.18
+- name: Data Collection for CIS checkpoint 5.1.18
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    kcs_article: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 5.1.18"
-    req_1: "Check sshd MaxAuthTries in the effective configuration using the primary audit script"
-    req_2: "If Match blocks are used in the environment, check sshd MaxAuthTries for a specific user context using the additional audit script"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 5.1.18"
+    req_1: "Run the provided CIS audit script to verify Ensure sshd MaxAuthTries is configured"
+    req_2: "Check match blocks for Ensure sshd MaxAuthTries is configured"
     req_3: "OVERALL Verify: Ensure sshd MaxAuthTries is configured"
+    # Variable for match block test user - use example from audit procedure
+    match_test_user: "sshuser"
 
   tasks:
     - name: Initialize data variables
@@ -21,13 +23,37 @@
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
+        # Initialize match_blocks_used as false by default
+        match_blocks_used: false
 
-    # Requirement 1: Check sshd MaxAuthTries in the effective configuration
-    - name: "Req 1 - Check sshd MaxAuthTries in effective configuration"
+    # Check if sshd_config has Match blocks to determine if we need to run match block tests
+    - name: Check for Match blocks in sshd_config
       shell: |
+        {% raw %}
+        if grep -q "^Match" /etc/ssh/sshd_config 2>/dev/null; then
+          echo "true"
+        else
+          echo "false"
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: match_blocks_check
+      ignore_errors: true
+      changed_when: false
+
+    - name: Set match_blocks_used fact based on check
+      set_fact:
+        match_blocks_used: "{{ match_blocks_check.stdout | default('false') | trim == 'true' }}"
+
+    # Requirement 1: Run the provided CIS audit script to verify Ensure sshd MaxAuthTries is configured (default check)
+    - name: "Req 1 - Execute CIS audit command for MaxAuthTries (default)"
+      shell: |
+        {% raw %}
         source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
         source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i maxauthtries || true
+        sshd -T $OPTIONS $CRYPTO_POLICY 2>/dev/null | grep -i maxauthtries
+        {% endraw %}
       args:
         executable: /bin/bash
       register: result_1
@@ -36,76 +62,15 @@
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check sshd MaxAuthTries in effective configuration"
-        task_1_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY | grep -i maxauthtries"
+        task_1_name: "Execute CIS audit command for MaxAuthTries (default)"
+        task_1_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY | grep -i maxauthtries"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
         status_1: >-
           {% set output = result_1.stdout | default('') | trim %}
-          {% if output %}
-            {% set match = output | regex_search('maxauthtries\\s+(\\d+)', ignorecase=true) %}
-            {% if match %}
-              {% set value = match[1] | int %}
-              {% if value <= 4 %}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: "PASS when the output includes 'maxauthtries' and the numeric value is 4 or less, FAIL otherwise"
-
-    # Requirement 2: Check sshd MaxAuthTries for specific user context (if Match blocks used)
-    - name: "Req 2 - Check sshd MaxAuthTries for user context"
-      shell: |
-        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
-        source /etc/sysconfig/sshd 2>/dev/null || true
-        sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser 2>/dev/null | grep -i maxauthtries || true
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-
-    - name: Store requirement 2 details
-      set_fact:
-        task_2_name: "Check sshd MaxAuthTries for user context"
-        task_2_cmd: "source /etc/crypto-policies/back-ends/opensshserver.config; source /etc/sysconfig/sshd; sshd -T $OPTIONS $CRYPTO_POLICY -C user=sshuser | grep -i maxauthtries"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% set output = result_2.stdout | default('') | trim %}
-          {% if output %}
-            {% set match = output | regex_search('maxauthtries\\s+(\\d+)', ignorecase=true) %}
-            {% if match %}
-              {% set value = match[1] | int %}
-              {% if value <= 4 %}
-                PASS
-              {% else %}
-                FAIL
-              {% endif %}
-            {% else %}
-              FAIL
-            {% endif %}
-          {% else %}
-            NA
-          {% endif %}
-        rationale_2: "PASS when the output includes 'maxauthtries' and the numeric value is 4 or less, FAIL otherwise, NA if no output (Match blocks may not be used)"
-
-    # Requirement 3: OVERALL Verify
-    - name: Store requirement 3 details
-      set_fact:
-        task_3_name: "OVERALL Verify: Ensure sshd MaxAuthTries is configured"
-        task_3_cmd: "N/A - Overall assessment"
-        task_3_rc: 0
-        data_3: "N/A"
-        status_3: >-
-          {% if status_1 | trim == 'PASS' %}
-            {% if data_2 | trim == '' or status_2 | trim == 'PASS' or status_2 | trim == 'NA' %}
+          {% if output.startswith('maxauthtries') %}
+            {% set value = output.split()[1] | int %}
+            {% if value <= 4 %}
               PASS
             {% else %}
               FAIL
@@ -113,7 +78,70 @@
           {% else %}
             FAIL
           {% endif %}
-        rationale_3: "PASS when req_1=PASS AND (Match blocks are not used OR req_2=PASS), FAIL otherwise"
+        rationale_1: "PASS when script output shows maxauthtries value of 4 or less, FAIL otherwise"
+
+    # Requirement 2: Check match blocks for Ensure sshd MaxAuthTries is configured
+    # Only run if match blocks are used in the environment (conditional check)
+    - name: "Req 2 - Execute CIS audit command for MaxAuthTries (match blocks)"
+      shell: |
+        {% raw %}
+        source /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null || true
+        source /etc/sysconfig/sshd 2>/dev/null || true
+        sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ match_test_user }} 2>/dev/null | grep -i maxauthtries
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: match_blocks_used == true
+
+    - name: Store requirement 2 details (when match blocks are used)
+      set_fact:
+        task_2_name: "Execute CIS audit command for MaxAuthTries (match blocks)"
+        task_2_cmd: "sshd -T $OPTIONS $CRYPTO_POLICY -C user={{ match_test_user }} | grep -i maxauthtries"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output.startswith('maxauthtries') %}
+            {% set value = output.split()[1] | int %}
+            {% if value <= 4 %}
+              PASS
+            {% else %}
+              FAIL
+            {% endif %}
+          {% else %}
+            # No output means no match block for this user, which is acceptable
+            PASS
+          {% endif %}
+        rationale_2: "PASS when script output shows maxauthtries value of 4 or less, or no output (no match block for user={{ match_test_user }}); FAIL otherwise"
+      when: match_blocks_used == true
+
+    - name: Store requirement 2 details (when no match blocks)
+      set_fact:
+        task_2_name: "Check match blocks for MaxAuthTries"
+        task_2_cmd: "N/A - No match blocks detected in sshd_config"
+        task_2_rc: 0
+        data_2: "No match blocks detected in sshd_config"
+        status_2: "PASS"
+        rationale_2: "PASS - No match blocks to check (conditional requirement not applicable)"
+      when: match_blocks_used == false
+
+    # Requirement 3: OVERALL Verify: Ensure sshd MaxAuthTries is configured
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Overall compliance check"
+        task_3_cmd: "N/A - Derived from requirement 1"
+        task_3_rc: 0
+        data_3: "Default: {{ data_1 | default('') }}{% if match_blocks_used %}, Match (user={{ match_test_user }}): {{ data_2 | default('') }}{% endif %}"
+        status_3: >-
+          {% if status_1 | default('FAIL') == 'PASS' %}
+            PASS
+          {% else %}
+            FAIL
+          {% endif %}
+        rationale_3: "PASS when req_1 is PASS, FAIL otherwise (match block checks are conditional)"
 
     - name: Generate compliance report
       debug:

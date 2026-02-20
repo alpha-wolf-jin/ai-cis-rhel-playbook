@@ -1,0 +1,173 @@
+---
+- name: Remediation for CIS checkpoint 2.2.4
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_2_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.2.4"
+    req_1: "Check if telnet client package is installed"
+    req_2: "Remove telnet client package"
+    req_3: "Verify telnet client is not installed"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Check if telnet client package is installed
+    - name: "Req 1 - Check telnet package installation status"
+      shell: rpm -q telnet
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    # Set telnet_installed fact separately to avoid undefined variable error
+    - name: "Set telnet_installed fact"
+      set_fact:
+        telnet_installed: "{{ result_1.rc | default(1) == 0 }}"
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check telnet package installation status"
+        task_1_cmd: "rpm -q telnet"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if (result_1.rc == 0 or result_1.rc == 1) else 'FAILED') | trim }}"
+        rationale_1: >-
+          {% if result_1.rc == 0 %}
+            APPLIED: telnet package is installed, proceeding with removal
+          {% elif result_1.rc == 1 %}
+            APPLIED: Remediation not applicable - telnet is not installed on this server
+          {% else %}
+            FAILED: Failed to check telnet package installation status
+          {% endif %}
+
+    # Requirement 2: Remove telnet client package
+    - name: "Req 2 - Remove telnet client package"
+      shell: dnf remove -y telnet
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: telnet_installed | default(false)
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Remove telnet client package"
+        task_2_cmd: "dnf remove -y telnet"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if (telnet_installed | default(false) and result_2.rc | default(-1) == 0) else ('SKIPPED' if not (telnet_installed | default(false)) else 'FAILED')) | trim }}"
+        rationale_2: "{{ ('APPLIED: telnet package removed successfully' if (telnet_installed | default(false) and result_2.rc | default(-1) == 0) else ('SKIPPED: Not applicable, telnet not installed' if not (telnet_installed | default(false)) else 'FAILED: Could not remove telnet package')) | trim }}"
+
+    # Requirement 3: Verify telnet client is not installed
+    - name: "Req 3 - Verify telnet package removal"
+      shell: rpm -q telnet
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      changed_when: false
+      when: telnet_installed | default(false)
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify telnet package removal"
+        task_3_cmd: "rpm -q telnet"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: "{{ ('APPLIED' if (telnet_installed | default(false) and result_3.rc | default(-1) != 0) else ('SKIPPED' if not (telnet_installed | default(false)) else 'FAILED')) | trim }}"
+        rationale_3: "{{ ('APPLIED: Verification successful, telnet package is not installed' if (telnet_installed | default(false) and result_3.rc | default(-1) != 0) else ('SKIPPED: Not applicable, telnet not installed' if not (telnet_installed | default(false)) else 'FAILED: Verification failed, telnet package may still be installed')) | trim }}"
+        overall_status: >-
+          {% if not (telnet_installed | default(false)) %}
+            SKIPPED
+          {% elif (status_2 | trim == 'APPLIED') and (status_3 | trim == 'APPLIED') %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% if not (telnet_installed | default(false)) %}
+            Remediation not applicable - telnet is not installed on this server
+          {% elif (status_2 | trim == 'APPLIED') and (status_3 | trim == 'APPLIED') %}
+            Telnet client package successfully removed and verified
+          {% else %}
+            Remediation partially applied or failed
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.2.4"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

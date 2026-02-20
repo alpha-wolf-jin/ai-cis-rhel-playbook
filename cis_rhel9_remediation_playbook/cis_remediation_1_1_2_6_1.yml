@@ -1,0 +1,785 @@
+---
+- name: Remediation for CIS 1.1.2.6.1 - Ensure separate partition exists for /var/log
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_6_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.6.1"
+    req_1: "Check if /var/log is already on a separate partition and determine installation type"
+    req_2: "For new installations: create custom partition with separate /var/log partition"
+    req_3: "For existing installations: identify available disk space"
+    req_4: "For existing installations: create new partition"
+    req_5: "For existing installations: format partition with filesystem"
+    req_6: "For existing installations: copy existing /var/log data to new partition"
+    req_7: "For existing installations: update /etc/fstab with new partition entry"
+    req_8: "For existing installations: remount /var/log with new partition"
+    req_9: "Verify /var/log is on separate partition"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        task_9_name: "Not executed"
+        task_9_cmd: "N/A"
+        task_9_rc: -1
+        is_new_installation: false
+        target_partition: ""
+        available_disk: ""
+        varlog_on_separate_partition: false
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        data_6: ""
+        data_7: ""
+        data_8: ""
+        data_9: ""
+        status_1: "UNKNOWN"
+        status_2: "UNKNOWN"
+        status_3: "UNKNOWN"
+        status_4: "UNKNOWN"
+        status_5: "UNKNOWN"
+        status_6: "UNKNOWN"
+        status_7: "UNKNOWN"
+        status_8: "UNKNOWN"
+        status_9: "UNKNOWN"
+        details_1: ""
+        details_2: ""
+        details_3: ""
+        details_4: ""
+        details_5: ""
+        details_6: ""
+        details_7: ""
+        details_8: ""
+        details_9: ""
+
+    - name: "Req 1 - Check if /var/log is already on a separate partition and determine installation type"
+      shell: |
+        # Check if /var/log is on separate partition using findmnt
+        if findmnt --kernel /var/log; then
+            echo "=== /var/log MOUNT STATUS ==="
+            findmnt --kernel /var/log
+            # Check if it is mounted from root filesystem
+            if findmnt --kernel /var/log | grep -q ' / '; then
+                echo "SEPARATE_PARTITION: false"
+                echo "/var/log is mounted from root filesystem"
+            else
+                echo "SEPARATE_PARTITION: true"
+                echo "/var/log is on separate partition"
+            fi
+        else
+            echo "=== /var/log MOUNT STATUS ==="
+            echo "/var/log is not separately mounted (findmnt exit code $?)"
+            echo "SEPARATE_PARTITION: false"
+        fi
+        
+        echo ""
+        echo "=== CHECKING INSTALLATION TYPE ==="
+        # Check uptime to determine if system is new
+        uptime -p
+        # Check if /var/log exists and has content
+        echo "=== /var/log DIRECTORY LISTING (first 5 items) ==="
+        ls -la /var/log | head -5
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check current /var/log partition and installation type"
+        task_1_cmd: "findmnt --kernel /var/log; uptime -p; ls -la /var/log"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        varlog_on_separate_partition: >-
+          {{ 'SEPARATE_PARTITION: true' in result_1.stdout | default('') }}
+        is_new_installation: >-
+          {{ 
+            'up 1 hour' in result_1.stdout or 
+            'up 2 hours' in result_1.stdout or 
+            'up 3 hours' in result_1.stdout 
+          }}
+        status_1: >-
+          {% if result_1.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_1: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition, no remediation needed
+          {% elif is_new_installation %}
+            New installation detected (uptime less than 3 hours)
+          {% else %}
+            Existing installation, /var/log not on separate partition
+          {% endif %}
+
+    - name: "Req 2 - For new installations: create custom partition with separate /var/log partition"
+      shell: |
+        echo '=== NEW INSTALLATION REMEDIATION ==='
+        echo 'Manual action required for new installations'
+        echo 'During OS installation process, select Custom for partitioning'
+        echo 'Create a separate partition for /var/log during installation'
+        echo 'Expected result: /var/log mounted on its own partition after installation'
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "is_new_installation"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "New installation guidance"
+        task_2_cmd: "echo manual instructions for new installation"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% if not varlog_on_separate_partition and is_new_installation %}
+            SKIPPED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        details_2: >-
+          {% if not varlog_on_separate_partition and is_new_installation %}
+            Manual action required: During OS installation, use custom partitioning to create separate /var/log partition
+          {% else %}
+            Not a new installation or already on separate partition, skipping new installation remediation
+          {% endif %}
+
+    - name: "Req 3 - For existing installations: identify available disk space"
+      shell: |
+        echo '=== CURRENT DISK LAYOUT ==='
+        lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,FSTYPE
+        echo
+        echo '=== AVAILABLE DISK SPACE ==='
+        df -h
+        echo
+        echo '=== UNALLOCATED SPACE ==='
+        parted -l 2>/dev/null | grep -A5 'Disk /dev/' | grep -E '(Disk /dev/|Free Space|unallocated)' || true
+        echo
+        echo '=== SUGGESTED DISK FOR PARTITION ==='
+        # Find first disk with available space (not root disk if possible)
+        for disk in /dev/sd? /dev/vd? /dev/xvd?; do
+          if [ -b "$disk" ]; then
+            echo 'Checking $disk'
+            parted -s "$disk" print free 2>/dev/null | grep 'Free Space' || true
+          fi
+        done
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "not is_new_installation"
+
+    - name: Store requirement 3 details and identify target disk
+      set_fact:
+        task_3_name: "Identify available disk space"
+        task_3_cmd: "lsblk; df -h; parted -l"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        available_disk: >-
+          {% if result_3 is defined and result_3 is not skipped and result_3.stdout is defined %}
+            {% if '/dev/sdb' in result_3.stdout %}
+              /dev/sdb
+            {% elif '/dev/vdb' in result_3.stdout %}
+              /dev/vdb
+            {% elif '/dev/xvdb' in result_3.stdout %}
+              /dev/xvdb
+            {% else %}
+              /dev/sda
+            {% endif %}
+          {% else %}
+            ""
+          {% endif %}
+        status_3: >-
+          {% if varlog_on_separate_partition %}
+            SKIPPED
+          {% elif is_new_installation %}
+            SKIPPED
+          {% elif result_3 is defined and result_3 is not skipped and result_3.rc == 0 %}
+            APPLIED
+          {% elif result_3 is defined and result_3 is skipped %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_3: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif is_new_installation %}
+            New installation, skipping disk space check
+          {% elif result_3 is defined and result_3 is not skipped and result_3.rc == 0 %}
+            Disk space information collected. Suggested disk: {{ available_disk }}
+          {% elif result_3 is defined and result_3 is skipped %}
+            Task skipped because /var/log is already on separate partition or system is new installation
+          {% else %}
+            Failed to identify available disk space
+          {% endif %}
+
+    - name: "Req 4 - For existing installations: create new partition"
+      shell: |
+        available_disk="{{ available_disk }}"
+        {% raw %}
+        echo '=== CREATING NEW PARTITION ==='
+        echo "Target disk: $available_disk"
+        
+        # Check if partition already exists for /var/log
+        if blkid | grep -q '/var/log'; then
+          echo 'Partition for /var/log already exists'
+          exit 0
+        fi
+        
+        # Create partition using parted (simplified - creates 1GB partition)
+        echo 'Creating 1GB partition on $available_disk'
+        
+        # First, check current partition table
+        parted -s $available_disk print
+        
+        # Get free space
+        FREE_START=$(parted -s $available_disk unit MB print free | grep 'Free Space' | tail -1 | awk '{print $1}' | sed 's/MB//')
+        FREE_SIZE=$(parted -s $available_disk unit MB print free | grep 'Free Space' | tail -1 | awk '{print $3}' | sed 's/MB//')
+        
+        if [ -z "$FREE_START" ] || [ -z "$FREE_SIZE" ]; then
+          echo 'No free space found on $available_disk'
+          echo 'Manual partitioning required'
+          exit 1
+        fi
+        
+        if [ "$FREE_SIZE" -lt 1024 ]; then
+          echo 'Insufficient free space (need at least 1GB, found ${FREE_SIZE}MB)'
+          echo 'Manual partitioning required'
+          exit 1
+        fi
+        
+        # Calculate end position (start + 1024MB)
+        END_POS=$((FREE_START + 1024))
+        
+        echo 'Creating partition from ${FREE_START}MB to ${END_POS}MB'
+        parted -s $available_disk mkpart primary xfs ${FREE_START}MB ${END_POS}MB
+        
+        # Refresh partition table
+        partprobe $available_disk
+        
+        # Find the new partition
+        NEW_PART=$(lsblk -ln $available_disk | grep part | tail -1 | awk '{print $1}')
+        if [ -n "$NEW_PART" ]; then
+          echo 'Created partition: /dev/${NEW_PART}'
+          echo '/dev/${NEW_PART}' > /tmp/varlog_partition.txt
+        else
+          echo 'Failed to identify new partition'
+          exit 1
+        fi
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "not is_new_installation"
+        - available_disk != ""
+
+    - name: Store requirement 4 details and get partition device
+      set_fact:
+        task_4_name: "Create new partition"
+        task_4_cmd: "parted mkpart command on {{ available_disk }}"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        target_partition: >-
+          {% if result_4 is defined and result_4 is not skipped and result_4.stdout is defined %}
+            {% if result_4.rc == 0 and '/dev/' in result_4.stdout %}
+              {% for line in result_4.stdout_lines %}
+                {% if '/dev/' in line and 'Created partition:' in line %}
+                  {{ line.split(':')[1] | trim }}
+                {% endif %}
+              {% endfor %}
+            {% else %}
+              {{ available_disk }}1
+            {% endif %}
+          {% else %}
+            ""
+          {% endif %}
+        status_4: >-
+          {% if varlog_on_separate_partition or is_new_installation %}
+            SKIPPED
+          {% elif result_4 is defined and result_4 is skipped %}
+            SKIPPED
+          {% elif result_4.rc == 0 %}
+            APPLIED
+          {% elif result_4.rc == 1 and ('No free space' in result_4.stdout or 'Insufficient free space' in result_4.stdout) %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_4: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif is_new_installation %}
+            New installation, skipping partition creation
+          {% elif result_4 is defined and result_4 is skipped %}
+            Task skipped because /var/log is already on separate partition or no available disk
+          {% elif result_4.rc == 0 %}
+            Partition created: {{ target_partition }}
+          {% elif result_4.rc == 1 and ('No free space' in result_4.stdout or 'Insufficient free space' in result_4.stdout) %}
+            Manual action required: No free disk space available for partition creation. Need at least 1GB free space. Free up disk space or add new disk.
+          {% else %}
+            Failed to create partition. Manual partitioning may be required: parted {{ available_disk }} mkpart primary xfs [start] [end]
+          {% endif %}
+
+    - name: "Req 5 - For existing installations: format partition with filesystem"
+      shell: |
+        target_partition="{{ target_partition }}"
+        {% raw %}
+        echo '=== FORMATTING PARTITION ==='
+        echo "Partition to format: $target_partition"
+        
+        # Check if already formatted
+        if blkid $target_partition | grep -q 'TYPE='; then
+          echo "Partition $target_partition is already formatted"
+          blkid $target_partition
+          exit 0
+        fi
+        
+        # Format with xfs (as specified in requirements)
+        echo "Formatting $target_partition with XFS filesystem"
+        mkfs -t xfs $target_partition
+        
+        echo 'Format completed'
+        blkid $target_partition
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "not is_new_installation"
+        - target_partition != ""
+
+    - name: Store requirement 5 details
+      set_fact:
+        task_5_name: "Format partition"
+        task_5_cmd: "mkfs -t xfs {{ target_partition }}"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if varlog_on_separate_partition or is_new_installation %}
+            SKIPPED
+          {% elif result_5 is defined and result_5 is skipped %}
+            SKIPPED
+          {% elif target_partition == "" or status_4 == "SKIPPED" %}
+            SKIPPED
+          {% elif result_5.rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_5: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif is_new_installation %}
+            New installation, skipping formatting
+          {% elif result_5 is defined and result_5 is skipped %}
+            Task skipped because /var/log is already on separate partition or no target partition
+          {% elif target_partition == "" or status_4 == "SKIPPED" %}
+            Skipped because partition was not created
+          {% elif result_5.rc == 0 %}
+            Partition {{ target_partition }} formatted with XFS filesystem
+          {% else %}
+            Failed to format partition {{ target_partition }} with XFS
+          {% endif %}
+
+    - name: "Req 6 - For existing installations: copy existing /var/log data to new partition"
+      shell: |
+        target_partition="{{ target_partition }}"
+        {% raw %}
+        echo '=== COPYING /var/log DATA ==='
+        echo 'Source: /var/log/*'
+        echo "Destination: $target_partition mounted at /mnt/varlognew"
+        
+        # Create temporary mount point
+        mkdir -p /mnt/varlognew
+        
+        # Mount the new partition
+        mount $target_partition /mnt/varlognew
+        
+        # Copy data (preserving attributes, as specified in requirements)
+        echo 'Copying /var/log data to new partition...'
+        cp -arx /var/log/* /mnt/varlognew/
+        
+        # Verify copy
+        echo 'Verifying copy...'
+        echo "Source count: $(ls -la /var/log | wc -l)"
+        echo "Destination count: $(ls -la /mnt/varlognew | wc -l)"
+        
+        # Unmount temporary mount
+        umount /mnt/varlognew
+        rmdir /mnt/varlognew
+        
+        echo 'Data copy completed'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "not is_new_installation"
+        - target_partition != ""
+        - "status_5 == 'APPLIED'"
+
+    - name: Store requirement 6 details
+      set_fact:
+        task_6_name: "Copy /var/log data"
+        task_6_cmd: "mkdir /mnt/varlognew && mount {{ target_partition }} /mnt/varlognew && cp -arx /var/log/* /mnt/varlognew/"
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: >-
+          {% if varlog_on_separate_partition or is_new_installation %}
+            SKIPPED
+          {% elif result_6 is defined and result_6 is skipped %}
+            SKIPPED
+          {% elif status_5 != 'APPLIED' %}
+            SKIPPED
+          {% elif result_6.rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_6: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif is_new_installation %}
+            New installation, skipping data copy
+          {% elif result_6 is defined and result_6 is skipped %}
+            Task skipped because /var/log is already on separate partition or partition not formatted
+          {% elif status_5 != 'APPLIED' %}
+            Task skipped because partition was not formatted
+          {% elif result_6.rc == 0 %}
+            /var/log data copied to new partition {{ target_partition }}
+          {% else %}
+            Failed to copy /var/log data to new partition
+          {% endif %}
+
+    - name: "Req 7 - For existing installations: update /etc/fstab with new partition entry"
+      shell: |
+        target_partition="{{ target_partition }}"
+        {% raw %}
+        echo '=== UPDATING /etc/fstab ==='
+        echo '=== BEFORE ==='
+        cat /etc/fstab
+        echo
+        echo '=== APPLYING CHANGE ==='
+        
+        # Check if entry already exists
+        if grep -q '/var/log' /etc/fstab; then
+          echo '/var/log entry already exists in /etc/fstab'
+          grep '/var/log' /etc/fstab
+          exit 0
+        fi
+        
+        # Add new entry (as specified in requirements)
+        echo "Adding entry for $target_partition to /etc/fstab"
+        echo "$target_partition /var/log xfs defaults 0 0" >> /etc/fstab
+        
+        echo
+        echo '=== AFTER ==='
+        cat /etc/fstab
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "not is_new_installation"
+        - target_partition != ""
+        - "status_6 == 'APPLIED'"
+
+    - name: Store requirement 7 details
+      set_fact:
+        task_7_name: "Update /etc/fstab"
+        task_7_cmd: "echo '{{ target_partition }} /var/log xfs defaults 0 0' >> /etc/fstab"
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: >-
+          {% if varlog_on_separate_partition or is_new_installation %}
+            SKIPPED
+          {% elif result_7 is defined and result_7 is skipped %}
+            SKIPPED
+          {% elif status_6 != 'APPLIED' %}
+            SKIPPED
+          {% elif result_7.rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_7: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif is_new_installation %}
+            New installation, skipping fstab update
+          {% elif result_7 is defined and result_7 is skipped %}
+            Task skipped because /var/log is already on separate partition or data not copied
+          {% elif status_6 != 'APPLIED' %}
+            Task skipped because data was not copied to new partition
+          {% elif result_7.rc == 0 %}
+            /etc/fstab updated with entry: {{ target_partition }} /var/log xfs defaults 0 0
+          {% else %}
+            Failed to update /etc/fstab
+          {% endif %}
+
+    - name: "Req 8 - For existing installations: remount /var/log with new partition"
+      shell: |
+        target_partition="{{ target_partition }}"
+        {% raw %}
+        echo '=== REMOUNTING /var/log ==='
+        
+        # Create /var/log directory if it does not exist (should exist)
+        mkdir -p /var/log
+        
+        # Mount the new partition (as specified in requirements)
+        echo "Mounting $target_partition to /var/log"
+        mount -o remount /var/log 2>/dev/null || mount $target_partition /var/log
+        
+        # Verify mount
+        echo 'Current mount for /var/log:'
+        findmnt --kernel /var/log || mount | grep /var/log
+        
+        echo 'Remount completed'
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      when: 
+        - "not varlog_on_separate_partition"
+        - "not is_new_installation"
+        - target_partition != ""
+        - "status_7 == 'APPLIED'"
+
+    - name: Store requirement 8 details
+      set_fact:
+        task_8_name: "Remount /var/log"
+        task_8_cmd: "mount -o remount /var/log"
+        task_8_rc: "{{ result_8.rc | default(-1) }}"
+        data_8: "{{ result_8.stdout | default('') | trim }}"
+        status_8: >-
+          {% if varlog_on_separate_partition or is_new_installation %}
+            SKIPPED
+          {% elif result_8 is defined and result_8 is skipped %}
+            SKIPPED
+          {% elif status_7 != 'APPLIED' %}
+            SKIPPED
+          {% elif result_8.rc == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_8: >-
+          {% if varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif is_new_installation %}
+            New installation, skipping remount
+          {% elif result_8 is defined and result_8 is skipped %}
+            Task skipped because /var/log is already on separate partition or fstab not updated
+          {% elif status_7 != 'APPLIED' %}
+            Task skipped because fstab was not updated
+          {% elif result_8.rc == 0 %}
+            /var/log successfully mounted on new partition {{ target_partition }}
+          {% else %}
+            Failed to remount /var/log
+          {% endif %}
+
+    - name: "Req 9 - Verify /var/log is on separate partition"
+      shell: |
+        {% raw %}
+        findmnt --kernel /var/log
+        {% endraw %}
+      args:
+        executable: /bin/bash
+      register: result_9
+      ignore_errors: true
+
+    - name: Store requirement 9 details
+      set_fact:
+        task_9_name: "Verify partition separation"
+        task_9_cmd: "findmnt --kernel /var/log"
+        task_9_rc: "{{ result_9.rc | default(-1) }}"
+        data_9: "{{ result_9.stdout | default('') | trim }}"
+        status_9: >-
+          {% if result_9.rc == 0 and ' / ' not in result_9.stdout %}
+            APPLIED
+          {% elif varlog_on_separate_partition %}
+            APPLIED
+          {% elif status_4 | trim == "SKIPPED" and data_4 is defined and ('No free space' in data_4 or 'Insufficient free space' in data_4) %}
+            SKIPPED
+          {% else %}
+            FAILED
+          {% endif %}
+        details_9: >-
+          {% if result_9.rc == 0 and ' / ' not in result_9.stdout %}
+            Verification passed: /var/log is on separate partition
+          {% elif varlog_on_separate_partition %}
+            Already on separate partition
+          {% elif status_4 | trim == "SKIPPED" and data_4 is defined and ('No free space' in data_4 or 'Insufficient free space' in data_4) %}
+            Manual action required: No free disk space available for partition creation. Need at least 1GB free space. Free up disk space or add new disk.
+          {% else %}
+            Verification failed: /var/log is not on separate partition
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.6.1"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') }}"
+          - "  Command: {{ task_7_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_7_rc | default(-1) }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name | default('Task not recorded') }}"
+          - "  Command: {{ task_8_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_8_rc | default(-1) }}"
+          - "  Data: {{ data_8 | default('') | trim }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 9 - {{ req_9 }}:"
+          - "  Task: {{ task_9_name | default('Task not recorded') }}"
+          - "  Command: {{ task_9_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_9_rc | default(-1) }}"
+          - "  Data: {{ data_9 | default('') | trim }}"
+          - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_9 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ details_9 | default('Manual partitioning may be required') | trim }}"
+          - "========================================================"

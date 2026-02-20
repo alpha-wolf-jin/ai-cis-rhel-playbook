@@ -1,0 +1,230 @@
+---
+- name: Remediation for CIS 1.5.2
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_5_2"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.2"
+    
+    # CRITICAL: ALL req_ variables MUST be quoted strings
+    req_1: "Apply kernel.yama.ptrace_scope = 1 setting to a sysctl configuration file"
+    req_2: "Apply the kernel.yama.ptrace_scope = 1 setting to the active kernel"
+    req_3: "VERIFY: Confirm the kernel.yama.ptrace_scope setting is active"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    - name: State Guard - Restore /etc/sysctl.d/60-kernel_sysctl.conf from backup
+      copy:
+        src: "{{ state_guard_dir }}/60-kernel_sysctl.conf.present"
+        dest: "/etc/sysctl.d/60-kernel_sysctl.conf"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Delete /etc/sysctl.d/60-kernel_sysctl.conf (created by remediation)
+      file:
+        path: "/etc/sysctl.d/60-kernel_sysctl.conf"
+        state: absent
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if each file exists before deciding backup suffix
+    - name: State Guard - Check if /etc/sysctl.d/60-kernel_sysctl.conf exists
+      stat:
+        path: "/etc/sysctl.d/60-kernel_sysctl.conf"
+      register: _sg_sysctl_stat
+
+    # Backup existing files with .present suffix
+    - name: State Guard - Backup /etc/sysctl.d/60-kernel_sysctl.conf (present)
+      copy:
+        src: "/etc/sysctl.d/60-kernel_sysctl.conf"
+        dest: "{{ state_guard_dir }}/60-kernel_sysctl.conf.present"
+        remote_src: true
+      when: _sg_sysctl_stat.stat.exists
+      ignore_errors: true
+
+    # Mark non-existing files with .absent suffix (empty marker file)
+    - name: State Guard - Mark /etc/sysctl.d/60-kernel_sysctl.conf as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/60-kernel_sysctl.conf.absent"
+      when: not _sg_sysctl_stat.stat.exists
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+
+    # Requirement 1: Apply kernel.yama.ptrace_scope = 1 setting to a sysctl configuration file
+    - name: Req 1 - Append ptrace_scope setting to sysctl config file
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/sysctl.d/60-kernel_sysctl.conf 2>/dev/null || echo "File does not exist"
+        echo "=== APPLYING CHANGE ==="
+        {% raw %}
+        printf "\nkernel.yama.ptrace_scope = 1\n" >> /etc/sysctl.d/60-kernel_sysctl.conf
+        {% endraw %}
+        echo "=== AFTER ==="
+        cat /etc/sysctl.d/60-kernel_sysctl.conf
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Append ptrace_scope setting to sysctl config file"
+        task_1_cmd: |
+          printf "\nkernel.yama.ptrace_scope = 1\n" >> /etc/sysctl.d/60-kernel_sysctl.conf
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('APPLIED' if result_1.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_1: "{{ ('APPLIED: Setting appended to configuration file' if result_1.rc | default(-1) == 0 else 'FAILED: Could not append setting to configuration file') | trim }}"
+
+    # Requirement 2: Apply the kernel.yama.ptrace_scope = 1 setting to the active kernel
+    - name: Req 2 - Apply ptrace_scope setting to active kernel
+      shell: |
+        sysctl -w kernel.yama.ptrace_scope=1
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply ptrace_scope setting to active kernel"
+        task_2_cmd: "sysctl -w kernel.yama.ptrace_scope=1"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(-1) == 0 else 'FAILED') | trim }}"
+        rationale_2: "{{ ('APPLIED: Kernel parameter set to 1 immediately' if result_2.rc | default(-1) == 0 else 'FAILED: Could not set kernel parameter') | trim }}"
+
+    # Requirement 3: VERIFY: Confirm the kernel.yama.ptrace_scope setting is active
+    - name: Req 3 - Verify ptrace_scope setting
+      shell: |
+        sysctl kernel.yama.ptrace_scope
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Verify ptrace_scope setting"
+        task_3_cmd: "sysctl kernel.yama.ptrace_scope"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output == 'kernel.yama.ptrace_scope = 1' %}
+            APPLIED
+          {% elif result_3.rc | default(-1) != 0 %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if output == 'kernel.yama.ptrace_scope = 1' %}
+            APPLIED: Output shows 'kernel.yama.ptrace_scope = 1'
+          {% elif result_3.rc | default(-1) != 0 %}
+            FAILED: Command failed with exit code {{ result_3.rc | default(-1) }}
+          {% else %}
+            FAILED: Expected 'kernel.yama.ptrace_scope = 1', got '{{ output }}'
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Set overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if status_3 | default('') | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_1 | default('') | trim == 'FAILED' or status_2 | default('') | trim == 'FAILED' or status_3 | default('') | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            UNKNOWN
+          {% endif %}
+        overall_rationale: >-
+          {% if status_3 | default('') | trim == 'APPLIED' %}
+            Successfully applied ptrace_scope restriction. Configuration written to /etc/sysctl.d/60-kernel_sysctl.conf and active kernel parameter set to 1.
+          {% elif status_1 | default('') | trim == 'FAILED' or status_2 | default('') | trim == 'FAILED' or status_3 | default('') | trim == 'FAILED' %}
+            Failed to apply ptrace_scope restriction. Check individual requirement statuses for details.
+          {% else %}
+            Cannot determine overall remediation status. Check individual requirement statuses.
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.5.2"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.5.2"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

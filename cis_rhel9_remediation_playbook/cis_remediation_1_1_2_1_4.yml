@@ -1,0 +1,325 @@
+---
+- name: Remediation for CIS 1.1.2.1.4 - Ensure noexec option set on /tmp partition
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_1_4"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.1.4"
+    req_1: "Check if /tmp is a separate partition"
+    req_2: "Apply noexec mount option to /tmp partition"
+    req_3: "Remount /tmp with updated options"
+    req_4: "Verify noexec option is set on /tmp partition"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE ---
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remount /tmp to undo previous changes"
+      shell: mount -o remount /tmp
+      args:
+        executable: /bin/bash
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+
+    # Requirement 1 - Check if /tmp is a separate partition
+    - name: "Req 1 - Check if /tmp is a separate partition"
+      shell: |
+        findmnt --kernel /tmp
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check if /tmp is a separate partition"
+        task_1_cmd: "findmnt --kernel /tmp"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and '/tmp' in output and 'tmpfs' not in output %}
+            APPLIED
+          {% elif output != '' and '/tmp' in output %}
+            SKIPPED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if output != '' and '/tmp' in output and 'tmpfs' not in output %}
+            APPLIED: /tmp is a separate partition - proceeding with remediation
+          {% elif output != '' and '/tmp' in output %}
+            SKIPPED: /tmp is mounted as tmpfs - remediation not applicable for tmpfs
+          {% else %}
+            SKIPPED: /tmp is not a separate mount point or partition
+          {% endif %}
+        tmp_is_separate: "{{ (result_1.stdout | default('') | trim != '' and '/tmp' in result_1.stdout and 'tmpfs' not in result_1.stdout) }}"
+
+    # Requirement 2 - Apply noexec mount option to /tmp partition
+    # FIXED: Use simpler sed command to add noexec option without corrupting the line
+    - name: "Req 2 - Apply noexec mount option to /tmp partition"
+      shell: |
+        echo "=== BEFORE ==="
+        cat /etc/fstab
+        echo "=== APPLYING CHANGE ==="
+        # Backup original line
+        cp /etc/fstab /etc/fstab.backup.$$
+        # Get the /tmp line (non-commented)
+        tmp_line=$(grep -E '^[^#].*[[:space:]]/tmp[[:space:]]' /etc/fstab)
+        if [ -n "$tmp_line" ]; then
+          # Extract the fourth field (options)
+          options=$(echo "$tmp_line" | awk '{print $4}')
+          # Check if noexec is already present
+          if echo "$options" | grep -q noexec; then
+            echo "noexec option already present in /tmp mount options"
+          else
+            # Add noexec to options, handling trailing commas
+            new_options=$(echo "$options" | sed 's/,$//')
+            new_options="${new_options},noexec"
+            # Replace the line in /etc/fstab
+            sed -i "s|^[^#].*[[:space:]]/tmp[[:space:]].*$|$(echo "$tmp_line" | awk -v opts="$new_options" '{$4=opts; print}')|" /etc/fstab
+            echo "Updated /tmp line with noexec option"
+          fi
+        else
+          echo "No non-commented /tmp mount found in /etc/fstab"
+          exit 1
+        fi
+        echo "=== AFTER ==="
+        cat /etc/fstab
+        # Cleanup backup
+        rm -f /etc/fstab.backup.$$
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "tmp_is_separate | bool"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Apply noexec mount option to /tmp partition"
+        task_2_cmd: "Updated sed/awk command to add noexec option to /tmp mount options"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' and result_2.rc | default(-1) == 0 and ('noexec option already present' in output or 'Updated /tmp line with noexec option' in output) %}
+            APPLIED
+          {% elif output != '' and result_2.rc | default(-1) != 0 %}
+            FAILED
+          {% elif output != '' %}
+            FAILED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output != '' and result_2.rc | default(-1) == 0 and ('noexec option already present' in output or 'Updated /tmp line with noexec option' in output) %}
+            APPLIED: /etc/fstab updated with noexec option for /tmp partition
+          {% elif output != '' and result_2.rc | default(-1) != 0 %}
+            FAILED: Could not update /etc/fstab with noexec option
+          {% elif output != '' %}
+            FAILED: Could not update /etc/fstab with noexec option
+          {% else %}
+            FAILED: Could not update /etc/fstab with noexec option
+          {% endif %}
+
+    # Requirement 3 - Remount /tmp with updated options
+    - name: "Req 3 - Remount /tmp with updated options"
+      shell: |
+        mount -o remount /tmp
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "tmp_is_separate | bool"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remount /tmp with updated options"
+        task_3_cmd: "mount -o remount /tmp"
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if result_3.rc | default(-1) == 0 %}
+            APPLIED: /tmp remounted with updated options
+          {% else %}
+            FAILED: Could not remount /tmp with updated options
+          {% endif %}
+
+    # Requirement 4 - Verify noexec option is set on /tmp partition
+    - name: "Req 4 - Verify noexec option is set on /tmp partition"
+      shell: |
+        findmnt --kernel /tmp | grep -q noexec && echo 'noexec option set' || echo 'noexec option not set'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "tmp_is_separate | bool"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify noexec option is set on /tmp partition"
+        task_4_cmd: "findmnt --kernel /tmp | grep -q noexec && echo 'noexec option set' || echo 'noexec option not set'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output == 'noexec option set' %}
+            APPLIED
+          {% elif tmp_is_separate | bool %}
+            FAILED
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% set output = result_4.stdout | default('') | trim %}
+          {% if output == 'noexec option set' %}
+            APPLIED: noexec option is set on /tmp partition
+          {% elif tmp_is_separate | bool %}
+            FAILED: noexec option is not set on /tmp partition
+          {% else %}
+            SKIPPED: /tmp is not a separate partition
+          {% endif %}
+
+    # Set skipped status for requirements when /tmp is not separate or is tmpfs
+    - name: Set skipped status for requirements when /tmp is not separate
+      set_fact:
+        status_2: "SKIPPED"
+        status_3: "SKIPPED"
+        status_4: "SKIPPED"
+        rationale_2: "SKIPPED: /tmp is not a separate persistent partition"
+        rationale_3: "SKIPPED: /tmp is not a separate persistent partition"
+        rationale_4: "SKIPPED: /tmp is not a separate persistent partition"
+      when: "not (tmp_is_separate | bool)"
+
+    # Determine overall remediation status
+    # FIXED: Correct overall status logic based on feedback - overall should be FAILED if verification fails
+    - name: Determine overall remediation status
+      set_fact:
+        status_overall: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_overall: >-
+          {% if status_1 | trim == 'SKIPPED' %}
+            SKIPPED: /tmp is not a separate persistent partition - remediation not applicable
+          {% elif status_4 | trim == 'APPLIED' %}
+            APPLIED: Verified noexec option is set on /tmp partition - remediation successful
+          {% else %}
+            FAILED: Remediation failed to apply noexec option to /tmp partition
+          {% endif %}
+
+    # Final report
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.1.4"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.1.4"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ status_overall | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_overall | default('Not evaluated') | trim }}"
+          - "========================================================"

@@ -1,0 +1,581 @@
+---
+- name: Remediation for CIS 1.1.2.3.1 - Ensure separate partition exists for /home
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_1_1_2_3_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.3.1"
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "For new installations, create a custom partition setup during OS installation and specify a separate partition for /home"
+    req_2: "Check if /home is already a separate partition"
+    req_3: "Find available disk for new partition"
+    req_4: "Create new partition for /home"
+    req_5: "Format partition with ext4 filesystem"
+    req_6: "Copy existing /home data to new partition"
+    req_7: "Update /etc/fstab to mount new partition at /home"
+    req_8: "Remount /home with new partition"
+    req_9: "Verify remediation - ensure /home is mounted on separate partition"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # --- RESTORE PHASE (only if checkpoint exists from previous failed run) ---
+    - name: "State Guard - Restore /etc/fstab from backup"
+      copy:
+        src: "{{ state_guard_dir }}/fstab.bak"
+        dest: "/etc/fstab"
+        remote_src: true
+      when: _sg_flag.stat.exists
+      ignore_errors: true
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    # --- CAPTURE PHASE (backup current pristine state) ---
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Backup /etc/fstab"
+      copy:
+        src: "/etc/fstab"
+        dest: "{{ state_guard_dir }}/fstab.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        data_1: ""
+        data_2: ""
+        data_3: ""
+        data_4: ""
+        data_5: ""
+        data_6: ""
+        data_7: ""
+        data_8: ""
+        data_9: ""
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        task_5_name: "Not executed"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        task_6_name: "Not executed"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        task_7_name: "Not executed"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        task_8_name: "Not executed"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        task_9_name: "Not executed"
+        task_9_cmd: "N/A"
+        task_9_rc: -1
+        status_1: "UNKNOWN"
+        rationale_1: ""
+        status_2: "UNKNOWN"
+        rationale_2: ""
+        status_3: "UNKNOWN"
+        rationale_3: ""
+        status_4: "UNKNOWN"
+        rationale_4: ""
+        status_5: "UNKNOWN"
+        rationale_5: ""
+        status_6: "UNKNOWN"
+        rationale_6: ""
+        status_7: "UNKNOWN"
+        rationale_7: ""
+        status_8: "UNKNOWN"
+        rationale_8: ""
+        status_9: "UNKNOWN"
+        rationale_9: ""
+
+    # Requirement 1: For new installations, create a custom partition setup during OS installation
+    - name: "Req 1 - Check new installation requirement"
+      shell: |
+        echo "New installation remediation can only be done during OS installation"
+        echo "For already installed systems, proceed with existing system remediation"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "New installation requirement"
+        task_1_cmd: "echo new installation remediation info"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "SKIPPED"
+        rationale_1: "SKIPPED: New installation partitioning must be done during OS installation. Proceeding with existing system remediation."
+
+    # Requirement 2: Check if /home is already a separate partition
+    - name: "Req 2 - Check if /home is already a separate partition"
+      shell: |
+        findmnt --kernel /home
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Check current /home mount status"
+        task_2_cmd: "findmnt --kernel /home"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        home_already_separate: "{{ result_2.rc | default(-1) == 0 and (result_2.stdout | default('') | trim) != '' }}"
+        status_2: >-
+          {% if result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if result_2.rc | default(-1) == 0 and output != '' %}
+            APPLIED: /home is already on separate partition
+          {% elif result_2.rc | default(-1) == 0 and output == '' %}
+            APPLIED: /home is not on separate partition, remediation needed
+          {% else %}
+            FAILED: Check command failed
+          {% endif %}
+
+    # Set skipped status for requirements 3-8 when home is already separate
+    - name: Set skipped status for requirements 3-8 when home is already separate
+      set_fact:
+        task_3_name: "Find available disk for new partition (skipped)"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        data_3: ""
+        status_3: "SKIPPED"
+        rationale_3: "SKIPPED: /home is already on a separate partition"
+        task_4_name: "Create new partition for /home (skipped)"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        data_4: ""
+        status_4: "SKIPPED"
+        rationale_4: "SKIPPED: /home is already on a separate partition"
+        task_5_name: "Format partition with ext4 filesystem (skipped)"
+        task_5_cmd: "N/A"
+        task_5_rc: -1
+        data_5: ""
+        status_5: "SKIPPED"
+        rationale_5: "SKIPPED: /home is already on a separate partition"
+        task_6_name: "Copy existing /home data to new partition (skipped)"
+        task_6_cmd: "N/A"
+        task_6_rc: -1
+        data_6: ""
+        status_6: "SKIPPED"
+        rationale_6: "SKIPPED: /home is already on a separate partition"
+        task_7_name: "Update /etc/fstab to mount new partition at /home (skipped)"
+        task_7_cmd: "N/A"
+        task_7_rc: -1
+        data_7: ""
+        status_7: "SKIPPED"
+        rationale_7: "SKIPPED: /home is already on a separate partition"
+        task_8_name: "Remount /home with new partition (skipped)"
+        task_8_cmd: "N/A"
+        task_8_rc: -1
+        data_8: ""
+        status_8: "SKIPPED"
+        rationale_8: "SKIPPED: /home is already on a separate partition"
+      when: home_already_separate == true
+
+    # Requirement 3: Find available disk for new partition
+    - name: "Req 3 - Find available disk for new partition"
+      shell: |
+        lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E '^[[:alpha:]]' | grep -v 'part' | head -1 | awk '{print "/dev/"$1}'
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: home_already_separate == false
+
+    - name: Store requirement 3 details when not skipped
+      set_fact:
+        task_3_name: "Find available disk"
+        task_3_cmd: |
+          lsblk -o NAME,SIZE,TYPE,MOUNTPOINT | grep -E '^[[:alpha:]]' | grep -v 'part' | head -1 | awk '{print \"/dev/\"$1}'
+        task_3_rc: "{{ result_3.rc | default(-1) }}"
+        data_3: "{{ result_3.stdout | default('') | trim }}"
+        status_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 and output != '' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% set output = result_3.stdout | default('') | trim %}
+          {% if result_3.rc | default(-1) == 0 and output != '' %}
+            APPLIED: found available disk {{ output }}
+          {% else %}
+            FAILED: no available disk found
+          {% endif %}
+      when: home_already_separate == false
+
+    # Requirement 4: Create new partition for /home
+    - name: "Req 4 - Create new partition for /home"
+      shell: |
+        DISK="{{ result_3.stdout | default('') | trim }}"
+        if [ -n "$DISK" ] && [ -b "$DISK" ]; then
+          echo "Creating partition on $DISK"
+          echo -e "n\np\n1\n\n\nw\n" | fdisk "$DISK"
+          echo "Partition created: ${DISK}1"
+        else
+          echo "No valid disk found"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "home_already_separate == false and status_3 | default('UNKNOWN') | trim == 'APPLIED'"
+
+    - name: Store requirement 4 details when not skipped
+      set_fact:
+        task_4_name: "Create partition on available disk"
+        task_4_cmd: |
+          echo -e 'n\np\n1\n\n\nw\n' | fdisk {{ result_3.stdout | default('') | trim }}
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if result_4 is defined %}
+            {{ 'APPLIED' if result_4.rc | default(-1) == 0 else 'FAILED' }}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_4: >-
+          {% if result_4 is defined %}
+            {{ 'APPLIED: partition created successfully' if result_4.rc | default(-1) == 0 else 'FAILED: partition creation failed' }}
+          {% else %}
+            SKIPPED: prerequisite not met
+          {% endif %}
+      when: home_already_separate == false
+
+    # Requirement 5: Format partition with ext4 filesystem
+    - name: "Req 5 - Format partition with ext4 filesystem"
+      shell: |
+        PARTITION="{{ result_3.stdout | default('') | trim }}1"
+        if [ -n "$PARTITION" ] && [ -b "$PARTITION" ]; then
+          mkfs -t ext4 "$PARTITION"
+        else
+          echo "Partition $PARTITION not found"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_5
+      ignore_errors: true
+      when: "home_already_separate == false and status_4 | default('UNKNOWN') | trim == 'APPLIED'"
+
+    - name: Store requirement 5 details when not skipped
+      set_fact:
+        task_5_name: "Format partition with ext4"
+        task_5_cmd: "mkfs -t ext4 {{ result_3.stdout | default('') | trim }}1"
+        task_5_rc: "{{ result_5.rc | default(-1) }}"
+        data_5: "{{ result_5.stdout | default('') | trim }}"
+        status_5: >-
+          {% if result_5 is defined %}
+            {{ 'APPLIED' if result_5.rc | default(-1) == 0 else 'FAILED' }}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_5: >-
+          {% if result_5 is defined %}
+            {{ 'APPLIED: partition formatted with ext4' if result_5.rc | default(-1) == 0 else 'FAILED: formatting failed' }}
+          {% else %}
+            SKIPPED: prerequisite not met
+          {% endif %}
+      when: home_already_separate == false
+
+    # Requirement 6: Copy existing /home data to new partition
+    - name: "Req 6 - Copy existing /home data to new partition"
+      shell: |
+        PARTITION="{{ result_3.stdout | default('') | trim }}1"
+        if [ -n "$PARTITION" ] && [ -b "$PARTITION" ]; then
+          mkdir -p /mnt/newhome
+          mount "$PARTITION" /mnt/newhome
+          cp -a /home/. /mnt/newhome/
+          umount /mnt/newhome
+          rmdir /mnt/newhome
+        else
+          echo "Partition $PARTITION not found"
+          exit 1
+        fi
+      args:
+        executable: /bin/bash
+      register: result_6
+      ignore_errors: true
+      when: "home_already_separate == false and status_5 | default('UNKNOWN') | trim == 'APPLIED'"
+
+    - name: Store requirement 6 details when not skipped
+      set_fact:
+        task_6_name: "Copy /home data to new partition"
+        task_6_cmd: "mkdir -p /mnt/newhome && mount {{ result_3.stdout | default('') | trim }}1 /mnt/newhome && cp -a /home/. /mnt/newhome/ && umount /mnt/newhome && rmdir /mnt/newhome"
+        task_6_rc: "{{ result_6.rc | default(-1) }}"
+        data_6: "{{ result_6.stdout | default('') | trim }}"
+        status_6: >-
+          {% if result_6 is defined %}
+            {{ 'APPLIED' if result_6.rc | default(-1) == 0 else 'FAILED' }}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_6: >-
+          {% if result_6 is defined %}
+            {{ 'APPLIED: /home data copied to new partition' if result_6.rc | default(-1) == 0 else 'FAILED: data copy failed' }}
+          {% else %}
+            SKIPPED: prerequisite not met
+          {% endif %}
+      when: home_already_separate == false
+
+    # Requirement 7: Update /etc/fstab to mount new partition at /home
+    - name: "Req 7 - Update /etc/fstab to mount new partition at /home"
+      shell: |
+        PARTITION="{{ result_3.stdout | default('') | trim }}1"
+        echo "=== BEFORE ==="
+        cat /etc/fstab
+        echo "=== APPLYING CHANGE ==="
+        if ! grep -q "^$PARTITION.*/home.*ext4" /etc/fstab; then
+          echo "$PARTITION /home ext4 defaults 0 0" >> /etc/fstab
+        fi
+        echo "=== AFTER ==="
+        cat /etc/fstab
+      args:
+        executable: /bin/bash
+      register: result_7
+      ignore_errors: true
+      when: "home_already_separate == false and status_6 | default('UNKNOWN') | trim == 'APPLIED'"
+
+    - name: Store requirement 7 details when not skipped
+      set_fact:
+        task_7_name: "Update /etc/fstab"
+        task_7_cmd: "echo '{{ result_3.stdout | default('') | trim }}1 /home ext4 defaults 0 0' >> /etc/fstab"
+        task_7_rc: "{{ result_7.rc | default(-1) }}"
+        data_7: "{{ result_7.stdout | default('') | trim }}"
+        status_7: >-
+          {% if result_7 is defined %}
+            {{ 'APPLIED' if result_7.rc | default(-1) == 0 else 'FAILED' }}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_7: >-
+          {% if result_7 is defined %}
+            {{ 'APPLIED: /etc/fstab updated with /home mount entry' if result_7.rc | default(-1) == 0 else 'FAILED: /etc/fstab update failed' }}
+          {% else %}
+            SKIPPED: prerequisite not met
+          {% endif %}
+      when: home_already_separate == false
+
+    # Requirement 8: Remount /home with new partition
+    - name: "Req 8 - Remount /home with new partition"
+      shell: |
+        mount -o remount /home
+      args:
+        executable: /bin/bash
+      register: result_8
+      ignore_errors: true
+      when: "home_already_separate == false and status_7 | default('UNKNOWN') | trim == 'APPLIED'"
+
+    - name: Store requirement 8 details when not skipped
+      set_fact:
+        task_8_name: "Remount /home"
+        task_8_cmd: "mount -o remount /home"
+        task_8_rc: "{{ result_8.rc | default(-1) }}"
+        data_8: "{{ result_8.stdout | default('') | trim }}"
+        status_8: >-
+          {% if result_8 is defined %}
+            {{ 'APPLIED' if result_8.rc | default(-1) == 0 else 'FAILED' }}
+          {% else %}
+            SKIPPED
+          {% endif %}
+        rationale_8: >-
+          {% if result_8 is defined %}
+            {{ 'APPLIED: /home remounted successfully' if result_8.rc | default(-1) == 0 else 'FAILED: remount failed' }}
+          {% else %}
+            SKIPPED: prerequisite not met
+          {% endif %}
+      when: home_already_separate == false
+
+    # Requirement 9: Verify remediation - ensure /home is mounted on separate partition
+    - name: "Req 9 - Verify remediation"
+      shell: |
+        findmnt --kernel /home
+      args:
+        executable: /bin/bash
+      register: result_9
+      ignore_errors: true
+
+    - name: Store requirement 9 details and compute overall status
+      set_fact:
+        task_9_name: "Verify /home mount"
+        task_9_cmd: "findmnt --kernel /home"
+        task_9_rc: "{{ result_9.rc | default(-1) }}"
+        data_9: "{{ result_9.stdout | default('') | trim }}"
+        status_9: >-
+          {% set output = result_9.stdout | default('') | trim %}
+          {% if result_9.rc | default(-1) == 0 and output != '' %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_9: >-
+          {% set output = result_9.stdout | default('') | trim %}
+          {% if result_9.rc | default(-1) == 0 and output != '' %}
+            APPLIED: /home is now on separate partition
+          {% else %}
+            FAILED: /home not on separate partition
+          {% endif %}
+        overall_status: >-
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set s4 = status_4 | default('UNKNOWN') | trim %}
+          {% set s5 = status_5 | default('UNKNOWN') | trim %}
+          {% set s6 = status_6 | default('UNKNOWN') | trim %}
+          {% set s7 = status_7 | default('UNKNOWN') | trim %}
+          {% set s8 = status_8 | default('UNKNOWN') | trim %}
+          {% set s9 = status_9 | default('UNKNOWN') | trim %}
+          {% if s2 == 'APPLIED' and (s3 == 'APPLIED' or s3 == 'SKIPPED') and (s4 == 'APPLIED' or s4 == 'SKIPPED') and (s5 == 'APPLIED' or s5 == 'SKIPPED') and (s6 == 'APPLIED' or s6 == 'SKIPPED') and (s7 == 'APPLIED' or s7 == 'SKIPPED') and (s8 == 'APPLIED' or s8 == 'SKIPPED') and s9 == 'APPLIED' %}
+            APPLIED
+          {% elif s2 == 'APPLIED' and (s3 == 'APPLIED' or s4 == 'APPLIED' or s5 == 'APPLIED' or s6 == 'APPLIED' or s7 == 'APPLIED' or s8 == 'APPLIED' or s9 == 'APPLIED') %}
+            PARTIALLY APPLIED
+          {% elif s2 == 'APPLIED' and (s3 == 'SKIPPED' and s4 == 'SKIPPED' and s5 == 'SKIPPED' and s6 == 'SKIPPED' and s7 == 'SKIPPED' and s8 == 'SKIPPED') %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        overall_rationale: >-
+          {% set s2 = status_2 | default('UNKNOWN') | trim %}
+          {% set s3 = status_3 | default('UNKNOWN') | trim %}
+          {% set s4 = status_4 | default('UNKNOWN') | trim %}
+          {% set s5 = status_5 | default('UNKNOWN') | trim %}
+          {% set s6 = status_6 | default('UNKNOWN') | trim %}
+          {% set s7 = status_7 | default('UNKNOWN') | trim %}
+          {% set s8 = status_8 | default('UNKNOWN') | trim %}
+          {% set s9 = status_9 | default('UNKNOWN') | trim %}
+          {% if s2 == 'APPLIED' and (s3 == 'SKIPPED' and s4 == 'SKIPPED' and s5 == 'SKIPPED' and s6 == 'SKIPPED' and s7 == 'SKIPPED' and s8 == 'SKIPPED') %}
+            /home was already on separate partition
+          {% elif s2 == 'APPLIED' and s3 == 'APPLIED' and s4 == 'APPLIED' and s5 == 'APPLIED' and s6 == 'APPLIED' and s7 == 'APPLIED' and s8 == 'APPLIED' and s9 == 'APPLIED' %}
+            Successfully created separate partition for /home and mounted it
+          {% elif s2 == 'APPLIED' and (s3 == 'APPLIED' or s4 == 'APPLIED' or s5 == 'APPLIED' or s6 == 'APPLIED' or s7 == 'APPLIED' or s8 == 'APPLIED' or s9 == 'APPLIED') %}
+            Some steps succeeded but not all
+          {% else %}
+            Failed to create separate partition for /home
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 1.1.2.3.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 1.1.2.3.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 5 - {{ req_5 }}:"
+          - "  Task: {{ task_5_name | default('Task not recorded') }}"
+          - "  Command: {{ task_5_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_5_rc | default(-1) }}"
+          - "  Data: {{ data_5 | default('') | trim }}"
+          - "  Status: {{ status_5 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_5 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 6 - {{ req_6 }}:"
+          - "  Task: {{ task_6_name | default('Task not recorded') }}"
+          - "  Command: {{ task_6_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_6_rc | default(-1) }}"
+          - "  Data: {{ data_6 | default('') | trim }}"
+          - "  Status: {{ status_6 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_6 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 7 - {{ req_7 }}:"
+          - "  Task: {{ task_7_name | default('Task not recorded') }}"
+          - "  Command: {{ task_7_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_7_rc | default(-1) }}"
+          - "  Data: {{ data_7 | default('') | trim }}"
+          - "  Status: {{ status_7 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_7 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 8 - {{ req_8 }}:"
+          - "  Task: {{ task_8_name | default('Task not recorded') }}"
+          - "  Command: {{ task_8_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_8_rc | default(-1) }}"
+          - "  Data: {{ data_8 | default('') | trim }}"
+          - "  Status: {{ status_8 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_8 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 9 - {{ req_9 }}:"
+          - "  Task: {{ task_9_name | default('Task not recorded') }}"
+          - "  Command: {{ task_9_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_9_rc | default(-1) }}"
+          - "  Data: {{ data_9 | default('') | trim }}"
+          - "  Status: {{ status_9 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_9 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_rationale | default('Not evaluated') | trim }}"
+          - "========================================================"

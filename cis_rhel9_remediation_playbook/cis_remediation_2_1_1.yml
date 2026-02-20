@@ -1,0 +1,257 @@
+---
+- name: Remediation for CIS 2.1.1
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_2_1_1"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.1"
+    req_1: "Check if autofs package is installed"
+    req_2: "Stop the autofs service"
+    req_3: "Remove the autofs package or mask the service if dependency"
+    req_4: "Verify autofs service is not active and not enabled"
+
+  pre_tasks:
+    - name: "State Guard - Check for existing checkpoint"
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    - name: "State Guard - Remove old checkpoint"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: _sg_flag.stat.exists
+
+    - name: "State Guard - Create checkpoint directory"
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: "State Guard - Create checkpoint flag"
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+        task_3_name: "Not executed"
+        task_3_cmd: "N/A"
+        task_3_rc: -1
+        task_4_name: "Not executed"
+        task_4_cmd: "N/A"
+        task_4_rc: -1
+        package_installed: "unknown"
+
+    # Requirement 1: Check if autofs package is installed
+    - name: "Req 1 - Check if autofs package is installed"
+      shell: |
+        rpm -q autofs
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Check autofs package installation"
+        task_1_cmd: "rpm -q autofs"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: "{{ ('SKIPPED' if result_1.rc | default(-1) != 0 else 'APPLIED') | trim }}"
+        rationale_1: "{{ ('SKIPPED - Remediation not applicable - autofs is not installed on this server' if result_1.rc | default(-1) != 0 else 'APPLIED: autofs package is installed') | trim }}"
+        package_installed: "{{ 'yes' if result_1.rc | default(-1) == 0 else 'no' }}"
+
+    # Requirement 2: Stop the autofs service
+    - name: "Req 2 - Stop autofs service"
+      shell: |
+        systemctl stop autofs.service
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      when: "package_installed == 'yes'"
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Stop autofs service"
+        task_2_cmd: "systemctl stop autofs.service"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: "{{ ('APPLIED' if result_2.rc | default(1) == 0 else ('SKIPPED' if package_installed != 'yes' else 'FAILED')) | trim }}"
+        rationale_2: "{{ ('APPLIED: autofs service stopped' if result_2.rc | default(1) == 0 else ('SKIPPED: autofs not installed' if package_installed != 'yes' else 'FAILED: could not stop autofs service')) | trim }}"
+
+    # Requirement 3: Remove autofs package or mask if dependency
+    - name: "Req 3 - Remove autofs package"
+      shell: |
+        dnf remove -y autofs
+      args:
+        executable: /bin/bash
+      register: result_3
+      ignore_errors: true
+      when: "package_installed == 'yes'"
+
+    - name: "Req 3 - Mask autofs service if removal failed"
+      shell: |
+        systemctl mask autofs.service
+      args:
+        executable: /bin/bash
+      register: result_3_mask
+      ignore_errors: true
+      when: "package_installed == 'yes' and result_3.rc | default(1) != 0"
+
+    - name: Store requirement 3 details
+      set_fact:
+        task_3_name: "Remove autofs package or mask service"
+        task_3_cmd: "{{ 'dnf remove -y autofs' if result_3.rc | default(1) == 0 else 'systemctl mask autofs.service' }}"
+        task_3_rc: "{{ result_3.rc | default(result_3_mask.rc | default(-1)) }}"
+        data_3: "{{ (result_3.stdout if result_3.rc | default(1) == 0 else result_3_mask.stdout) | default('') | trim }}"
+        status_3: >-
+          {% if package_installed != 'yes' %}
+            SKIPPED
+          {% elif result_3.rc | default(1) == 0 or result_3_mask.rc | default(1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_3: >-
+          {% if package_installed != 'yes' %}
+            SKIPPED: autofs not installed
+          {% elif result_3.rc | default(1) == 0 %}
+            APPLIED: autofs package removed successfully
+          {% elif result_3_mask.rc | default(1) == 0 %}
+            APPLIED: autofs package required as dependency, service masked
+          {% else %}
+            FAILED: could not remove autofs package and could not mask service
+          {% endif %}
+
+    # Requirement 4: Verify remediation
+    - name: "Req 4 - Verify autofs service state"
+      shell: |
+        systemctl is-active autofs.service && systemctl is-enabled autofs.service || echo 'Service verification passed'
+      args:
+        executable: /bin/bash
+      register: result_4
+      ignore_errors: true
+      when: "package_installed == 'yes'"
+
+    - name: Store requirement 4 details
+      set_fact:
+        task_4_name: "Verify autofs service state"
+        task_4_cmd: "systemctl is-active autofs.service && systemctl is-enabled autofs.service || echo 'Service verification passed'"
+        task_4_rc: "{{ result_4.rc | default(-1) }}"
+        data_4: "{{ result_4.stdout | default('') | trim }}"
+        status_4: >-
+          {% if package_installed != 'yes' %}
+            SKIPPED
+          {% elif 'inactive' in result_4.stdout | default('') or 'masked' in result_4.stdout | default('') or 'Service verification passed' in result_4.stdout | default('') %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_4: >-
+          {% if package_installed != 'yes' %}
+            SKIPPED: autofs not installed
+          {% elif 'inactive' in result_4.stdout | default('') or 'masked' in result_4.stdout | default('') or 'Service verification passed' in result_4.stdout | default('') %}
+            APPLIED: autofs service is inactive and disabled or masked
+          {% else %}
+            FAILED: autofs service is still active or enabled
+          {% endif %}
+
+    # Compute overall remediation status
+    - name: Compute overall remediation status
+      set_fact:
+        overall_status: >-
+          {% if package_installed != 'yes' %}
+            SKIPPED
+          {% elif status_2 | trim == 'APPLIED' and status_3 | trim == 'APPLIED' and status_4 | trim == 'APPLIED' %}
+            APPLIED
+          {% elif status_2 | trim == 'FAILED' and status_3 | trim == 'FAILED' and status_4 | trim == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+        overall_details: >-
+          {% if package_installed != 'yes' %}
+            Remediation not applicable - autofs is not installed on this server
+          {% else %}
+            {% set details_list = [] %}
+            {% if status_2 | trim == 'APPLIED' %}
+              {% set _ = details_list.append('autofs service stopped') %}
+            {% elif status_2 | trim == 'FAILED' %}
+              {% set _ = details_list.append('failed to stop autofs service') %}
+            {% endif %}
+            {% if status_3 | trim == 'APPLIED' %}
+              {% if result_3.rc | default(1) == 0 %}
+                {% set _ = details_list.append('autofs package removed') %}
+              {% else %}
+                {% set _ = details_list.append('autofs service masked (package required as dependency)') %}
+              {% endif %}
+            {% elif status_3 | trim == 'FAILED' %}
+              {% set _ = details_list.append('failed to remove autofs package and could not mask service') %}
+            {% endif %}
+            {% if status_4 | trim == 'APPLIED' %}
+              {% set _ = details_list.append('verification passed - service is inactive and disabled/masked') %}
+            {% elif status_4 | trim == 'FAILED' %}
+              {% set _ = details_list.append('verification failed - service is still active or enabled') %}
+            {% endif %}
+            {{ details_list | join('; ') | default('No details available') }}
+          {% endif %}
+
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 2.1.1"
+          - "========================================================"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 2.1.1"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 3 - {{ req_3 }}:"
+          - "  Task: {{ task_3_name | default('Task not recorded') }}"
+          - "  Command: {{ task_3_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_3_rc | default(-1) }}"
+          - "  Data: {{ data_3 | default('') | trim }}"
+          - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_3 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 4 - {{ req_4 }}:"
+          - "  Task: {{ task_4_name | default('Task not recorded') }}"
+          - "  Command: {{ task_4_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_4_rc | default(-1) }}"
+          - "  Data: {{ data_4 | default('') | trim }}"
+          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_4 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"

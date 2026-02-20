@@ -1,95 +1,90 @@
 ---
-- name: Data Collection for CIS checkpoint 3.3.2.5
+- name: Data Collection for CIS 3.3.2.5
   hosts: all
   become: yes
-  gather_facts: yes
+  gather_facts: false
   vars:
-    cis_reference: "CIS RHEL 8 Benchmark v4.0.0 checkpoint 3.3.2.5"
-    req_1: "Check if IPv6 is enabled on the system"
-    req_2: "Verify net.ipv6.conf.all.accept_source_route is set to 0 in the running configuration"
-    req_3: "Verify net.ipv6.conf.all.accept_source_route = 0 is set in a persistent configuration file"
-    req_4: "OVERALL Verify: Ensure net.ipv6.conf.all.accept_source_route is configured"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.5"
+    req_0: "IF IPv6 is enabled on the system"
+    req_1: "Run the following command to verify net.ipv6.conf.all.accept_source_route is set to 0 in the running configuration"
+    req_2: "Run the following script to verify net.ipv6.conf.all.accept_source_route = 0 is set in a file being used by systemd sysctl to configure net.ipv6.conf.all.accept_source_route"
+    req_3: "OVERALL Verify: Ensure net.ipv6.conf.all.accept_source_route is configured"
 
   tasks:
     - name: Initialize data variables
       set_fact:
+        task_0_name: "Not executed"
+        task_0_cmd: "N/A"
+        task_0_rc: -1
+        data_0: ""
+        status_0: "UNKNOWN"
+        rationale_0: "Not evaluated"
         task_1_name: "Not executed"
         task_1_cmd: "N/A"
         task_1_rc: -1
+        data_1: ""
+        status_1: "NA"
+        rationale_1: "IPv6 is disabled - requirement not applicable per CIS audit procedure"
         task_2_name: "Not executed"
         task_2_cmd: "N/A"
         task_2_rc: -1
+        data_2: ""
+        status_2: "NA"
+        rationale_2: "IPv6 is disabled - requirement not applicable per CIS audit procedure"
         task_3_name: "Not executed"
         task_3_cmd: "N/A"
         task_3_rc: -1
-        task_4_name: "Not executed"
-        task_4_cmd: "N/A"
-        task_4_rc: -1
+        data_3: ""
+        status_3: "UNKNOWN"
+        rationale_3: "Not evaluated"
 
-    # Requirement 1: Check if IPv6 is enabled on the system
-    - name: Req 1 - Check IPv6 status
+    # Requirement 0: Check if IPv6 is enabled
+    - name: Req 0 - Check if IPv6 is enabled
       shell: |
-        if [ -f /proc/net/if_inet6 ] || lsmod | grep -q ipv6 || ip -6 addr show | grep -q inet6; then
-          echo "IPv6_ENABLED"
+        if [ -f /proc/net/if_inet6 ] && ip -6 addr show | grep -q "inet6"; then
+          echo "IPv6 is enabled"
         else
-          echo "IPv6_DISABLED"
+          echo "IPv6 is disabled"
         fi
+      args:
+        executable: /bin/bash
+      register: result_0
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 0 details
+      set_fact:
+        task_0_name: "Check if IPv6 is enabled"
+        task_0_cmd: "Check /proc/net/if_inet6 and ip -6 addr show"
+        task_0_rc: "{{ result_0.rc | default(-1) }}"
+        data_0: "{{ result_0.stdout | default('') | trim }}"
+        status_0: "{{ ('PASS' if (result_0.stdout | default('') | trim == 'IPv6 is enabled') else 'NA') | trim }}"
+        rationale_0: "{{ ('IPv6 is enabled, proceed with checks' if (result_0.stdout | default('') | trim == 'IPv6 is enabled') else 'IPv6 is disabled, skip subsequent checks') | trim }}"
+
+    # Requirement 1: Check running configuration with sysctl
+    - name: Req 1 - Check net.ipv6.conf.all.accept_source_route in running config
+      shell: sysctl net.ipv6.conf.all.accept_source_route
       args:
         executable: /bin/bash
       register: result_1
       ignore_errors: true
       changed_when: false
+      when: status_0 == 'PASS'
 
     - name: Store requirement 1 details
       set_fact:
-        task_1_name: "Check IPv6 status"
-        task_1_cmd: "Check if /proc/net/if_inet6 exists, ipv6 module loaded, or IPv6 addresses present"
+        task_1_name: "Check running configuration with sysctl"
+        task_1_cmd: "sysctl net.ipv6.conf.all.accept_source_route"
         task_1_rc: "{{ result_1.rc | default(-1) }}"
         data_1: "{{ result_1.stdout | default('') | trim }}"
-        status_1: >-
-          {% set output = result_1.stdout | default('') | trim %}
-          {% if output == 'IPv6_ENABLED' %}
-            PASS
-          {% elif output == 'IPv6_DISABLED' %}
-            FAIL
-          {% else %}
-            FAIL
-          {% endif %}
-        rationale_1: "PASS when IPv6 is enabled (e.g., ipv6 module is loaded or an interface has an IPv6 address), FAIL when IPv6 is completely disabled (making this checkpoint Not Applicable)"
+        status_1: "{{ ('PASS' if (result_1.stdout | default('') | trim == 'net.ipv6.conf.all.accept_source_route = 0') else 'FAIL') | trim }}"
+        rationale_1: '{{ ("PASS when output is exactly net.ipv6.conf.all.accept_source_route = 0, FAIL otherwise" if (result_1.stdout | default("") | trim == "net.ipv6.conf.all.accept_source_route = 0") else "FAIL: Expected net.ipv6.conf.all.accept_source_route = 0, got " + (result_1.stdout | default("") | trim)) | trim }}'
+      when: status_0 == 'PASS'
 
-    # Requirement 2: Verify net.ipv6.conf.all.accept_source_route is set to 0 in the running configuration
-    - name: Req 2 - Check running sysctl configuration
-      shell: sysctl net.ipv6.conf.all.accept_source_route
-      args:
-        executable: /bin/bash
-      register: result_2
-      ignore_errors: true
-      changed_when: false
-      when: data_1 | default('') | trim == 'IPv6_ENABLED'
-
-    - name: Store requirement 2 details
-      set_fact:
-        task_2_name: "Check running sysctl configuration"
-        task_2_cmd: "sysctl net.ipv6.conf.all.accept_source_route"
-        task_2_rc: "{{ result_2.rc | default(-1) }}"
-        data_2: "{{ result_2.stdout | default('') | trim }}"
-        status_2: >-
-          {% if data_1 | default('') | trim != 'IPv6_ENABLED' %}
-            NA
-          {% else %}
-            {% set output = result_2.stdout | default('') | trim %}
-            {% if output == 'net.ipv6.conf.all.accept_source_route = 0' %}
-              PASS
-            {% else %}
-              FAIL
-            {% endif %}
-          {% endif %}
-        rationale_2: "PASS when output is exactly 'net.ipv6.conf.all.accept_source_route = 0', FAIL otherwise, NA when IPv6 is disabled"
-
-    # Requirement 3: Verify net.ipv6.conf.all.accept_source_route = 0 is set in a persistent configuration file
-    - name: Req 3 - Create temporary audit script
+    # Requirement 2: Execute CIS audit script for configuration files
+    - name: Req 2 - Execute CIS audit script for configuration files
       copy:
-        dest: "/tmp/cis_audit_script_3.sh"
+        dest: "/tmp/cis_audit_3.3.2.5.sh"
         mode: '0700'
         content: |
           {% raw %}
@@ -119,58 +114,98 @@
              [ "${#a_output[@]}" -gt "0" ] && printf '%s\n' "" "${a_output[@]}" ""
           }
           {% endraw %}
-      when: data_1 | default('') | trim == 'IPv6_ENABLED'
-
-    - name: Req 3 - Execute audit script
-      shell: "/tmp/cis_audit_script_3.sh"
-      args:
-        executable: /bin/bash
-      register: result_3
+      register: script_create_2
       ignore_errors: true
       changed_when: false
-      when: data_1 | default('') | trim == 'IPv6_ENABLED'
+      when: status_0 == 'PASS'
 
-    - name: Req 3 - Remove temporary audit script
+    - name: Req 2 - Execute the audit script
+      shell: "/tmp/cis_audit_3.3.2.5.sh"
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+      when: status_0 == 'PASS'
+
+    - name: Req 2 - Remove temporary audit script
       file:
-        path: "/tmp/cis_audit_script_3.sh"
+        path: "/tmp/cis_audit_3.3.2.5.sh"
         state: absent
-      when: data_1 | default('') | trim == 'IPv6_ENABLED'
+      ignore_errors: true
+      when: status_0 == 'PASS'
 
-    - name: Store requirement 3 details
+    - name: Store requirement 2 details
       set_fact:
-        task_3_name: "Check persistent sysctl configuration"
-        task_3_cmd: "CIS audit script for net.ipv6.conf.all.accept_source_route"
-        task_3_rc: "{{ result_3.rc | default(-1) }}"
-        data_3: "{{ result_3.stdout | default('') | trim }}"
-        status_3: >-
-          {% if data_1 | default('') | trim != 'IPv6_ENABLED' %}
-            NA
+        task_2_name: "Execute CIS audit script for configuration files"
+        task_2_cmd: "Execute /tmp/cis_audit_3.3.2.5.sh"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' %}
+            FAIL
           {% else %}
-            {% set output = result_3.stdout | default('') | trim %}
-            {% if output is regex_search('net\\.ipv6\\.conf\\.all\\.accept_source_route = 0') %}
+            {% set lines = output.split('\n') %}
+            {% set first_setting_line = None %}
+            {% for line in lines %}
+              {% if 'net.ipv6.conf.all.accept_source_route' in line and first_setting_line is none %}
+                {% set first_setting_line = line %}
+              {% endif %}
+            {% endfor %}
+            {% if first_setting_line is not none and '= 0' in first_setting_line %}
               PASS
             {% else %}
               FAIL
             {% endif %}
           {% endif %}
-        rationale_3: "PASS when script output shows at least one line containing 'net.ipv6.conf.all.accept_source_route = 0' is set in a configuration file, FAIL when no such line is found, NA when IPv6 is disabled"
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% if output == '' %}
+            FAIL: No configuration file found with net.ipv6.conf.all.accept_source_route setting
+          {% else %}
+            {% set lines = output.split('\n') %}
+            {% set first_setting_line = None %}
+            {% for line in lines %}
+              {% if 'net.ipv6.conf.all.accept_source_route' in line and first_setting_line is none %}
+                {% set first_setting_line = line %}
+              {% endif %}
+            {% endfor %}
+            {% if first_setting_line is not none %}
+              {% if '= 0' in first_setting_line %}
+                PASS: First (highest precedence) setting found has value 0: {{ first_setting_line }}
+              {% else %}
+                FAIL: First (highest precedence) setting found does not have value 0: {{ first_setting_line }}
+              {% endif %}
+            {% else %}
+              FAIL: No configuration file found with net.ipv6.conf.all.accept_source_route setting
+            {% endif %}
+          {% endif %}
+      when: status_0 == 'PASS'
 
-    # Requirement 4: OVERALL Verify
-    - name: Store requirement 4 details
+    # Requirement 3: Overall verification
+    - name: Store requirement 3 details
       set_fact:
-        task_4_name: "Overall compliance check"
-        task_4_cmd: "N/A - Calculated from previous requirements"
-        task_4_rc: 0
-        data_4: "IPv6 status: {{ status_1 }}, Running config: {{ status_2 }}, Persistent config: {{ status_3 }}"
-        status_4: >-
-          {% if status_1 | trim == 'FAIL' %}
+        task_3_name: "Overall verification"
+        task_3_cmd: "N/A"
+        task_3_rc: 0
+        data_3: "Combined results of req_1 and req_2"
+        status_3: >-
+          {% if status_0 == 'NA' %}
             PASS
-          {% elif status_1 | trim == 'PASS' and status_2 | trim == 'PASS' and status_3 | trim == 'PASS' %}
+          {% elif status_0 == 'PASS' and status_1 == 'PASS' and status_2 == 'PASS' %}
             PASS
           {% else %}
             FAIL
           {% endif %}
-        rationale_4: "PASS when (req_1=FAIL [IPv6 disabled, Not Applicable]) OR (req_1=PASS [IPv6 enabled] AND req_2=PASS AND req_3=PASS), FAIL otherwise"
+        rationale_3: >-
+          {% if status_0 == 'NA' %}
+            IPv6 is disabled, requirement is not applicable (PASS)
+          {% elif status_0 == 'PASS' and status_1 == 'PASS' and status_2 == 'PASS' %}
+            PASS when req_1 and req_2 both PASS, otherwise FAIL
+          {% else %}
+            FAIL: One or more sub-requirements failed
+          {% endif %}
 
     # Final report
     - name: Generate compliance report
@@ -179,8 +214,16 @@
           - "========================================================"
           - "        COMPLIANCE REPORT - CIS 3.3.2.5"
           - "========================================================"
-          - "Reference: {{ cis_reference }}"
+          - "Reference: CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.3.2.5"
           - "========================================================"
+          - ""
+          - "REQUIREMENT 0 - {{ req_0 }}:"
+          - "  Task: {{ task_0_name | default('Task not recorded') }}"
+          - "  Command: {{ task_0_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_0_rc | default(-1) }}"
+          - "  Data: {{ data_0 | default('') | trim }}"
+          - "  Status: {{ status_0 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_0 | default('Not evaluated') | trim }}"
           - ""
           - "REQUIREMENT 1 - {{ req_1 }}:"
           - "  Task: {{ task_1_name | default('Task not recorded') }}"
@@ -206,16 +249,8 @@
           - "  Status: {{ status_3 | default('UNKNOWN') | trim }}"
           - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - ""
-          - "REQUIREMENT 4 - {{ req_4 }}:"
-          - "  Task: {{ task_4_name | default('Task not recorded') }}"
-          - "  Command: {{ task_4_cmd | default('N/A') }}"
-          - "  Exit code: {{ task_4_rc | default(-1) }}"
-          - "  Data: {{ data_4 | default('') | trim }}"
-          - "  Status: {{ status_4 | default('UNKNOWN') | trim }}"
-          - "  Rationale: {{ rationale_4 | default('Not evaluated') | trim }}"
-          - ""
           - "========================================================"
           - "OVERALL COMPLIANCE:"
-          - "  Result: {{ status_4 | trim }}"
-          - "  Rationale: {{ rationale_4 | trim }}"
+          - "  Result: {{ status_3 | default('UNKNOWN') | trim }}"
+          - "  Rationale: {{ rationale_3 | default('Not evaluated') | trim }}"
           - "========================================================"

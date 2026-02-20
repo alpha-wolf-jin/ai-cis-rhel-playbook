@@ -1,0 +1,300 @@
+---
+- name: Remediation for CIS 3.2.3
+  hosts: all
+  become: yes
+  gather_facts: false
+  vars:
+    checkpoint_id: "cis_3_2_3"
+    state_guard_dir: "/tmp/.cis_state_guard/{{ checkpoint_id }}"
+    state_guard_flag: "{{ state_guard_dir }}/checkpoint.flag"
+    kcs_article: "CIS RHEL 9 Benchmark v2.0.0 checkpoint 3.2.3"
+    
+    # COPY EXACT requirement text from requirements above!
+    # CRITICAL: ALL req_ variables MUST be quoted strings (use double quotes)
+    req_1: "Run the provided CIS remediation script to fix Ensure rds kernel module is not available"
+    req_2: "Run the CIS audit procedure to confirm Ensure rds kernel module is not available is now properly configured"
+
+  pre_tasks:
+    # === STATE GUARD: Ensure pristine state for each remediation attempt ===
+    - name: State Guard - Check for existing checkpoint
+      stat:
+        path: "{{ state_guard_flag }}"
+      register: _sg_flag
+
+    # RESTORE PHASE: If checkpoint exists, previous run left dirty state - restore originals
+    # Restore /etc/modprobe.d/rds.conf if it existed before
+    - name: State Guard - Restore /etc/modprobe.d/rds.conf from backup
+      copy:
+        src: "{{ state_guard_dir }}/rds.conf.present"
+        dest: "/etc/modprobe.d/rds.conf"
+        remote_src: true
+      when: "_sg_flag.stat.exists"
+      ignore_errors: true
+
+    # Delete /etc/modprobe.d/rds.conf if it was created by previous remediation
+    - name: State Guard - Delete /etc/modprobe.d/rds.conf (created by remediation)
+      file:
+        path: "/etc/modprobe.d/rds.conf"
+        state: absent
+      when: "_sg_flag.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Remove old checkpoint
+      file:
+        path: "{{ state_guard_dir }}"
+        state: absent
+      when: "_sg_flag.stat.exists"
+
+    # CAPTURE PHASE: Backup current pristine state before remediation
+    - name: State Guard - Create checkpoint directory
+      file:
+        path: "{{ state_guard_dir }}"
+        state: directory
+        mode: '0700'
+
+    # Check if /etc/modprobe.d/rds.conf exists before deciding backup suffix
+    - name: State Guard - Check if /etc/modprobe.d/rds.conf exists
+      stat:
+        path: "/etc/modprobe.d/rds.conf"
+      register: _sg_rds_conf_stat
+
+    # Backup existing file with .present suffix
+    - name: State Guard - Backup /etc/modprobe.d/rds.conf (present)
+      copy:
+        src: "/etc/modprobe.d/rds.conf"
+        dest: "{{ state_guard_dir }}/rds.conf.present"
+        remote_src: true
+      when: "_sg_rds_conf_stat.stat.exists"
+      ignore_errors: true
+
+    # Mark non-existing file with .absent suffix (empty marker file)
+    - name: State Guard - Mark /etc/modprobe.d/rds.conf as absent
+      copy:
+        content: "absent"
+        dest: "{{ state_guard_dir }}/rds.conf.absent"
+      when: "not _sg_rds_conf_stat.stat.exists"
+      ignore_errors: true
+
+    - name: State Guard - Create checkpoint flag
+      copy:
+        content: "checkpoint"
+        dest: "{{ state_guard_flag }}"
+
+  tasks:
+    - name: Initialize data variables
+      set_fact:
+        req_count: 2
+        task_1_name: "Not executed"
+        task_1_cmd: "N/A"
+        task_1_rc: -1
+        task_2_name: "Not executed"
+        task_2_cmd: "N/A"
+        task_2_rc: -1
+
+    # Requirement 1: Run the provided CIS remediation script to fix Ensure rds kernel module is not available
+    - name: Req 1 - Execute CIS remediation script for rds module
+      copy:
+        dest: "/tmp/cis_remediation_3_2_3.sh"
+        mode: '0700'
+        content: |
+          {% raw %}
+          #!/usr/bin/env bash
+          {
+             unset a_output2; l_output3="" l_dl="" # unset arrays and clear variables
+             l_mod_name="rds" # set module name
+             l_mod_type="net" # set module type
+             l_mod_path="$(readlink -f /lib/modules/**/kernel/$l_mod_type | sort -u)"
+             f_module_fix()
+             {
+                l_dl="y" # Set to ignore duplicate checks
+                a_showconfig=() # Create array with modprobe output
+                while IFS= read -r l_showconfig; do
+                   a_showconfig+=("$l_showconfig")
+                done < <(modprobe --showconfig | grep -P -- '\b(install|blacklist)\h+'"${l_mod_name//-/_}"'\b')
+                if  lsmod | grep "$l_mod_name" &> /dev/null; then # Check if the module is currently loaded
+                   a_output2+=(" - unloading kernel module: \"$l_mod_name\"")
+                   modprobe -r "$l_mod_name" 2>/dev/null; rmmod "$l_mod_name" 2>/dev/null
+                fi
+                if ! grep -Pq -- '\binstall\h+'"${l_mod_name//- /_}"'\h+\/bin\/(true|false)\b' <<< "${a_showconfig[*]}"; then
+                   a_output2+=(" - setting kernel  module: \"$l_mod_name\" to \"/bin/false\"")
+                   printf '%s\n' "install $l_mod_name /bin/false" >> /etc/modprobe.d/"$l_mod_name".conf
+                fi
+                if ! grep -Pq -- '\bblacklist\h+'"${l_mod_name//-/_}"'\b' <<< "${a_showconfig[*]}"; then
+                   a_output2+=(" - denylisting kernel  module: \"$l_mod_name\"")
+                   printf '%s\n' "blacklist $l_mod_name" >> /etc/modprobe.d/"$l_mod_name".conf
+                fi
+             }
+             for l_mod_base_directory in $l_mod_path; do # Check if the module exists on the system
+                if [ -d "$l_mod_base_directory/${l_mod_name/-/\/}" ] && [ -n "$(ls -A $l_mod_base_directory/${l_mod_name/-/\/})" ]; then
+                   l_output3="$l_output3\n  - \"$l_mod_base_directory\""
+                   [[ "$l_mod_name" =~ overlay ]] && l_mod_name="${l_mod_name::-2}"
+                   [ "$l_dl" != "y" ] && f_module_fix
+                else
+                   echo -e " - kernel module: \"$l_mod_name\" doesn't exist in \"$l_mod_base_directory\""
+                fi
+             done
+             [ -n "$l_output3" ] && echo -e "\n\n -- INFO --\n - module: \"$l_mod_name\" exists in:$l_output3"
+             [ "${#a_output2[@]}" -gt 0 ] && printf '%s\n' "${a_output2[@]}"
+             echo -e "\n - remediation of kernel module: \"$l_mod_name\" complete\n"
+          }
+          {% endraw %}
+      register: script_create_1
+      ignore_errors: true
+
+    - name: Req 1 - Execute the remediation script
+      shell: "/tmp/cis_remediation_3_2_3.sh"
+      args:
+        executable: /bin/bash
+      register: result_1
+      ignore_errors: true
+
+    - name: Req 1 - Remove temporary remediation script
+      file:
+        path: "/tmp/cis_remediation_3_2_3.sh"
+        state: absent
+      ignore_errors: true
+
+    - name: Store requirement 1 details
+      set_fact:
+        task_1_name: "Execute CIS remediation script for rds module"
+        task_1_cmd: "/tmp/cis_remediation_3_2_3.sh"
+        task_1_rc: "{{ result_1.rc | default(-1) }}"
+        data_1: "{{ result_1.stdout | default('') | trim }}"
+        status_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if 'module: "rds" exists in:' in output or 'unloading kernel module' in output or 'setting kernel module' in output or 'denylisting kernel module' in output %}
+              APPLIED
+            {% else %}
+              SKIPPED
+            {% endif %}
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_1: >-
+          {% set output = result_1.stdout | default('') | trim %}
+          {% if result_1.rc | default(-1) == 0 %}
+            {% if 'module: "rds" exists in:' in output or 'unloading kernel module' in output or 'setting kernel module' in output or 'denylisting kernel module' in output %}
+              APPLIED: Script executed successfully and made changes to system
+            {% else %}
+              SKIPPED: Module may not be available or pre-compiled into kernel
+            {% endif %}
+          {% else %}
+            FAILED: Script execution failed with exit code {{ result_1.rc | default(-1) }}
+          {% endif %}
+
+    # Requirement 2: Run the CIS audit procedure to confirm Ensure rds kernel module is not available is now properly configured
+    - name: Req 2 - Verify rds module is not available
+      shell: |
+        # Check if rds module is loaded
+        if lsmod | grep -q "^rds"; then
+          echo "FAIL: rds module is loaded"
+        else
+          echo "PASS: rds module is not loaded"
+        fi
+        
+        # Check modprobe configuration
+        if modprobe -n -v rds 2>/dev/null | grep -q "install /bin/false" && modprobe -n -v rds 2>/dev/null | grep -q "blacklist rds"; then
+          echo "PASS: modprobe configuration correctly set to install /bin/false and blacklisted"
+        else
+          echo "FAIL: modprobe configuration not properly set"
+        fi
+        
+        # Check if module files exist
+        echo "=== Module file check ==="
+        if [ -d /lib/modules ]; then
+          find /lib/modules -name "*rds*" -type f 2>/dev/null | head -5
+        fi
+      args:
+        executable: /bin/bash
+      register: result_2
+      ignore_errors: true
+      changed_when: false
+
+    - name: Store requirement 2 details
+      set_fact:
+        task_2_name: "Verify rds module is not available"
+        task_2_cmd: "Check lsmod, modprobe configuration, and module files"
+        task_2_rc: "{{ result_2.rc | default(-1) }}"
+        data_2: "{{ result_2.stdout | default('') | trim }}"
+        status_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+          {% if status_1_val == 'SKIPPED' %}
+            SKIPPED
+          {% elif "FAIL:" not in output and result_2.rc | default(-1) == 0 %}
+            APPLIED
+          {% else %}
+            FAILED
+          {% endif %}
+        rationale_2: >-
+          {% set output = result_2.stdout | default('') | trim %}
+          {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+          {% if status_1_val == 'SKIPPED' %}
+            SKIPPED: Module not available or pre-compiled into kernel
+          {% elif "FAIL:" not in output and result_2.rc | default(-1) == 0 %}
+            APPLIED: System is compliant - rds module not loaded and properly disabled
+          {% else %}
+            FAILED: Verification check indicates non-compliance
+          {% endif %}
+
+    # Determine overall remediation status
+    - name: Determine overall remediation status
+      set_fact:
+        overall_status: >-
+          {% set status_1_val = status_1 | default('UNKNOWN') | trim %}
+          {% set status_2_val = status_2 | default('UNKNOWN') | trim %}
+          {% if status_1_val == 'SKIPPED' and status_2_val == 'SKIPPED' %}
+            SKIPPED
+          {% elif status_1_val == 'APPLIED' and status_2_val == 'APPLIED' %}
+            APPLIED
+          {% elif status_1_val == 'FAILED' or status_2_val == 'FAILED' %}
+            FAILED
+          {% else %}
+            PARTIALLY APPLIED
+          {% endif %}
+
+    - name: Set overall remediation details
+      set_fact:
+        overall_details: >-
+          {% if overall_status == 'SKIPPED' %}
+            Remediation not applicable - rds module may not be available or pre-compiled into kernel.
+          {% elif overall_status == 'APPLIED' %}
+            All remediation steps applied successfully. System is compliant with CIS 3.2.3.
+          {% elif overall_status == 'FAILED' %}
+            Some remediation steps failed. Check individual requirement details.
+          {% else %}
+            Remediation partially applied. Some steps succeeded while others may have failed or been skipped.
+          {% endif %}
+
+    # Final report - MUST include Status and Details for each requirement
+    - name: Generate remediation report
+      debug:
+        msg:
+          - "========================================================"
+          - "        REMEDIATION REPORT - CIS 3.2.3"
+          - "========================================================"
+          - "Reference: {{ kcs_article }}"
+          - "========================================================"
+          - ""
+          - "REQUIREMENT 1 - {{ req_1 }}:"
+          - "  Task: {{ task_1_name | default('Task not recorded') }}"
+          - "  Command: {{ task_1_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_1_rc | default(-1) }}"
+          - "  Data: {{ data_1 | default('') | trim }}"
+          - "  Status: {{ status_1 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_1 | default('Not evaluated') | trim }}"
+          - ""
+          - "REQUIREMENT 2 - {{ req_2 }}:"
+          - "  Task: {{ task_2_name | default('Task not recorded') }}"
+          - "  Command: {{ task_2_cmd | default('N/A') }}"
+          - "  Exit code: {{ task_2_rc | default(-1) }}"
+          - "  Data: {{ data_2 | default('') | trim }}"
+          - "  Status: {{ status_2 | default('UNKNOWN') | trim }}"
+          - "  Details: {{ rationale_2 | default('Not evaluated') | trim }}"
+          - ""
+          - "========================================================"
+          - "OVERALL REMEDIATION:"
+          - "  Result: {{ overall_status | default('UNKNOWN') | trim }}"
+          - "  Details: {{ overall_details | default('Not evaluated') | trim }}"
+          - "========================================================"
